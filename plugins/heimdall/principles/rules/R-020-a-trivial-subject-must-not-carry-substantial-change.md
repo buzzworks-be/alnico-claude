@@ -101,3 +101,15 @@ Limitations to state in a case file:
   whose survivors on first contact were not exemptions.
 
   Held at `draft`: the floor is chosen and the word list is a first draft.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Four candidates on L — three dependency bumps that forced source edits and a
+  linter enabled — and six on M: a whitespace update of 1,230 lines, a term
+  renamed across documentation, two lint sweeps, two bumps. All exemptions the
+  rule already lists. Still `draft`: the survivors that read as the shape
+  remain the ones from the first calibration history.

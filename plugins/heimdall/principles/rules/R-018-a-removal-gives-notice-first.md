@@ -63,7 +63,10 @@ bin/removal-notice --since "6 years ago" --bar 30 --markers '@deprecated|#\[depr
 ```
 
 One pass over the first-parent diffs, oldest first, keying each marker line
-by file and normalised text. The script reports notices opened, closed,
+by file and normalised text, after seeding the notices already open when the
+window began from the tree at that point, each dated by blame — so a closure
+in the window is read against every notice that could have closed, not only
+those opened in it. The script reports notices opened, closed,
 withdrawn and still open; the distribution of notice length when closed; and
 every closure under the bar with both shas and the marker text.
 
@@ -129,3 +132,28 @@ Limitations to state in a case file:
 
   Held at `draft`, and `advisory`: the bar is chosen, the pattern is
   convention-bound, and the rule cannot see whether anyone was downstream.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  K was chosen for this rule, and the first run on it read nothing: the
+  pattern did not know the warning-class idiom of its deprecation
+  mechanism — a warning named for the release the thing goes in — and once
+  it did, the walk read 126 notices opened in the window and none closed,
+  because it knew nothing of the notices standing open when the window
+  began, and a policy that keeps a notice longer than the window can never
+  show a closure to a walk confined to it. Two amendments: the pattern takes
+  a warning class named for deprecation or for a release, and the open
+  notices at the window's start are seeded from the tree there, dated by
+  blame. Re-run: 58 open at the start, 119 opened in the window, 13 closed
+  at a median of 293 days and none under 117 — no finding, on a repository
+  whose stated policy is longer than the bar and whose shortest measured
+  notice is under it; a case file reading this history should set the bar
+  to the policy, as the check section says. On L, 35 open at the start and
+  4 closed at a median of 499 days; on M, below the marker floor. Still
+  `draft`: it has formed its reading on the culture it was built for and
+  found what a formal policy predicts, which is a working instrument and
+  not yet an engagement.

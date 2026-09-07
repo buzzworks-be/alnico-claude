@@ -97,6 +97,11 @@ Two limitations to state in any case file citing this rule:
 - **A re-land whose difference is outside the diff** — a changed commit
   message, a different author, a rebased base. Patch-id ignores all of those,
   which is the point of using it, and none of them is a change to the work.
+- **A dependency bot's bump, reverted and re-landed.** The bump has nothing
+  to change: its content is the version it names, and the reason for its
+  revert lives outside the change — a broken pipeline, a downstream failure,
+  a bump landed out of order. The first real engagement of this rule was
+  exactly this, five days apart, byte-identical, and innocent.
 
 ## History
 
@@ -113,3 +118,17 @@ Two limitations to state in any case file citing this rule:
   large workspace resolved only that way.
 
   Held at `draft` until it has engaged on a real history.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Engaged for the first time on a real history, on L: a bot's dependency bump
+  reverted and re-landed byte-identical 118 hours later. The shape the rule
+  tests, and the exemption above. Twenty reverts on M, the history chosen for
+  this rule, read after the extractor was re-run untimed: none returned
+  unchanged, and none re-landed by subject within the window at all — the
+  reverts there are reverts, the healthy shape at scale. On K, one revert
+  re-landed changed, the healthy shape. Still `draft`: its one engagement was an exemption.

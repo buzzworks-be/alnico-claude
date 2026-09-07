@@ -179,3 +179,20 @@ Three limitations to state in any case file citing this rule:
   chosen rather than swept, and because its detection subset biases towards
   over-reporting, which needs measuring on real repositories before it can be
   active.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Formed its reading on all three. On K one practice cleared the reliance
+  bar — tests alongside 77% of code-bearing changes — and had carriers, a
+  test-running workflow and a commit hook: no finding, the shape the rule
+  passes. On L and M no practice reached the bar, so the rule stood down.
+  The sweep's contribution is a defect: on M the extractor crashed reading a
+  diff that carried a byte outside the text encoding, before it could say
+  anything. The git reads now replace such bytes instead of failing; re-run,
+  M read reasoning alongside 31% of code-bearing changes, below the bar.
+  Still `draft`: it has yet to find a relied-on practice without a carrier
+  on a real history.

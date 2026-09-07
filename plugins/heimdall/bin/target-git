@@ -17,7 +17,22 @@ trap 'echo "heimdall: $(basename "$0") failed at line $LINENO under bash $BASH_V
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Code root above; state root below. In a checkout they are the same directory;
 # installed as a plugin they must not be. See bin/heimdall-state.
-STATE="$("$ROOT/bin/heimdall-state")"
+#
+# The checkout case is decided here without starting python: an extractor
+# makes thousands of calls through this script, and heimdall-state's
+# interpreter start was twenty times the cost of the git call it wrapped —
+# the reversal extractor spent minutes on it alone. The test is exactly
+# heimdall-state's own: nothing names a plugin root or a state root, and the
+# code root is a git work tree in which principles/PRINCIPLES.md is tracked.
+# Anything else falls through to heimdall-state, which stays the one place the
+# rule is defined for every other case.
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${HEIMDALL_STATE:-}" ] && [ -z "${CLAUDE_PLUGIN_DATA:-}" ] \
+   && [ -d "$ROOT/.git" ] \
+   && git -C "$ROOT" ls-files --error-unmatch principles/PRINCIPLES.md >/dev/null 2>&1; then
+  STATE="$ROOT"
+else
+  STATE="$("$ROOT/bin/heimdall-state")"
+fi
 TARGET="$STATE/.heimdall/target.git"
 
 if [ ! -d "$TARGET" ]; then

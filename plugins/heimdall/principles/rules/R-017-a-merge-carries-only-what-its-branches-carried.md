@@ -111,3 +111,12 @@ Limitations to state in a case file:
 
   Held at `draft`: it has engaged once, on a change that was innocent, and
   the line floor is chosen.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  401 merges examined on M and 17 on L, every one carrying only what its
+  branches carried; K has no merges. Still `draft`: it has engaged once, ever.

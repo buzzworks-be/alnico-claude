@@ -325,7 +325,8 @@ def main():
                 print("  in a repository that normally ships one. A revert taken for reasons a test could")
                 print("  not have caught — timing, a dependency, a flaky pipeline — is R-026's first exemption.")
             else:
-                print("R-026: no finding — every re-land carried verification.")
+                print("R-026: no finding — no re-land of 25+ code lines arrived without a test change"
+                      " (re-lands under that floor are listed above and not judged).")
 
     # ---- R-013: files majority-replaced by several distinct landings -------
     units = landings(ref, a.since, a.until, a.act_gap)

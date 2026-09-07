@@ -152,3 +152,14 @@ whether they name anything.
   reported, a 303-line one-heading inventory exempt as lookup, nine ordinary
   sectioned documents silent. On the real history it reports nothing, with both
   long spans exempted as lookup — the correct answer, reached mechanically.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Two candidates on L: a four-hundred-line adopters list under one heading,
+  which is a lookup list the non-prose exemption should have recognised and
+  did not, because a bulleted list is prose to the measure; and a real
+  sixty-page section of an operations manual. None on K or M. Still `draft`.

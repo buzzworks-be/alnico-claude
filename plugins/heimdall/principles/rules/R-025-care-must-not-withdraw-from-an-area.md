@@ -70,3 +70,21 @@ Limitations to state in a case file:
   landings, five and thirty-five areas were judged and none had withdrawn.
 
   Held at `draft`: margins chosen, no engagement yet.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  No area withdrew on K (6 areas judged) or M (11). On L the extractor ran
+  out of time before this rule; re-run, it produced the rule's first
+  candidate: of 14 areas judged, the top-level `.github` directory fell from
+  62% to 31% while the repository rose from 63% to 68%. Read in full, the
+  area had not changed character; the frame misreads it. Its landings are
+  workflow files — sixty-one in the second half against sixteen in the
+  first, most of them a bot's dependency bumps — and the shared classifier
+  counts workflow files as code, so the rule measured test accompaniment on
+  configuration that owes none. Not a finding about the history: a finding
+  about the classifier, and the measured case for the configuration class
+  its own note defers. Still `draft`: one engagement, an instrument artefact.

@@ -3,7 +3,7 @@ id: R-011
 title: Substantial implementation arrives with its verification
 principle: P-8
 severity: warning
-status: draft
+status: active
 introduced: 0.1.0   # first plugin version carrying this rule; bin/case-strip reads it
 applies-to:
   - "**/*"
@@ -73,7 +73,8 @@ else's architecture. Comparing a change against how the same repository treats
 changes of the same size is not an inference about stakes at all; the standard
 stays the target's own, and only the comparison group narrows. `bin/care-by-size`
 is the measurement, and both bands and bar remain **chosen rather than
-calibrated**, which is why this rule is still draft.
+calibrated** — a stated limitation, since the held-out sweep of 2026-09-07
+promoted the rule on its engagements rather than on its thresholds.
 
 ## Rationale
 
@@ -117,7 +118,7 @@ Two limitations to state in any case file citing this rule:
   believing a finding.
 - **The floors were chosen, not calibrated.** They are R-003's, borrowed because
   the rules are siblings and comparable figures are worth more than separately
-  tuned ones. This is why the rule is `draft`.
+  tuned ones. State it in any case file citing a finding.
 
 ## Evidence to cite
 
@@ -189,3 +190,20 @@ Two limitations to state in any case file citing this rule:
   edges were kept — the 25-99 knee straddles the bar on five histories, which
   is what a bar at the knee looks like. Still `draft`: the pooling boundary was
   read off five histories, not calibrated against any that had no hand in it.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Engaged on all three. On K the top candidates were translation-catalog
+  refreshes of thousands of lines, which the classifier counted as code until
+  the same day; beneath them, real landings without tests in bands where the
+  repository tests at 85% and up. On L, 169 candidates at a 65% convention,
+  the largest a page of new interface code and a series of class-to-function
+  component conversions. On M the bands sit flat at 53-63% and the candidates
+  are the repository's habit as much as anything. Three histories, three
+  engagements, survivors that read as the shape, and the conditional standing
+  down where it should: **promoted to active.** The floors remain chosen, and
+  that is now stated as a limitation rather than a reason to hold.

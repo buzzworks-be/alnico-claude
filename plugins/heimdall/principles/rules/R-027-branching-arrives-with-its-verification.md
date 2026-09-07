@@ -138,6 +138,10 @@ Limitations to state in any case file citing this rule:
   a contract, a compiler — and **tests that live outside the repository**,
   as in R-011.
 - **Tests added in a nearby landing.** Look at what landed next.
+- **A patch ported from an upstream project.** Where a repository tracks
+  another by porting its commits, the port carries the upstream's branching
+  and the upstream's verification, or lack of it; the decision was taken
+  elsewhere. The held-out editor history had these at the top of its list.
 
 ## History
 
@@ -191,3 +195,15 @@ Limitations to state in any case file citing this rule:
   above came from this read. Still `draft`: engaged on one history, and
   what it lists there is as much the repository's habit as an anomaly,
   which is the reading the convention share must carry into any case file.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Applied on all three: 93% convention on K with no candidate; 81% on L with
+  fifteen, most of them interface features and fixes with no test beside
+  them; 80% on M with twenty-four, the top of the list patches ported from
+  the upstream editor, which is the exemption above. Still `draft`, two days
+  old and with one exemption per history so far.

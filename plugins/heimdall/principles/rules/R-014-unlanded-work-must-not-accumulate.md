@@ -156,3 +156,18 @@ Limitations to state in a case file:
   sidecar per reading and reports begun, resolved and still outstanding
   against the previous one; the finding rests on the stale stock growing,
   and with one reading only it is held to an observation.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  On L, a stale stock of 745 branches — nearly four windows of throughput —
+  on a repository that removes refs when work lands, all old and not growing:
+  no finding, and the strongest observation the signal has produced. At least
+  one survivor was a release branch with a version suffix the structural-name
+  pattern did not know; fixed, and re-run the structural set grew from 25 to
+  64 and the stale stock fell to 709, three and a half windows — the same
+  reading, less of it borrowed from release lines. On M, eight stale; on K,
+  none.

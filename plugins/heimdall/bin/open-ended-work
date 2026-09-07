@@ -59,6 +59,7 @@ from classify import FORGE_COMMITTERS  # noqa: E402
 # Refs that are not work: release and integration lines, and the platform's own.
 STRUCTURAL_RE = re.compile(
     r"^(release|releases|rel|stable|hotfix|hotfixes|maint|maintenance|support|"
+    r"(release|releases|rel|stable|maint|support|hotfix)[-/_]v?\d[\w.-]*|"
     r"lts|v?\d+(\.\d+)*(\.x)?|dependabot/.*|renovate/.*|gh-pages|pages|docs?-site|"
     r"develop|development|dev|next|canary|beta|staging|trunk|master|main)$", re.I)
 

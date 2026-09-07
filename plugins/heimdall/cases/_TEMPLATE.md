@@ -31,12 +31,12 @@ outcomes:               # every rule that existed at principles_sha, no exceptio
   R-008: not-applicable
   R-009: observation
   R-010: not-reported
-  R-011: observation
+  R-011: pass
   R-012: not-reported
   R-013: not-reported
   R-014: not-applicable
   R-015: not-applicable
-  R-016: not-reported
+  R-016: pass
   R-017: not-applicable
   R-018: not-applicable
   R-019: not-applicable

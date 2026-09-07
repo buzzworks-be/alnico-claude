@@ -82,3 +82,21 @@ Limitations to state in a case file:
   was invisible. It is log order now.
 
   Held at `draft`: it has never engaged on a real history.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Formed its comparison on a real history for the first time, on K: one
+  change reverted and re-landed changed, thirty code lines with eighteen of
+  tests where the first attempt had eight with nineteen — verification on
+  both sides, a pass. On L the one pair was a bot's dependency bump of six
+  code lines, reverted and returned identical, untested both times: under
+  the twenty-five-line floor, so listed and not judged. Twenty reverts on
+  M, none re-landed within the window. The sweep changed the no-finding
+  line: it had said no re-land arrived without a test change, when what it
+  can say is that none *above the floor* did, and the ones under it are
+  listed beside it. Still `draft`: one engagement, a pass; it has yet to
+  find on a real history what it found on its fixture.

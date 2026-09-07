@@ -198,3 +198,17 @@ Two limitations to state in any case file citing this rule:
   history, and a rule whose numbers were chosen rather than calibrated may be
   raised as an observation and must not be reported as a violation. Promotion
   to `active` needs a sweep on repositories that did not shape it.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  L has the gradient this rule wants — thirty-five owner patterns at three
+  levels covering every file — and the rule still could not run: it reads
+  care as the review window on merges, and L lands by squash, so there were
+  seventeen merges and none above the median. That is a structural limit, now
+  stated: on a squash history R-008 sees no care at all, while R-021 reads the
+  same declaration through test accompaniment and can. K and M declare no
+  owners.

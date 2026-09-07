@@ -104,6 +104,13 @@ Limitations to state in a case file:
   home learning did not reach. Read the convention document before citing.
 - **A `style:` landing that is a formatter run with a formatter that reorders**
   — imports sorted, keys reordered — which whitespace removal does not undo.
+- **Documentation that lives in source files.** API annotation files, doc
+  comments, a source file the repository keeps as a ledger of ported changes:
+  `docs:` landings that edit them carry hundreds of lines in the source home
+  by directory and are documentation by content. The held-out editor history
+  put fourteen of these at the top of its list.
+- **A vendored dependency under a build type.** `build(deps): vendor …` lands
+  thousands of source lines that are someone else's, mechanically.
 
 ## History
 
@@ -120,3 +127,15 @@ Limitations to state in a case file:
   Held at `draft`: the floor is chosen, the home learning has run on one
   history that has a convention, and every survivor so far was innocent on
   reading.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Not applicable on K (no typed subjects); no finding on L at 97% typed, where
+  every restrictive type held its content; 124 candidates on M at 69% typed,
+  the top fourteen all `docs:` landings editing documentation kept in source
+  files, and `build:` landings vendoring dependencies — the two exemptions
+  above. Still `draft`: engaged, and what it listed was innocent.

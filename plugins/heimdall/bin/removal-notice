@@ -45,7 +45,11 @@ from classify import NOISE_RE, TEST_RE, kind  # noqa: E402
 CONFIG_RE = re.compile(r"\.(toml|cfg|ini|ya?ml|json|txt)$|(^|/)\.[^/]+$", re.I)
 
 DEFAULT_MARKERS = (r"@deprecated\b|#\[deprecated|DeprecationWarning|PendingDeprecationWarning"
-                   r"|\[Obsolete\b|^\s*//\s*Deprecated:|^\s*#\s*Deprecated:|\bDEPRECATED\b")
+                   r"|\[Obsolete\b|^\s*//\s*Deprecated:|^\s*#\s*Deprecated:|\bDEPRECATED\b"
+                   # A warning class named for deprecation or for the release the thing
+                   # goes in: the idiom of the frameworks with the most formal policies,
+                   # and the one the held-out sweep found the pattern did not know.
+                   r"|\b\w*(Deprecat|Deprecation|RemovedIn)\w*Warning\b")
 DEFAULT_BAR_DAYS = 30        # a notice shorter than this gave nobody time; chosen, not swept
 DEFAULT_MIN_MARKERS = 5      # below this the repository does not evidently give notice
 
@@ -129,6 +133,39 @@ def main():
         # downstream reader to give notice to.
         return p and kind(p) == "code" and not CONFIG_RE.search(p) and not re.search(r"(^|/)internal/", p)
 
+    # Seed the open notices from the tree at the window's start. Without this
+    # the walk knew only notices OPENED inside the window, so a closure of an
+    # older notice was invisible and a repository whose policy keeps a notice
+    # longer than the window could never show a single closure — the held-out
+    # deprecation-culture history showed 126 opened and none closed. Each
+    # seeded notice takes its start from blame, so its length is real.
+    seeded = 0
+    start_rev = tg("rev-list", "-1", "--first-parent", f"--before={a.since}", ref).strip()
+    if start_rev:
+        p = subprocess.run([str(ROOT / "bin" / "target-git"), "grep", "-n", "-E", "-e", a.markers,
+                            start_rev, "--", "."], capture_output=True, text=True, errors="replace")
+        for row in p.stdout.splitlines():
+            try:
+                _, fpath, lineno, text = row.split(":", 3)
+            except ValueError:
+                continue
+            if not eligible(fpath):
+                continue
+            key = (fpath, norm(text))
+            if key in added:
+                continue
+            b = subprocess.run([str(ROOT / "bin" / "target-git"), "blame", "-L", f"{lineno},{lineno}",
+                                "--line-porcelain", start_rev, "--", fpath],
+                               capture_output=True, text=True, errors="replace").stdout
+            t0 = None
+            for bl in b.splitlines():
+                if bl.startswith("committer-time "):
+                    t0 = int(bl.split()[1]); break
+            if t0 is None:
+                continue
+            added[key] = (t0, b.split(" ", 1)[0] if b else start_rev)
+            seeded += 1
+
     out = tg("log", "--first-parent", "--reverse", ref, f"--since={a.since}", f"--until={a.until}",
              "-p", "--unified=0", "-M", "--format=%x01%H%x01%ct%x01%s")
     old_path = None
@@ -157,9 +194,9 @@ def main():
     settle()
 
     n_total = len(added) + len(closed) + len(withdrawn)
-    print(f"S-14: markers /{a.markers[:40]}…/ on {ref}: {n_total} notice(s) opened in window, "
-          f"{len(closed)} closed (the thing removed), {len(withdrawn)} withdrawn (the deprecation "
-          f"reverted), {len(added)} still open.")
+    print(f"S-14: markers /{a.markers[:40]}…/ on {ref}: {seeded} notice(s) open at the window's start, "
+          f"{max(0, n_total - seeded)} opened in it; {len(closed)} closed (the thing removed), "
+          f"{len(withdrawn)} withdrawn (the deprecation reverted), {len(added)} still open.")
     if n_total < a.min_markers:
         print()
         print(f"R-018: NOT APPLICABLE — {n_total} deprecation notice(s) in the window, below "
@@ -176,8 +213,12 @@ def main():
         print(f"  open notices: median age {statistics.median(ages):.0f}d, oldest {ages[-1]:.0f}d")
     short = [(k, t0, t1, s0, s1) for k, t0, t1, s0, s1 in closed if (t1 - t0) < a.bar * day]
     print()
+    if not closed:
+        print(f"R-018: no closure in the window — nothing to judge. {len(added)} notice(s) stand open;")
+        print("  a removal is what this rule times, and none happened here.")
+        return 0
     if not short:
-        print(f"R-018: no finding — every notice closed in the window stood at least {a.bar} days.")
+        print(f"R-018: no finding — every notice closed in the window ({len(closed)}) stood at least {a.bar} days.")
         return 0
     print(f"R-018: CANDIDATE FINDING — {len(short)} notice(s) closed in under {a.bar} days.")
     for (p, text), t0, t1, s0, s1 in sorted(short, key=lambda x: x[2] - x[1])[:15]:

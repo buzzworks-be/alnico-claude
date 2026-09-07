@@ -26,6 +26,13 @@ The order of tests is the definition, and it is deliberate:
          sweep the bands were set on; adding a config class is a future
          change and needs its own re-sweep.
 
+Amended on 2026-09-07 by the held-out sweep, in three places: a directory
+whose name ends in "test" is a test directory; translation catalogs (.po,
+.pot, .mo) are noise; licence, notice, authorship and ownership files are
+documentation; and the FooTest.java suffix rule is case-sensitive, so that a
+file named "…-test.html" or "protest.go" is not a test. Each moves files only
+on repositories that have them, and none of the band-sweep histories did.
+
 `spec` and `specs` directories are TEST directories: a specification document
 inside one is caught by its extension first, and what remains is the JS and
 Ruby convention.
@@ -42,9 +49,14 @@ NOISE_RE = re.compile(
     r"(^|/)(vendor|vendored|node_modules|third[-_]party|dist|build|generated|__snapshots__|snapshots?|fixtures?)(/)"
     r"|(lock|\.lock)$|package-lock\.json$|yarn\.lock$|pnpm-lock\.yaml$|poetry\.lock$"
     r"|go\.sum$|Cargo\.lock$|composer\.lock$|Gemfile\.lock$"
-    r"|\.min\.(js|css)$|\.(svg|png|jpg|jpeg|gif|ico|pdf|woff2?|snap)$", re.I)
+    r"|\.min\.(js|css)$|\.(svg|png|jpg|jpeg|gif|ico|pdf|woff2?|snap)$"
+    # Translation catalogs are generated content: a catalog refresh landed
+    # five thousand "code" lines with no test on one held-out history.
+    r"|\.(po|pot|mo)$", re.I)
 
-DOC_EXT_RE = re.compile(r"\.(md|rst|adoc|txt)$", re.I)
+DOC_EXT_RE = re.compile(r"\.(md|rst|adoc|txt)$"
+                        # Licence, notice and authorship files, with or without an extension.
+                        r"|(^|/)(LICEN[CS]E|NOTICE|COPYING|AUTHORS|CONTRIBUTORS|CHANGELOG|CHANGES|CODEOWNERS)(\.[^/]+)?$", re.I)
 DOC_DIR_RE = re.compile(r"(^|/)(docs?|adr|adrs|decisions|rfcs?|design)(/|$)", re.I)
 
 # A directory whose NAME ENDS in test or tests is a test directory too — a
@@ -57,7 +69,9 @@ TEST_RE = re.compile(
     r"(^|/)(tests?|__tests__|spec|specs|e2e|it|testing|benches|benchmarks?)(/)"
     r"|(^|/)(?!latest/)[a-z0-9_-]*tests?(/)"
     r"|(^|/)test_[^/]+$|_test\.[^/.]+$|\.test\.[^/.]+$|\.spec\.[^/.]+$"
-    r"|Test[s]?\.[^/.]+$|_spec\.[^/.]+$|conftest\.py$", re.I)
+    # FooTest.java, case-SENSITIVE inside a case-insensitive pattern: with the
+    # flag on, "argocd-test.html" and "protest.go" were test files.
+    r"|(?-i:[a-z0-9]Tests?\.[^/.]+$)|_spec\.[^/.]+$|conftest\.py$", re.I)
 
 # Tests that do not live in a test FILE. Rust's dominant convention puts unit
 # tests in the source file under #[cfg(test)]; several other languages have a

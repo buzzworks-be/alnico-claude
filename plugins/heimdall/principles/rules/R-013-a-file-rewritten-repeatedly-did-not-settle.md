@@ -110,3 +110,17 @@ Limitations to state in a case file:
 
   Held at `draft`: thresholds unswept, and the rule has yet to flag a file that
   a reading confirmed as the shape it describes rather than an exemption.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Engaged on L: two files majority-replaced nine and five times, both
+  generated security-report files under the documentation tree, which the
+  exemptions name. One of them was labelled a test file because its name ends
+  in "test.html", the case-insensitive edge of a Java-convention pattern in
+  the shared classifier; fixed the same day. On K, none more than once; on
+  M, three of 143 replaced files more than once and none three times. Still
+  `draft`: every engagement so far has been an exemption.

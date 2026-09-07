@@ -320,7 +320,10 @@ mixed with abandoned and nothing in git separates them. The convention has to
 be established from the history — it is the measurement, not a preliminary —
 and on a sample of one merge it was established wrong. Also inflated by release
 and integration lines, forks and bot branches (excluded by name pattern, which
-is convention-bound); a bare clone carries only what the remote kept; and the
+is convention-bound — the held-out sweep found a release line named with a
+bare version suffix surviving it and reading as stale work, and the pattern
+now takes a version after the release, stable, maintenance, support and
+hotfix names); a bare clone carries only what the remote kept; and the
 most recent window is full of pull requests awaiting review, which look
 identical from git, so only refs older than a window are called stale. What it
 cannot see at all: work begun, abandoned and deleted. The stock is a floor.
@@ -460,7 +463,9 @@ of 441 identical.
 later deleted, keyed by file and normalised text, giving notices opened,
 closed, withdrawn (the closing commit is a revert) and still open; the
 distribution of notice length when closed; and the age of what is still
-open. Markers are recognised by the common languages' conventions and are
+open. Notices already open at the window's start are seeded from the tree
+at that point, each dated by blame, so a closure in the window is read
+against every notice that could have closed and not only those opened in it. Markers are recognised by the common languages' conventions and are
 configurable. Only code paths count — not configuration, documentation,
 tests, vendored trees, or anything under `internal/`. `bin/removal-notice`
 computes it.
@@ -475,7 +480,11 @@ times. Two symbols under `internal/` had no downstream reader. Three two-day
 closures were one reverted pull request — a notice withdrawn, not a thing
 removed. A rewording in a separate commit read as a fresh notice. And a
 repository migrating text markers to a struct-based mechanism the pattern
-does not know reads as closing every notice at once. What remains after all
+does not know reads as closing every notice at once. And a reading confined
+to the window: the first held-out run on a repository whose policy keeps a
+notice longer than the window saw 126 opened and none closed, because the
+walk knew nothing of the notices standing open when the window began —
+hence the seeding above. What remains after all
 of that: the pattern is convention-bound, a commented-out marker matches, and
 whether anything downstream existed is not in git at all.
 

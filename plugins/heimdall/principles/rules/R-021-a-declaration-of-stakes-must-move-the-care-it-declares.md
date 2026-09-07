@@ -97,3 +97,23 @@ Limitations to state in a case file:
   first and passed the second.
 
   Held at `draft`: it has never engaged on a real history.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Formed the comparison on real data for the first time, on L. The first
+  run read five declarations — two under the floor on one side, three judged,
+  care rising on all three — and then ran out of its time allowance inside
+  this rule. Re-run untimed, it read a sixth: twenty-two patterns added at
+  once, most of them whole paths, with ten landings on those paths in the
+  ninety days before and sixteen after, and tests alongside 70% of them
+  before, 69% after. That is the shape the rule was written for — a
+  declaration that moved nothing — found on a real history for the first
+  time, beside three where care rose. Not adjudicated here: whether the
+  declaration routed rather than raised care is a statement to look for in
+  the repository, and platform-enforced review is invisible to the frame;
+  both are the reader's. Not applicable on K and M, which declare no owners.
+  Still `draft`: one engagement with its shape, unadjudicated.

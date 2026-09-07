@@ -3,7 +3,7 @@ id: R-016
 title: An increment must not span more declared areas than the repository's own norm for its size
 principle: P-11
 severity: advisory
-status: draft
+status: active
 introduced: 0.8.0   # first plugin version carrying this rule; bin/case-strip reads it
 applies-to:
   - "**/*"
@@ -138,3 +138,20 @@ Limitations to state in a case file:
 
   Held at `draft`, and `advisory`: the floor, multiple and percentile were
   chosen, and the rule lists legitimately wide work by design.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Engaged on L with 27 candidates of 550: the top of the list a package-manager
+  migration, a toolchain bump and a release-automation change, which the
+  exemptions name, and beneath them wide features that read as width. On M,
+  three candidates at exactly the bar, two of them merges of a toolchain
+  migration and a test-harness rewrite. On K, none — a repository whose
+  landings stay inside one area. With the earlier read of forty-one confirmed
+  wide landings on the large calibration history, the rule has engaged on
+  three histories with survivors that read as the shape: **promoted to
+  active**, severity unchanged at advisory, because it lists legitimately wide
+  work by design.

@@ -93,3 +93,12 @@ Limitations to state in a case file:
 
   Held at `draft`: window lengths and the margin are chosen, and the rule
   has not engaged.
+
+- **Held-out sweep, 2026-09-07.** Three public histories none of the rules had
+  run on, each chosen for a shape and used only to confirm: K, a web framework
+  with a formal deprecation policy (about a thousand landings a year, all
+  applied patches); L, a continuous-delivery tool with per-path code owners
+  (about two thousand, squash); M, an editor that reverts often (about four
+  thousand, merges and squash).
+  Judged four kinds of declared risk on L across 192 moments and three on M across 98, none below baseline; on K, 74 releases, not below. Still `draft`: engaged on every history and found nothing, which is
+  consistent with the three being healthy and is not yet a demonstration.

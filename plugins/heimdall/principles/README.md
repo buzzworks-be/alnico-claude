@@ -72,7 +72,7 @@ A principle names a concern. A rule says how to look for it and what would
 innocently explain what it finds. A signal is the measurement a rule leans on,
 catalogued with how it misleads. The dotted edge is the one worth noticing: a
 concern reaches the case file only as far as its rules allow: a **draft** rule
-(R-008 to R-027) arrives as an observation, and so does a signal with no
+(eighteen of R-008 to R-027) arrives as an observation, and so does a signal with no
 rule behind it. **No active rule, no finding.**
 
 Two layers, on purpose.
@@ -197,11 +197,12 @@ should not exist before the measurement it consumes has been run and read.
 ## Status
 
 Fifteen **candidate** principles are written, `SIGNALS.md` catalogues
-seventeen measurements, and **seven rules are active** — R-001, R-004 and R-006
-from P-1, R-002 and R-005 from P-3, R-003 from P-2, R-007 from P-4.
+seventeen measurements, and **nine rules are active** — R-001, R-004 and R-006
+from P-1, R-002 and R-005 from P-3, R-003 from P-2, R-007 from P-4, and, since
+the held-out sweep of 2026-09-07, R-011 from P-8 and R-016 from P-11.
 
-**Twenty rules are in draft**, R-008 to R-027, at least one under each of
-P-5 to P-15. All may be raised in a case file as observations and never as
+**Eighteen rules are in draft**, R-008 to R-027 less the two above, at least
+one under each of P-5 to P-15. All may be raised in a case file as observations and never as
 violations, because their thresholds were chosen, or swept against a handful
 of histories, rather than calibrated.
 
@@ -262,10 +263,39 @@ one history: two "untested" landings carried their fixtures in exactly such
 a directory, and every rule that reads verification through
 `bin/classify.py` had been reading that repository as less tested than it
 is. The pattern now matches any directory name ending in test or tests,
-with `latest/` excluded by name. This moves files from code to test only
-on repositories that have such a directory; none of the six band-sweep
-histories did, so the bands stand, but it is the first change to the
-classifier since it was unified and is recorded here for that reason.
+with `latest/` excluded by name. The held-out sweep the same day added three
+more: translation catalogs are noise, licence and notice files are
+documentation, and the `FooTest.java` suffix rule is case-sensitive. Each
+moves files only on repositories that have such files; none of the six
+band-sweep histories did, so the bands stand, and these are the first
+changes to the classifier since it was unified, recorded here for that
+reason.
+
+**The held-out sweep ran on 2026-09-07**, the first calibration against
+histories none of the rules had shaped: three public repositories chosen
+for a shape each — a formal deprecation policy, per-path code owners, a
+habit of reverting — and used only to confirm. Every draft rule ran on all
+three. Two were promoted on their engagements: R-011, which engaged on all
+three with survivors that read as its shape, and R-016, which engaged on
+two beside the earlier read of forty-one confirmed wide landings. Six
+engaged for the first time on real data and stayed draft: three because
+what they found was innocent (R-012, R-013, R-019); R-026 because its one
+pair passed; R-021 because its one candidate — a broad declaration after which care did not move — is
+unadjudicated; and R-025 because its one candidate was the classifier's,
+not the history's: an area of workflow files, counted as code, on which
+test accompaniment was never owed. That last is the measured case for the
+configuration class the classifier note above defers.
+R-018, on the deprecation
+culture chosen for it, formed a reading only after two amendments and then
+found what a formal policy predicts: thirteen closures, none under the bar.
+The sweep also found instrument defects, each recorded where it was
+fixed: R-018's pattern did not know the warning-class idiom of the very
+deprecation culture it was tested on, and its walk knew nothing of notices
+already open when the window began; R-009's extractor crashed on a
+non-text byte in a diff; two extractors ran out of time on the histories
+chosen for them; and the classifier read translation catalogs as
+code, licence files as code, and a file named `…test.html` as a test.
+Each rule's own history carries its result by the letters K, L and M.
 
 **R-008** (P-5) is the first rule in the frame to take its standard from the
 target's own declarations rather than from Heimdall: it compares the review

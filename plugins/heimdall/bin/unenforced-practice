@@ -84,7 +84,7 @@ DOC_TOKENS = re.compile(
 
 def git(*args, check=True):
     proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, errors="replace")
     if check and proc.returncode != 0:
         sys.exit(f"unenforced-practice: git failed: {' '.join(args)}\n{proc.stderr}")
     return proc.stdout
@@ -92,7 +92,7 @@ def git(*args, check=True):
 
 def show(ref, path):
     p = subprocess.run([str(ROOT / "bin" / "target-git"), "show", f"{ref}:{path}"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, errors="replace")
     return p.stdout if p.returncode == 0 else ""
 
 
