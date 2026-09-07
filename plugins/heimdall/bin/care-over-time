@@ -1,0 +1,524 @@
+#!/usr/bin/env python3
+"""Does this repository's care track its own risk through time, and hold as its pace rises?
+
+The measurement behind signal S-16 and the checks behind R-021 to R-025.
+Everything else in the frame reads one window against the one before it.
+This reads the repository as a series of windows and asks longitudinal
+questions of it, all against its own baseline, all with ranks and
+before/after comparisons a reader can recompute by hand.
+
+One pass builds the series: every landing in the span, with its size, whether
+tests and reasoning arrived, its review interval where one is measurable (a
+merge commit's time minus its branch tip's), and the paths it touched. Then:
+
+  R-021  a declaration of stakes must move the care it declares — the commit
+         that added patterns to the ownership file is a date; care on those
+         paths before it against after it.
+  R-022  care in a declared-risk window (before a release tag, after a
+         revert, around a breaking change or major bump) must not fall below
+         the repository's baseline.
+  R-023  the size-interval elasticity must not flatten — per window, the
+         rank correlation between a merge's size and its review interval.
+         Merge-commit histories only.
+  R-024  care in the highest-throughput windows must not be lower than in the
+         lowest — windows ranked by landings, top tercile against bottom.
+  R-025  care must not quietly withdraw from an area — the declared partition
+         crossed with time, first half of the span against second.
+
+Every one of these needs history. Below eight windows, or the per-rule floors,
+the outcome is CANNOT TELL and that is the ordinary result on a young
+repository, not a gap. A documented regime change inside the span makes a
+trend out of nothing; split at it.
+
+Usage:
+  bin/care-over-time --windows 8 --window 90
+  bin/care-over-time --windows 12 --window 60 --json
+"""
+
+import argparse
+import collections
+import json
+import re
+import statistics
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE, INLINE_TEST_RE, FORGE_COMMITTERS, kind  # noqa: E402
+
+DEFAULT_WINDOWS = 8
+DEFAULT_WINDOW_DAYS = 90
+DEFAULT_ACT_GAP = 60
+MIN_WINDOWS = 8
+MIN_LANDINGS_PER_WINDOW = 10
+CODE_FLOOR = 25            # a landing this small owes nothing; excluded from care rates
+DOC_DOMINANT = 0.5
+CARE_DROP = 0.15           # points of test rate; chosen, not swept
+RISK_DAYS = 14
+DECLARATION_DAYS = 90
+MIN_SIDE = 10
+MIN_MERGES_FOR_RHO = 30
+RHO_FLAT = 0.10
+AREA_DROP = 0.20
+REVERT_RE = re.compile(r"^\s*revert\b", re.I)
+BREAKING_RE = re.compile(r"^\s*[a-z]+(\([^)]*\))?!:|BREAKING[ -]CHANGE", re.I | re.M)
+MAJOR_TAG_RE = re.compile(r"^v?(\d+)\.0\.0$")
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        sys.exit(f"care-over-time: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def tg_try(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode in (2, 3):
+        sys.stderr.write(p.stderr)
+        sys.exit(p.returncode)
+    return p.returncode, p.stdout
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def show(ref, path):
+    rc, out = tg_try("show", f"{ref}:{path}")
+    return out if rc == 0 else ""
+
+
+# ---- the series --------------------------------------------------------------
+
+def numstat(*args):
+    rows = []
+    for r in tg(*args).splitlines():
+        c = r.split("\t")
+        if len(c) == 3:
+            p = c[2]
+            if "=>" in p:
+                p = re.sub(r"\{[^}]*=> ([^}]*)\}", r"\1", p)
+            rows.append((p, (int(c[0]) if c[0].isdigit() else 0), (int(c[1]) if c[1].isdigit() else 0)))
+    return rows
+
+
+def inline_tests(diffargs):
+    for a in diffargs:
+        for line in tg(*a).splitlines():
+            if line.startswith("+") and not line.startswith("+++") and INLINE_TEST_RE.search(line):
+                return True
+    return False
+
+
+def build_series(ref, since_ts, act_gap_min, until_ts=None):
+    """Landings oldest first: dict(ts, code, test, doc, eligible, merge, interval, paths, subject, body, route).
+
+    route is "merge", "forge" (a squash or rebase landing committed by the
+    hosting platform) or "direct"; bin/case-charts colours the timeline by it."""
+    out, act, gap = [], [], act_gap_min * 60
+
+    def record(ts, rows, diffargs, merge, interval, subject, body, route):
+        code = doc = test = 0
+        paths = []
+        for p, add, dele in rows:
+            k = kind(p)
+            if k == "noise":
+                continue
+            paths.append(p)
+            if k == "test":
+                test += add + dele
+            elif k == "doc":
+                doc += add + dele
+            else:
+                code += add + dele
+        if code == 0 and test == 0 and doc == 0:
+            return
+        if test == 0 and code > 0 and inline_tests(diffargs):
+            test = 1
+        out.append({"ts": ts, "code": code, "test": test > 0, "doc": doc > 0,
+                    "eligible": doc + code > 0 and doc / (doc + code) < DOC_DOMINANT,
+                    "merge": merge, "interval": interval, "paths": paths,
+                    "subject": subject, "body": body, "route": route})
+
+    def flush(route="direct"):
+        if act:
+            rows, diffargs = [], []
+            for sha, _, _, _ in act:
+                rows += numstat("show", "--numstat", "-M", "--format=", sha)
+                diffargs.append(("show", "--unified=0", "--format=", sha))
+            record(act[0][1], rows, diffargs, False, None, act[0][2], act[0][3], route)
+            act.clear()
+
+    log = tg("log", "--first-parent", ref, "--reverse", f"--since={since_ts}",
+             *([f"--until={until_ts}"] if until_ts else []),
+             "--format=%H%x01%P%x01%ct%x01%ce%x01%s%x01%b%x02")
+    for entry in log.split("\x02"):
+        entry = entry.strip("\n")
+        if not entry.strip():
+            continue
+        sha, parents, ts, ce, subject, body = entry.split("\x01", 5)
+        plist, ts = parents.split(), int(ts)
+        if len(plist) >= 2:
+            flush()
+            tip_ts = int(tg("log", "-1", "--format=%ct", plist[1]).strip() or ts)
+            rows = numstat("diff", "--numstat", "-M", f"{plist[0]}..{sha}")
+            record(ts, rows, [("diff", "--unified=0", f"{plist[0]}..{sha}")], True,
+                   max(0, ts - tip_ts), subject, body, "merge")
+        elif ce.strip().lower() in FORGE_COMMITTERS:
+            flush()
+            act.append((sha, ts, subject, body)); flush("forge")
+        else:
+            if act and ts - act[-1][1] > gap:
+                flush()
+            act.append((sha, ts, subject, body))
+    flush()
+    return out
+
+
+# ---- helpers ------------------------------------------------------------------
+
+def rate(landings, key):
+    xs = [l for l in landings if l["code"] >= CODE_FLOOR and (key != "doc" or l["eligible"])]
+    return (sum(1 for l in xs if l[key]) / len(xs), len(xs)) if xs else (None, 0)
+
+
+def spearman(pairs):
+    """Rank correlation, ties by average rank. None below three points."""
+    if len(pairs) < 3:
+        return None
+    def ranks(v):
+        order = sorted(range(len(v)), key=lambda i: v[i]); r = [0.0] * len(v); i = 0
+        while i < len(order):
+            j = i
+            while j + 1 < len(order) and v[order[j + 1]] == v[order[i]]:
+                j += 1
+            for k in range(i, j + 1):
+                r[order[k]] = (i + j) / 2 + 1
+            i = j + 1
+        return r
+    rx, ry = ranks([p[0] for p in pairs]), ranks([p[1] for p in pairs])
+    n = len(pairs); mx, my = sum(rx) / n, sum(ry) / n
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    den = (sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry)) ** 0.5
+    return num / den if den else None
+
+
+def owners_patterns_added(sha, path):
+    """Patterns added to an ownership file in one commit."""
+    out = tg("show", "--unified=0", "--format=", sha, "--", path)
+    pats = []
+    for line in out.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            l = line[1:].split("#", 1)[0].strip()
+            if l and l.split()[0] not in ("*", "/*", "**"):
+                pats.append(l.split()[0])
+    return pats
+
+
+def owners_regex(pat):
+    anchored = pat.startswith("/"); p = pat.lstrip("/")
+    if p.endswith("/"):
+        p += "**"
+    rx = re.escape(p).replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", "[^/]")
+    return re.compile(("^" if anchored else "(^|.*/)") + rx + "$")
+
+
+def partition(ref):
+    tree = [f for f in tg("ls-tree", "-r", "--name-only", ref).splitlines() if f]
+    globs = []
+    y = show(ref, "pnpm-workspace.yaml")
+    if y:
+        globs += [m.group(1).strip() for m in re.finditer(r"^\s*-\s*['\"]?([^'\"\n#!]+?)['\"]?\s*$", y, re.M)]
+    pj = show(ref, "package.json")
+    if pj and not globs:
+        try:
+            ws = json.loads(pj).get("workspaces")
+            ws = ws.get("packages", []) if isinstance(ws, dict) else ws
+            globs += [g for g in (ws or []) if isinstance(g, str) and not g.startswith("!")]
+        except ValueError:
+            pass
+    ct = show(ref, "Cargo.toml")
+    if ct and not globs:
+        m = re.search(r"\[workspace\][^\[]*?members\s*=\s*\[(.*?)\]", ct, re.S)
+        if m:
+            globs += re.findall(r'"([^"]+)"', m.group(1))
+    areas = set()
+    if globs:
+        import fnmatch
+        for g in globs:
+            g = g.rstrip("/"); depth = g.count("/") + 1
+            for f in tree:
+                parts = f.split("/")
+                if len(parts) > depth and fnmatch.fnmatch("/".join(parts[:depth]), g):
+                    areas.add("/".join(parts[:depth]))
+        if len(areas) >= 2:
+            return "workspace manifest", sorted(areas)
+    top = collections.Counter(f.split("/")[0] for f in tree if "/" in f)
+    areas = {d for d in top if kind(d + "/x.py") == "code"}
+    return ("top-level directories", sorted(areas)) if len(areas) >= 2 else (None, [])
+
+
+def area_of(path, areas):
+    for d in areas:
+        if path == d or path.startswith(d + "/"):
+            return d
+    return None
+
+
+# ---- main -------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--windows", type=int, default=DEFAULT_WINDOWS)
+    ap.add_argument("--window", type=int, default=DEFAULT_WINDOW_DAYS, help="days")
+    ap.add_argument("--act-gap", type=int, default=DEFAULT_ACT_GAP)
+    ap.add_argument("--care-drop", type=float, default=CARE_DROP)
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+    now = int(datetime.now(timezone.utc).timestamp()); day = 86400
+    span = a.windows * a.window * day
+    since = now - span
+    series = build_series(ref, since, a.act_gap)
+    if not series:
+        # Not a return: R-021 reads the whole history and builds its own series
+        # around each declaration, so an empty span still has that to say. The
+        # windowed rules below all read an empty series as "cannot tell".
+        print("S-16: no landings in the span.")
+    first = int(tg("log", "--reverse", "--format=%ct", ref).split()[0])
+    covered = min(a.windows, max(1, (now - max(first, since)) // (a.window * day) + (1 if (now - max(first, since)) % (a.window * day) else 0)))
+
+    windows = [[] for _ in range(a.windows)]
+    for l in series:
+        i = min((now - l["ts"]) // (a.window * day), a.windows - 1)
+        windows[i].append(l)
+    windows = windows[::-1]      # oldest first
+    print(f"S-16: {len(series)} landing(s) on {ref} over {a.windows} window(s) of {a.window} days"
+          f"{f' (history reaches back {covered} of them)' if covered < a.windows else ''}.")
+    print(f"  {'window ending':<14}{'landings':>9}{'≥floor':>8}{'tests':>7}{'reasoning':>11}{'merges':>8}{'ρ size~wait':>12}")
+    rows = []
+    for i, w in enumerate(windows):
+        end = now - (a.windows - 1 - i) * a.window * day
+        t, nt = rate(w, "test"); d, nd = rate(w, "doc")
+        merges = [l for l in w if l["merge"] and l["interval"] is not None and l["code"] >= CODE_FLOOR]
+        rho = spearman([(l["code"], l["interval"]) for l in merges])
+        rows.append({"end": end, "n": len(w), "n_floor": nt, "test": t, "doc": d, "merges": len(merges), "rho": rho})
+        print(f"  {datetime.fromtimestamp(end, timezone.utc).strftime('%Y-%m-%d'):<14}{len(w):>9}{nt:>8}"
+              f"{(f'{t:.0%}' if t is not None else '—'):>7}{(f'{d:.0%}' if d is not None else '—'):>11}"
+              f"{len(merges):>8}{(f'{rho:+.2f}' if rho is not None else '—'):>12}")
+    thick = [r for r in rows if r["n_floor"] >= MIN_LANDINGS_PER_WINDOW]
+    enough = len(thick) >= MIN_WINDOWS
+    print(f"  windows with ≥{MIN_LANDINGS_PER_WINDOW} landings above the {CODE_FLOOR}-line floor: {len(thick)} "
+          f"(need {MIN_WINDOWS})")
+    print()
+
+    # ---- R-024: care in the fastest windows against the slowest -----------------
+    if not enough:
+        print(f"R-024: CANNOT TELL — {len(thick)} usable window(s); a trend needs {MIN_WINDOWS}. "
+              "Ordinary on a young or quiet history.")
+    else:
+        ranked = sorted(thick, key=lambda r: r["n"])
+        k = max(1, len(ranked) // 3)
+        low, high = ranked[:k], ranked[-k:]
+        lt = statistics.mean(r["test"] for r in low); ht = statistics.mean(r["test"] for r in high)
+        print(f"R-024: windows by throughput — slowest {k}: {statistics.mean(r['n'] for r in low):.0f} landings, "
+              f"tests {lt:.0%}; fastest {k}: {statistics.mean(r['n'] for r in high):.0f} landings, tests {ht:.0%}.")
+        if ht < lt - a.care_drop:
+            print(f"R-024: CANDIDATE FINDING — care is {lt - ht:.0%} points lower in the fastest windows than the slowest.")
+        else:
+            print("R-024: no finding — care in the fastest windows is not below the slowest.")
+        half = len(thick) // 2
+        e, l_ = statistics.mean(r["test"] for r in thick[:half]), statistics.mean(r["test"] for r in thick[half:])
+        print(f"  observation — in time, not by pace: tests {e:.0%} in the earlier half of the windows, {l_:.0%} in the later."
+              + ("  A drift a reader should see whatever the pace comparison says." if e - l_ >= a.care_drop else ""))
+    print()
+
+    # ---- R-023: elasticity of the review window to size ---------------------------
+    merge_total = sum(r["merges"] for r in rows)
+    if merge_total < MIN_MERGES_FOR_RHO:
+        print(f"R-023: NOT APPLICABLE — {merge_total} merge(s) with a measurable review interval; the size-"
+              f"interval elasticity needs {MIN_MERGES_FOR_RHO}. Squash and applied-patch histories have none.")
+    else:
+        rhos = [r["rho"] for r in rows if r["rho"] is not None and r["merges"] >= 10]
+        if len(rhos) < 4:
+            print(f"R-023: CANNOT TELL — {len(rhos)} window(s) with ten measurable merges; a trend needs four.")
+        else:
+            half = len(rhos) // 2
+            early, late = statistics.median(rhos[:half]), statistics.median(rhos[half:])
+            print(f"R-023: rank correlation of size and review interval, per window — early median {early:+.2f}, "
+                  f"late median {late:+.2f}, overall {statistics.median(rhos):+.2f}.")
+            if late <= RHO_FLAT and early > RHO_FLAT + 0.15:
+                print("R-023: CANDIDATE FINDING — the review window used to grow with change size and no longer does.")
+            elif statistics.median(rhos) <= RHO_FLAT:
+                print("R-023: observation — the review window does not grow with change size in this history at all;")
+                print("  a flat process, not a flattening one. P-5's uniformity, as a fact about the repository.")
+            else:
+                print("R-023: no finding — bigger changes still wait longer here.")
+    print()
+
+    # ---- R-022: care in declared-risk windows ------------------------------------
+    moments = []
+    tags = []
+    for line in tg("for-each-ref", "--format=%(refname:short)%01%(creatordate:unix)", "refs/tags").splitlines():
+        name, ts = line.split("\x01"); ts = int(ts or 0)
+        if ts >= since:
+            tags.append((ts, name))
+    tags.sort()
+    # A repository that releases every twelve days has no "run-up to a
+    # release" distinct from the rest of its life: with a fixed fourteen-day
+    # window, 84% of one history's landings sat inside a risk window and the
+    # baseline was the leftover. The window is a quarter of the median gap
+    # between tags, capped at RISK_DAYS.
+    gaps = [b[0] - a_[0] for a_, b in zip(tags, tags[1:])]
+    release_days = min(RISK_DAYS, max(1, (statistics.median(gaps) / day) / 4)) if gaps else RISK_DAYS
+    for ts, name in tags:
+        moments.append(("release", ts - int(release_days * day), ts, name))
+        if MAJOR_TAG_RE.match(name):
+            moments.append(("major", ts - RISK_DAYS * day, ts + RISK_DAYS * day, name))
+    for l in series:
+        if REVERT_RE.search(l["subject"]):
+            moments.append(("post-revert", l["ts"], l["ts"] + RISK_DAYS * day, l["subject"][:40]))
+        if BREAKING_RE.search(l["subject"] + "\n" + l["body"]):
+            moments.append(("breaking", l["ts"] - RISK_DAYS * day // 2, l["ts"] + RISK_DAYS * day // 2, l["subject"][:40]))
+    if not moments:
+        print("R-022: NOT APPLICABLE — the repository declares no risk moments this can read (no tags in the span,")
+        print("  no reverts, no breaking-change markers).")
+    else:
+        kinds = collections.Counter(m[0] for m in moments)
+        print(f"R-022: {len(moments)} declared risk moment(s) — " + ", ".join(f"{k} {n}" for k, n in kinds.most_common())
+              + f"; release run-up {release_days:.0f}d.")
+        # Each kind of moment on its own. A repository that marks a breaking
+        # change in every other landing has made "breaking" its normal state,
+        # and that kind is set aside; its release run-ups may still be rare
+        # enough to compare. One history had 282 breaking markers in two years
+        # and 28 releases.
+        any_judged = False; finding = False
+        for kd in kinds:
+            ms = [m for m in moments if m[0] == kd]
+            inside = [l for l in series if any(lo <= l["ts"] <= hi for _, lo, hi, _ in ms)]
+            outside = [l for l in series if l not in inside]
+            rt, nr = rate(inside, "test"); bt, nb = rate(outside, "test")
+            if nr < MIN_SIDE or nb < MIN_SIDE or rt is None or bt is None:
+                print(f"  {kd:<12} {nr:>4} inside, {nb:>4} outside — cannot tell (fewer than {MIN_SIDE} on one side)")
+                continue
+            if nr / (nr + nb) > 0.6:
+                print(f"  {kd:<12} {nr:>4} inside, {nb:>4} outside — set aside: this is the repository's normal state")
+                continue
+            any_judged = True
+            verdict = "CANDIDATE" if rt < bt - a.care_drop else "not below"
+            print(f"  {kd:<12} {nr:>4} inside, {nb:>4} outside — tests {rt:.0%} vs baseline {bt:.0%}: {verdict}")
+            finding |= rt < bt - a.care_drop
+        if not any_judged:
+            print("R-022: CANNOT TELL — no kind of risk moment is both frequent enough and rare enough to compare.")
+        elif finding:
+            print("R-022: CANDIDATE FINDING — care is lower where the repository itself declared risk.")
+        else:
+            print("R-022: no finding — care where risk was declared is not below the baseline.")
+    print()
+
+    # ---- R-021: a declaration of stakes must move the care it declares --------------
+    decls = []
+    for path in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"):
+        for line in tg("log", "--first-parent", ref, "--format=%H%x01%ct", "--", path).splitlines():
+            sha, ts = line.split("\x01")
+            pats = owners_patterns_added(sha, path)
+            if pats:
+                decls.append((int(ts), sha, path, pats))
+    # The whole history, not the span: a declaration is a one-off event and
+    # the last one may be years old. Each gets its own series, ±DECLARATION_DAYS.
+    decls = sorted(decls)[-6:]
+    if not decls:
+        print("R-021: NOT APPLICABLE — no ownership declaration was ever added or extended in this history.")
+    else:
+        for ts, sha, path, pats in sorted(decls):
+            rxs = [owners_regex(p) for p in pats]
+            def declared(l):
+                return any(rx.match(p) for p in l["paths"] for rx in rxs)
+            local = build_series(ref, ts - DECLARATION_DAYS * day, a.act_gap, ts + DECLARATION_DAYS * day)
+            before = [l for l in local if l["ts"] < ts and declared(l)]
+            after = [l for l in local if l["ts"] >= ts and declared(l)]
+            bt, nb = rate(before, "test"); at, na = rate(after, "test")
+            bm = [l["interval"] / max(l["code"], 1) for l in before if l["merge"] and l["interval"] is not None and l["code"] >= CODE_FLOOR]
+            am = [l["interval"] / max(l["code"], 1) for l in after if l["merge"] and l["interval"] is not None and l["code"] >= CODE_FLOOR]
+            print(f"R-021: {sha[:12]} added {len(pats)} pattern(s) to {path} on "
+                  f"{datetime.fromtimestamp(ts, timezone.utc).strftime('%Y-%m-%d')}; landings on those paths: "
+                  f"{nb} in the {DECLARATION_DAYS} days before, {na} after.")
+            if nb < MIN_SIDE or na < MIN_SIDE:
+                print(f"  CANNOT TELL — fewer than {MIN_SIDE} landings on one side.")
+                continue
+            line = f"  tests with code: before {bt:.0%}, after {at:.0%}"
+            if len(bm) >= 5 and len(am) >= 5:
+                line += f"; review seconds per line (median): before {statistics.median(bm):.0f}, after {statistics.median(am):.0f}"
+            print(line)
+            moved = (at is not None and bt is not None and at > bt) or \
+                    (len(bm) >= 5 and len(am) >= 5 and statistics.median(am) > statistics.median(bm))
+            if not moved:
+                if bt is not None and bt >= 0.9:
+                    print("  R-021: no finding — care on the declared paths was already at its ceiling before")
+                    print("  the declaration and could not rise. Not decoration; nothing left to move.")
+                    continue
+                print("  R-021: CANDIDATE FINDING — no care measure rose on the paths the declaration singled out.")
+            else:
+                print("  R-021: no finding — care on the declared paths rose after the declaration.")
+    print()
+
+    # ---- R-025: care must not quietly withdraw from an area ---------------------------
+    label, areas = partition(ref)
+    if not areas:
+        print("R-025: NOT APPLICABLE — no partition to read (see R-016).")
+    else:
+        mid = now - span // 2
+        halves = {"first": [l for l in series if l["ts"] < mid], "second": [l for l in series if l["ts"] >= mid]}
+        overall = {h: rate(ls, "test")[0] for h, ls in halves.items()}
+        per_area = collections.defaultdict(lambda: {"first": [], "second": []})
+        for h, ls in halves.items():
+            for l in ls:
+                touched = {area_of(p, areas) for p in l["paths"]} - {None}
+                for ar in touched:
+                    per_area[ar][h].append(l)
+        fmt = lambda v: f"{v:.0%}" if v is not None else "—"
+        print(f"R-025: partition = {label}, {len(areas)} area(s); repository test rate first half "
+              f"{fmt(overall['first'])}, second half {fmt(overall['second'])}.")
+        cands, judged = [], 0
+        for ar, hs in per_area.items():
+            f, nf = rate(hs["first"], "test"); s_, ns = rate(hs["second"], "test")
+            if nf < MIN_SIDE or ns < MIN_SIDE or f is None or s_ is None:
+                continue
+            judged += 1
+            repo_move = (overall["second"] or 0) - (overall["first"] or 0)
+            if f - s_ >= AREA_DROP and (f - s_) - (-repo_move) >= AREA_DROP / 2:
+                cands.append((ar, f, s_, nf, ns))
+        print(f"  areas with {MIN_SIDE}+ landings in each half: {judged}")
+        if judged == 0:
+            print("R-025: CANNOT TELL — no area has enough landings in both halves.")
+        elif cands:
+            print(f"R-025: CANDIDATE FINDING — {len(cands)} area(s) whose test rate fell by {AREA_DROP:.0%}+ points while the repository's did not.")
+            for ar, f, s_, nf, ns in sorted(cands, key=lambda x: x[1] - x[2], reverse=True)[:10]:
+                print(f"    {ar:<40} {f:.0%} ({nf}) → {s_:.0%} ({ns})")
+        else:
+            print("R-025: no finding — no area's care fell away from the repository's.")
+
+    if a.json:
+        print(json.dumps({"windows": rows, "landings": len(series)}, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

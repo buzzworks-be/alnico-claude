@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Does this repository take more care with larger changes than with smaller ones?
+
+The measurement behind stratification. R-003 and R-011 originally applied one
+size threshold to every landing: below it a change owed nothing, above it the
+same thing was owed regardless of scale. P-5 says that is not discipline but
+uniformity, and the obvious fix — read stakes off the code — is the one thing
+that principle forbids, because it would be Heimdall holding an opinion about
+someone else's architecture.
+
+Stratification is the move that is not forbidden. Instead of asking "did this
+150-line change carry a test", ask "does this repository carry tests on
+150-line changes". The standard stays the target's own; only the comparison
+group narrows from the whole window to changes of comparable size.
+
+First measured across three repositories and 304 landings, on a landing unit
+that turned out to weld squash landings together (see FORGE_COMMITTERS), and
+re-swept on the corrected unit across five histories and about 2,180
+landings. The corrected shape: the test rate climbs steeply from the 1-24 band
+(12-30%) through 25-99 (42-72%) to 100-299 (69-86%), then PLATEAUS — above 100
+lines every history sat at 74-80%, and 300-999 and 1000+ moved in no
+consistent direction from 100-299. The consequence for the rules is concrete
+in both directions: in the 25-99 band the five histories straddle the
+convention bar (42% to 72%), so an untested 60-line landing is an anomaly on
+some and unremarkable on others; above 100 lines the bands are one regime,
+and judging them separately only thins the sample — on a single-package
+repository the top two bands held six and two landings. The rules now pool the
+plateau for the convention and still report each band.
+
+Documentation rose too but noisily, and part of that is measurement rather than
+behaviour: a landing whose change IS a document counts as carrying reasoning
+when nothing was reasoned about. Doc-dominant landings are therefore excluded
+from the reasoning column — see DOC_DOMINANT below.
+
+Usage:
+  bin/care-by-size --ref main
+  bin/care-by-size --ref main --since 2026-01-01
+"""
+
+import argparse
+import collections
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE, TEST_RE, DOC_RE, INLINE_TEST_RE, FORGE_COMMITTERS  # noqa: E402
+
+
+# A landing this doc-heavy is a documentation change, not a code change that
+# brought documentation with it. Counting it as "carried reasoning" inflates the
+# small bands with README edits and says nothing about how code is produced.
+DOC_DOMINANT = 0.5
+
+BANDS = [(1, 24), (25, 99), (100, 299), (300, 999), (1000, 10 ** 9)]
+DEFAULT_ACT_GAP = 60
+DEFAULT_MIN_BAND = 5      # below this a band's rate is noise, not a norm
+
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        sys.exit(f"care-by-size: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def band_of(n):
+    for lo, hi in BANDS:
+        if lo <= n <= hi:
+            return f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+"
+    return None
+
+
+def band_labels():
+    return [f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+" for lo, hi in BANDS]
+
+
+def numstat(*args):
+    rows = []
+    for r in tg(*args).splitlines():
+        c = r.split("\t")
+        if len(c) == 3:
+            rows.append((c[2], (int(c[0]) if c[0].isdigit() else 0)
+                         + (int(c[1]) if c[1].isdigit() else 0)))
+    return rows
+
+
+def landings(ref, since, until, act_gap_min):
+    """Merges by first-parent diff; runs of direct commits grouped by act gap.
+
+    The same unit bin/tests-with-code uses, and for the same reason: a branch
+    that puts code in one commit and its tests in the next arrived with tests.
+    """
+    out, act = [], []
+    gap = act_gap_min * 60
+
+    def flush():
+        if not act:
+            return
+        rows, diffs = [], []
+        for sha, _ in act:
+            rows += numstat("show", "--numstat", "--format=", sha)
+            diffs.append(("show", "--unified=0", "--format=", sha))
+        if rows:
+            out.append((rows, diffs))
+        act.clear()
+
+    log = tg("log", "--first-parent", ref, "--reverse",
+             f"--since={since}", f"--until={until}", "--format=%H%x01%P%x01%ct%x01%ce")
+    for line in log.splitlines():
+        if not line.strip():
+            continue
+        sha, parents, ts, ce = line.split("\x01")
+        plist, ts = parents.split(), int(ts)
+        if len(plist) >= 2:
+            flush()
+            rows = numstat("diff", "--numstat", f"{plist[0]}..{sha}")
+            if rows:
+                out.append((rows, [("diff", "--unified=0", f"{plist[0]}..{sha}")]))
+        elif ce.strip().lower() in FORGE_COMMITTERS:
+            flush()
+            act.append((sha, ts))
+            flush()
+        else:
+            if act and ts - act[-1][1] > gap:
+                flush()
+            act.append((sha, ts))
+    flush()
+    return out
+
+
+def inline_tests(diffs):
+    for a in diffs:
+        for line in tg(*a).splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                if INLINE_TEST_RE.search(line):
+                    return True
+    return False
+
+
+def survey(ref, since, until, act_gap):
+    tally = collections.defaultdict(lambda: {"n": 0, "test": 0,
+                                             "doc": 0, "doc_eligible": 0})
+    for rows, diffs in landings(ref, since, until, act_gap):
+        code = doc = test = 0
+        for path, churn in rows:
+            if NOISE_RE.search(path):
+                continue
+            if TEST_RE.search(path):
+                test += churn
+            elif DOC_RE.search(path):
+                doc += churn
+            else:
+                code += churn
+        b = band_of(code)
+        if not b:
+            continue
+        if test == 0 and code > 0 and inline_tests(diffs):
+            test = 1
+        t = tally[b]
+        t["n"] += 1
+        t["test"] += 1 if test > 0 else 0
+        # Reasoning is only a fair question where the landing is mostly code.
+        if doc + code > 0 and doc / (doc + code) < DOC_DOMINANT:
+            t["doc_eligible"] += 1
+            t["doc"] += 1 if doc > 0 else 0
+    return tally
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--since", default="2000-01-01")
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--act-gap", type=int, default=DEFAULT_ACT_GAP)
+    ap.add_argument("--min-band", type=int, default=DEFAULT_MIN_BAND)
+    a = ap.parse_args()
+
+    ref = a.ref
+    if not ref:
+        meta = ROOT / ".heimdall" / "target.json"
+        ref = json.loads(meta.read_text())["defaultBranch"] if meta.exists() else "HEAD"
+
+    tally = survey(ref, a.since, a.until, a.act_gap)
+    total = sum(v["n"] for v in tally.values())
+    result = {"ref": ref, "since": a.since, "until": a.until,
+              "landings": total, "min_band": a.min_band,
+              "bands": {b: tally[b] for b in band_labels() if b in tally}}
+    print(json.dumps(result, indent=2))
+
+    w = [f"{total} landing(s) on {ref}, binned by lines of code changed",
+         f"{'code lines':<12}{'landings':>9}{'with test':>11}{'with reasoning':>16}"]
+    prev = None
+    monotonic = True
+    for b in band_labels():
+        v = tally.get(b)
+        if not v or not v["n"]:
+            continue
+        tr = v["test"] / v["n"]
+        dr = (v["doc"] / v["doc_eligible"]) if v["doc_eligible"] else None
+        thin = "" if v["n"] >= a.min_band else "  (thin)"
+        w.append(f"{b:<12}{v['n']:>9}{tr:>10.0%}"
+                 + (f"{dr:>15.0%}" if dr is not None else f"{'—':>15}")
+                 + thin)
+        if prev is not None and tr < prev - 0.05:
+            monotonic = False
+        prev = tr
+    plateau = [tally[b] for b in band_labels() if b in tally and int(b.split("-")[0].rstrip("+")) >= 100]
+    pn = sum(v["n"] for v in plateau)
+    if pn:
+        pt = sum(v["test"] for v in plateau) / pn
+        pde = sum(v["doc_eligible"] for v in plateau)
+        pdr = (sum(v["doc"] for v in plateau) / pde) if pde else None
+        w.append(f"{'100+ pooled':<12}{pn:>9}{pt:>10.0%}"
+                 + (f"{pdr:>15.0%}" if pdr is not None else f"{'—':>15}"))
+    w.append("")
+    w.append("A band below "
+             f"{a.min_band} landing(s) is marked thin: its rate is an accident, not a norm.")
+    if total:
+        w.append("Care rising with size is proportionality — the repository's own, not "
+                 "Heimdall's." if monotonic else
+                 "The test rate does NOT rise monotonically here. Above 100 lines that is "
+                 "the usual shape — a plateau — which is why R-011 pools it.")
+    w.append("Reasoning excludes doc-dominant landings: a change that IS a document "
+             "carries no reasoning about code.")
+    sys.stderr.write("\n".join(w) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

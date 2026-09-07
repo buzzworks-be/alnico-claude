@@ -1,0 +1,459 @@
+#!/usr/bin/env python3
+"""How many of the repository's own declared areas does one landing reach into?
+
+The measurement behind signal S-11 and the check behind R-016, under P-11: an
+increment must be separable to be reviewable. R-001 and R-004 ask whether the
+TIME to read existed. This asks something orthogonal: whether the UNIT could be
+reviewed as one decision, however much time there was. A change that reaches
+into many unrelated areas at once is several decisions wearing one sha.
+
+The one hard constraint, in the shape P-5 uses: the partition must be the
+repository's own. In order of preference —
+
+  1. its ownership file's path patterns (CODEOWNERS), where it has one;
+  2. its workspace manifest (pnpm/yarn/npm workspaces, Cargo workspace members,
+     go.work), where it is a multi-package repository;
+  3. its top-level directories, descending one level into a single dominant
+     source directory.
+
+Areas Heimdall inferred from the code would be an opinion about someone else's
+architecture. Areas the repository declared are its own statement of what is
+separate from what.
+
+Two mechanical corrections the first run demanded. An area touched by most
+landings is a HUB — a release-notes directory, a lockfile's home, a root config —
+and counting it as spread would flag every landing; hubs are excluded. And a
+landing that is mostly renames, lockfiles, formatting or generated output is
+wide by construction and mechanically reviewable; it is reported as mechanical
+and never a candidate.
+
+Stratified by size band against the repository's own distribution, like R-011:
+spread grows with size, and a wide 2,000-line landing is ordinary where a wide
+80-line one is not.
+
+Usage:
+  bin/increment-spread --since "3 months ago"
+  bin/increment-spread --since 2026-01-01 --until 2026-04-01
+"""
+
+import argparse
+import collections
+import fnmatch
+import json
+import re
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE, TEST_RE, DOC_RE, FORGE_COMMITTERS  # noqa: E402
+
+# An area that IS the repository's tests, docs or examples is accompaniment,
+# not spread: a change that lands with its tests and its docs is one decision
+# (it is R-003 and R-011 being satisfied). On a single-package repository the
+# top-level partition is exactly {src, tests, docs, examples}, and the first
+# run on one reported good practice as width. Such areas are still reported;
+# they never count.
+ACCOMPANIMENT_RE = re.compile(
+    r"^(tests?|__tests__|testing|spec|specs|e2e|docs?|doc|documentation|examples?|"
+    r"samples?|benchmarks?|benches|\.github|\.gitlab|\.circleci|scripts?|tools?|ci)$", re.I)
+CONFIG_RE = re.compile(r"(^|/)\.[^/]+$|\.(json|ya?ml|toml|ini|cfg|editorconfig)$"
+                       r"|(^|/)CHANGELOG(\.[^/]+)?$|(^|/)CHANGES(\.[^/]+)?$", re.I)
+# A landing whose added lines collapse to this few distinct lines is one edit
+# applied everywhere — a rename of a call, a header, a version string. Wide by
+# construction and reviewable by reading the substitution once.
+DEFAULT_UNIFORM_LINES = 3
+NO_FINDING_BAND = "1-24"   # as R-011: a change this small owes no ceremony
+
+BANDS = [(1, 24), (25, 99), (100, 299), (300, 999), (1000, 10 ** 9)]
+DEFAULT_ACT_GAP = 60
+DEFAULT_HUB = 0.5          # an area in more than this share of landings is a hub
+DEFAULT_MECHANICAL = 0.8   # share of files that are rename/noise/config for a landing to be mechanical
+DEFAULT_MIN_BAND = 5
+DEFAULT_MIN_SPREAD = 3     # below this many areas nothing is reported, whatever the band says
+DEFAULT_WIDTH = 2.0        # a candidate reaches at least this multiple of its band's median
+# A sweep: many files, a line or two each. A lint fix, a formatter run, a
+# toolchain migration — one rule applied everywhere, reviewable by reading
+# the rule once. Not textually uniform (each hunk differs), so the uniform-edit
+# check misses it; the shape is the churn per file. Seen at 581 and 314 files.
+DEFAULT_SWEEP_FILES = 20
+DEFAULT_SWEEP_LINES_PER_FILE = 4
+DEFAULT_DOMINANT = 0.7     # a single top-level dir holding this share of files is descended into
+
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        sys.exit(f"increment-spread: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def tg_try(*args):
+    """For commands whose non-zero exit is an answer, not a failure — a missing
+    path, a sha that never reached this history, a ref with no merge-base. Only
+    target-git's own refusals (2: nothing attached, 3: mutating subcommand) end
+    the run."""
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode in (2, 3):
+        sys.stderr.write(p.stderr)
+        sys.exit(p.returncode)
+    return p.returncode, p.stdout
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def show(ref, path):
+    rc, out = tg_try("show", f"{ref}:{path}")
+    return out if rc == 0 else ""
+
+
+def band_of(n):
+    for lo, hi in BANDS:
+        if lo <= n <= hi:
+            return f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+"
+    return None
+
+
+# ---- the partition ---------------------------------------------------------
+
+def codeowners_partition(ref, tree):
+    for p in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"):
+        text = show(ref, p)
+        if text:
+            pats = []
+            for line in text.splitlines():
+                line = line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                pat = line.split()[0]
+                if pat in ("*", "/*", "**"):
+                    continue          # a catch-all declares no partition
+                pats.append(pat)
+            if len(pats) >= 2:
+                return f"ownership file {p}", [("owners", pat) for pat in pats]
+    return None, None
+
+
+def workspace_partition(ref, tree):
+    globs = []
+    y = show(ref, "pnpm-workspace.yaml")
+    if y:
+        for m in re.finditer(r"^\s*-\s*['\"]?([^'\"\n#]+?)['\"]?\s*$", y, re.M):
+            g = m.group(1).strip()
+            if g and not g.startswith("!"):
+                globs.append(g)
+    pj = show(ref, "package.json")
+    if pj and not globs:
+        try:
+            d = json.loads(pj)
+            ws = d.get("workspaces")
+            if isinstance(ws, dict):
+                ws = ws.get("packages", [])
+            globs += [g for g in (ws or []) if isinstance(g, str) and not g.startswith("!")]
+        except ValueError:
+            pass
+    ct = show(ref, "Cargo.toml")
+    if ct and not globs:
+        m = re.search(r"\[workspace\][^\[]*?members\s*=\s*\[(.*?)\]", ct, re.S)
+        if m:
+            globs += re.findall(r'"([^"]+)"', m.group(1))
+    gw = show(ref, "go.work")
+    if gw and not globs:
+        globs += re.findall(r"^\s*(?:use\s+)?\.?/?([\w./-]+)\s*$", gw, re.M)
+    if not globs:
+        return None, None
+    dirs = set()
+    for g in globs:
+        g = g.rstrip("/")
+        depth = g.count("/") + 1
+        for f in tree:
+            parts = f.split("/")
+            if len(parts) > depth:
+                cand = "/".join(parts[:depth])
+                if fnmatch.fnmatch(cand, g):
+                    dirs.add(cand)
+    if len(dirs) < 2:
+        return None, None
+    return "workspace manifest", [("dir", d) for d in sorted(dirs)]
+
+
+def toplevel_partition(tree, dominant):
+    """Top-level directories, descending into a lone code directory until at
+    least two CODE areas exist (depth 3 at most). The descent follows the
+    repository's own directory structure and nothing else; where that never
+    yields two code areas, there is no partition to measure against."""
+    label = "top-level directories"
+    prefix = ""
+    for _depth in range(3):
+        counter = collections.Counter()
+        for f in tree:
+            if prefix and not f.startswith(prefix):
+                continue
+            rest = f[len(prefix):]
+            if "/" in rest:
+                counter[prefix + rest.split("/")[0]] += 1
+        if not counter:
+            return None, None
+        code_areas = [d for d in counter if not ACCOMPANIMENT_RE.match(d.split("/")[-1])
+                      and not NOISE_RE.search(d + "/")]
+        if len(code_areas) >= 2:
+            return label, [("dir", d) for d in sorted(counter)]
+        if len(code_areas) == 1:
+            prefix = code_areas[0] + "/"
+            label = f"top-level directories, descended into {prefix}"
+            continue
+        return None, None
+    return None, None
+
+
+def owners_regex(pat):
+    anchored = pat.startswith("/")
+    p = pat.lstrip("/")
+    if p.endswith("/"):
+        p += "**"
+    rx = re.escape(p).replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", "[^/]")
+    return re.compile(("^" if anchored else "(^|.*/)") + rx + "$")
+
+
+def area_of(path, kind, areas, compiled):
+    if kind == "owners":
+        for (k, pat), rx in zip(areas, compiled):
+            if rx.match(path):
+                return pat
+        return None
+    for _, d in areas:
+        if path == d or path.startswith(d + "/"):
+            return d
+    return None
+
+
+# ---- landings ----------------------------------------------------------------
+
+def landings(ref, since, until, act_gap_min):
+    out, act, gap = [], [], act_gap_min * 60
+
+    def flush():
+        if act:
+            out.append((act[0][0], [("show", "--name-status", "-M", "--format=", s)
+                                    for s, _ in act],
+                        [("show", "--numstat", "--format=", s) for s, _ in act],
+                        [("show", "--unified=0", "--format=", s) for s, _ in act]))
+            act.clear()
+
+    for line in tg("log", "--first-parent", ref, "--reverse", f"--since={since}",
+                   f"--until={until}", "--format=%H%x01%P%x01%ct%x01%ce").splitlines():
+        if not line.strip():
+            continue
+        sha, parents, ts, ce = line.split("\x01")
+        plist, ts = parents.split(), int(ts)
+        if len(plist) >= 2:
+            flush()
+            out.append((sha, [("diff", "--name-status", "-M", f"{plist[0]}..{sha}")],
+                        [("diff", "--numstat", f"{plist[0]}..{sha}")],
+                        [("diff", "--unified=0", f"{plist[0]}..{sha}")]))
+        elif ce.strip().lower() in FORGE_COMMITTERS:
+            flush()
+            act.append((sha, ts))
+            flush()
+        else:
+            if act and ts - act[-1][1] > gap:
+                flush()
+            act.append((sha, ts))
+    flush()
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--act-gap", type=int, default=DEFAULT_ACT_GAP)
+    ap.add_argument("--hub", type=float, default=DEFAULT_HUB)
+    ap.add_argument("--mechanical", type=float, default=DEFAULT_MECHANICAL)
+    ap.add_argument("--min-band", type=int, default=DEFAULT_MIN_BAND)
+    ap.add_argument("--min-spread", type=int, default=DEFAULT_MIN_SPREAD)
+    ap.add_argument("--width", type=float, default=DEFAULT_WIDTH,
+                    help="multiple of the band's median spread a candidate must reach")
+    ap.add_argument("--partition", choices=["auto", "owners", "workspace", "toplevel"], default="auto")
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+    tree = [f for f in tg("ls-tree", "-r", "--name-only", ref).splitlines() if f]
+
+    label = areas = None
+    if a.partition in ("auto", "owners"):
+        label, areas = codeowners_partition(ref, tree)
+    if not areas and a.partition in ("auto", "workspace"):
+        label, areas = workspace_partition(ref, tree)
+    if not areas and a.partition in ("auto", "toplevel"):
+        label, areas = toplevel_partition(tree, DEFAULT_DOMINANT)
+    if not areas:
+        print("S-11: NOT APPLICABLE — the repository declares no partition this")
+        print("  script can read (no ownership patterns, no workspace, fewer than two")
+        print("  top-level directories). Nothing to measure spread against.")
+        return 0
+    kind = areas[0][0]
+    compiled = [owners_regex(p) for _, p in areas] if kind == "owners" else None
+    print(f"S-11: partition = {label}, {len(areas)} area(s), on {ref}.")
+
+    # Per landing: areas touched, file kinds, code size.
+    recs = []
+    for sha, status_args, numstat_args, diff_args in landings(ref, a.since, a.until, a.act_gap):
+        files, renamed = {}, 0
+        for arg in status_args:
+            for row in tg(*arg).splitlines():
+                cols = row.split("\t")
+                if not cols or not cols[0]:
+                    continue
+                st = cols[0][0]
+                path = cols[-1]
+                files[path] = st
+                if st == "R":
+                    renamed += 1
+        if not files:
+            continue
+        code = 0
+        for arg in numstat_args:
+            for row in tg(*arg).splitlines():
+                c = row.split("\t")
+                if len(c) == 3 and c[0].isdigit() and c[1].isdigit():
+                    p = c[2]
+                    if "=>" in p:
+                        p = re.sub(r"\{[^}]*=> ([^}]*)\}", r"\1", p)
+                    if not (NOISE_RE.search(p) or DOC_RE.search(p)):
+                        code += int(c[0]) + int(c[1])
+        mech = sum(1 for p, st in files.items()
+                   if st == "R" or NOISE_RE.search(p) or CONFIG_RE.search(p))
+        # A landing that is all tests (or all benchmarks) is accompaniment
+        # however many areas it spans: a test refactor across a workspace is
+        # one decision about tests. Seen as the fifth-widest landing on a
+        # 47-crate workspace, 341 files, every one under tests/.
+        testy = sum(1 for p in files if TEST_RE.search(p))
+        sweep = len(files) >= DEFAULT_SWEEP_FILES and code / len(files) <= DEFAULT_SWEEP_LINES_PER_FILE
+        touched = set()
+        for p in files:
+            if NOISE_RE.search(p):
+                continue
+            ar = area_of(p, kind, areas, compiled)
+            if ar:
+                touched.add(ar)
+        recs.append({"sha": sha, "areas": touched, "files": len(files), "code": code,
+                     "mechanical": mech / len(files) >= a.mechanical or sweep,
+                     "sweep": sweep,
+                     "test_only": testy / len(files) >= a.mechanical,
+                     "uniform": None, "diff_args": diff_args})
+    if not recs:
+        print("S-11: no landings in window.")
+        return 0
+
+    # Hubs: areas most landings touch are cross-cutting by the repository's own
+    # behaviour and are not spread.
+    freq = collections.Counter(ar for r in recs for ar in r["areas"])
+    hubs = {ar for ar, n in freq.items() if n / len(recs) > a.hub}
+    accomp = {ar for ar in freq if ACCOMPANIMENT_RE.match(ar.split("/")[-1])}
+    for r in recs:
+        r["spread"] = len(r["areas"] - hubs - accomp)
+    if hubs:
+        print(f"  hub area(s), touched by more than {a.hub:.0%} of landings and excluded: "
+              + ", ".join(sorted(hubs)))
+    if accomp:
+        print(f"  accompaniment area(s) — tests, docs, examples, tooling — excluded: "
+              + ", ".join(sorted(accomp)))
+    print(f"  {len(recs)} landing(s); mechanical (rename/lockfile/manifest/changelog-dominant): "
+          f"{sum(1 for r in recs if r['mechanical'] and not r['sweep'])}; sweeps "
+          f"({DEFAULT_SWEEP_FILES}+ files at ≤{DEFAULT_SWEEP_LINES_PER_FILE} lines each): "
+          f"{sum(1 for r in recs if r['sweep'])}; test-only: {sum(1 for r in recs if r['test_only'])}")
+
+    # Distribution by band.
+    by_band = collections.defaultdict(list)
+    for r in recs:
+        b = band_of(r["code"])
+        if b and not r["mechanical"] and not r["test_only"]:
+            by_band[b].append(r)
+    print(f"  {'code lines':<12}{'landings':>9}{'median spread':>15}{'p90':>6}{'max':>6}{'bar':>6}")
+    med, bar = {}, {}
+    for lo, hi in BANDS:
+        b = f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+"
+        rs = by_band.get(b, [])
+        if not rs:
+            continue
+        sp = sorted(r["spread"] for r in rs)
+        p90 = sp[min(len(sp) - 1, int(0.9 * len(sp)))]
+        med[b] = statistics.median(sp)
+        # All three at once: the absolute floor, a multiple of the median, and
+        # strictly beyond the 90th percentile. Any one alone misbehaves — the
+        # percentile flags a fixed share of any distribution, the multiple
+        # collapses onto the floor when the median is 1, and the floor alone
+        # is not the repository's norm. On a 41-area workspace the multiple
+        # alone reported 17% of landings; the three together report the ones
+        # that are wide for THIS repository at THIS size.
+        bar[b] = max(a.min_spread, int(a.width * med[b] + 0.999), p90 + 1)
+        thin = "" if len(rs) >= a.min_band else "  (thin)"
+        print(f"  {b:<12}{len(rs):>9}{med[b]:>15.1f}{p90:>6}{sp[-1]:>6}{bar[b]:>6}{thin}")
+
+    # R-016 candidates: at or above the band's bar (see above).
+    cands = []
+    for b, rs in by_band.items():
+        if len(rs) < a.min_band or b == NO_FINDING_BAND:
+            continue
+        for r in rs:
+            if r["spread"] >= bar[b]:
+                cands.append((b, r))
+    # The uniform-edit check reads diffs, so it runs on candidates only.
+    kept = []
+    for b, r in cands:
+        added = set()
+        for arg in r["diff_args"]:
+            for line in tg(*arg).splitlines():
+                if line.startswith("+") and not line.startswith("+++"):
+                    added.add(line[1:].strip())
+                    if len(added) > DEFAULT_UNIFORM_LINES:
+                        break
+            if len(added) > DEFAULT_UNIFORM_LINES:
+                break
+        r["uniform"] = 0 < len(added) <= DEFAULT_UNIFORM_LINES
+        if not r["uniform"]:
+            kept.append((b, r))
+    uniform_n = len(cands) - len(kept)
+    cands = kept
+    if uniform_n:
+        print(f"  {uniform_n} wide landing(s) were one edit applied everywhere; excluded.")
+    print()
+    if not cands:
+        print("R-016: no finding — no landing reaches further across the partition")
+        print("  than the repository's own norm for its size.")
+        return 0
+    eligible = sum(len(rs) for b, rs in by_band.items() if len(rs) >= a.min_band and b != NO_FINDING_BAND)
+    print(f"R-016: CANDIDATE FINDING — {len(cands)} of {eligible} eligible landing(s) "
+          f"({len(cands) / eligible:.0%}) beyond their band's bar (floor {a.min_spread}, "
+          f"{a.width:g}x median, and past p90).")
+    for b, r in sorted(cands, key=lambda x: -x[1]["spread"])[:15]:
+        subj = tg("log", "-1", "--format=%s", r["sha"]).strip()
+        print(f"    {r['sha'][:12]}  band {b:<8} spread {r['spread']:>2} (bar {bar[b]})  "
+              f"{r['files']:>3} files  {subj[:55]}")
+    print("  A cross-cutting change that arrived with its reasoning, a monorepo-wide")
+    print("  API change, a dependency migration — R-016's Not a violation section applies.")
+    print("  Read the landing before believing the number.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

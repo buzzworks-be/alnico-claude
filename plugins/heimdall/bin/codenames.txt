@@ -1,0 +1,77 @@
+# Case codenames. Neutral nouns only.
+#
+# A codename is a pseudonym for a case, never a description of it. It is drawn
+# at random and never derived from the target: a codename computed from a URL
+# could be reversed by anyone holding this list, which would make the filename
+# a statement about the repository under investigation.
+#
+# Nothing here may read as a judgement. ORCHARD and BASALT are fine; SHAMBLES
+# would put an opinion in a directory name. Nothing here may hint at a domain
+# either — no BANKING, no MEDICAL — since a codename that narrows the field
+# leaks by implication.
+albatross
+almanac
+amber
+anvil
+basalt
+beacon
+bellows
+bramble
+cinder
+cobalt
+compass
+copper
+cormorant
+crescent
+cypress
+driftwood
+ember
+estuary
+fathom
+ferrous
+flint
+gannet
+granite
+harbour
+hazel
+heather
+inkwell
+juniper
+kestrel
+lantern
+lattice
+limestone
+lodestone
+marram
+meridian
+millstone
+mistral
+nautilus
+obsidian
+orchard
+osprey
+paddock
+pewter
+pinnacle
+quarry
+quartz
+quill
+rampart
+rookery
+salvage
+sandstone
+sextant
+shale
+sorrel
+spindle
+starling
+tallow
+tessera
+thistle
+tideline
+timber
+trellis
+verdigris
+weathervane
+willow
+windlass

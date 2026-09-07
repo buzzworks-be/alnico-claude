@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""Could this landing's subject line have contained what it carried?
+
+The measurement behind signal S-15 and the checks behind R-019 and R-020,
+under P-12: the record must describe the change it carries. A subject is what
+a reader trusts instead of reading the diff. Two ways it can fail to contain
+the change, each with its own rule:
+
+  R-019  the repository types its subjects — `docs:`, `test:`, `ci:`,
+         `style:` and kin — and a typed landing carries content the type
+         cannot hold: a `docs:` landing that is mostly source, a `test:`
+         landing that changes the thing under test, a `style:` landing whose
+         lines do not survive whitespace removal unchanged. Conditional on
+         the convention: below half of landings typed, not applicable.
+
+  R-020  the subject names a trivial class of change — typo, whitespace,
+         lint, rename, bump, cleanup — and the landing carries substantial
+         source churn that is not that class. No convention needed; every
+         repository has a "fix typo" commit.
+
+The unit is the commit on the first-parent line, because the subject is the
+commit's. A merge commit's own subject is usually "Merge ..." and says
+nothing; the first non-empty line of its body (where a platform puts the
+pull request title) stands in, else the subject of the branch's tip.
+
+Usage:
+  bin/subject-content --since "6 months ago"
+"""
+
+import argparse
+import collections
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE, kind  # noqa: E402
+
+TYPED_RE = re.compile(r"^\s*([a-z]+)(\([^)]*\))?!?:\s+\S", re.I)
+KNOWN_TYPES = {"feat", "fix", "docs", "doc", "test", "tests", "chore", "refactor", "perf",
+               "ci", "build", "style", "revert", "deps", "release", "wip", "types"}
+# What each restrictive type may carry. Absent types (feat, fix, refactor,
+# perf, chore) may carry anything and are never candidates.
+TOOLING_RE = re.compile(
+    r"^(\.github/|\.gitlab/|\.circleci/|ci/|\.ci/|build/|scripts?/|tools?/|Makefile|justfile|"
+    r"Dockerfile|docker/|\.dockerignore|.*\.(ya?ml|toml|json|cfg|ini|lock)$|.*rc$|\.[^/]+$|"
+    r"[^/]*\.config\.[^/]+$)", re.I)
+
+# Where the repository's source and its tests live is its own statement, read
+# from which of its typed landings TOUCH which directories. Churn cannot say
+# it — good fix commits carry tests into the test directories, so by churn
+# share those directories look like source — but frequency can: on the first
+# history tried, 80% of `test:` landings touched the end-to-end directory
+# against 35% of feat/fix ones, and 26% against 99% for the package tree. A
+# directory is a TEST home when test-typed landings reach it at least twice
+# as often as source-typed ones do, and a SOURCE home in the reverse case. A
+# restrictive type — docs, test, ci, build, style — is a candidate only for
+# what it changes inside a source home and outside a test home, at two path
+# levels. The shared classifier's test patterns still apply on top; this is
+# the repository telling the frame what the patterns could not know.
+HOME_MIN_TOUCH = 0.50
+HOME_RATIO = 2.0
+HOME_MIN_LANDINGS = 10
+SOURCE_TYPES = {"feat", "fix", "refactor", "perf"}
+TEST_TYPES = {"test", "tests"}
+RESTRICTIVE = {"docs": "docs", "doc": "docs", "test": "test", "tests": "test",
+               "ci": "tooling", "build": "tooling", "style": "style"}
+TRIVIAL_RE = re.compile(
+    r"\b(typos?|spelling|misspell\w*|whitespace|formatting|reformat\w*|prettier|lint(ing|er)?|"
+    r"clippy|rename\w*|bump(ed|ing)?|version bump|nits?|cleanups?|clean ?up|tidy\w*|"
+    r"comments?|docstrings?|license headers?|copyright)\b", re.I)
+
+DEFAULT_CONVENTION = 0.50
+DEFAULT_CODE_FLOOR = 25       # source lines a restrictive type may carry before it is a candidate
+DEFAULT_TRIVIAL_FLOOR = 100   # source lines a trivial-class subject may carry
+DEFAULT_MIN_TYPED = 10
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        sys.exit(f"subject-content: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def tg_try(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode in (2, 3):
+        sys.stderr.write(p.stderr)
+        sys.exit(p.returncode)
+    return p.returncode, p.stdout
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def content(diff_range):
+    """(numstat rows, name-status rows) for a range or a single commit."""
+    ns = []
+    for r in tg("diff", "--numstat", "-M", *diff_range).splitlines():
+        c = r.split("\t")
+        if len(c) == 3:
+            ns.append((c[2], int(c[0]) if c[0].isdigit() else 0, int(c[1]) if c[1].isdigit() else 0))
+    st = {}
+    for r in tg("diff", "--name-status", "-M", *diff_range).splitlines():
+        c = r.split("\t")
+        if c and c[0]:
+            st[c[-1]] = c[0][0]
+    return ns, st
+
+
+def whitespace_neutral(diff_range, max_files=60):
+    """True if every file's added lines equal its removed lines once whitespace
+    is stripped — the shape of a formatter run."""
+    out = tg("diff", "--unified=0", "-M", *diff_range)
+    added, removed, files = [], [], 0
+    for line in out.splitlines():
+        if line.startswith("diff --git"):
+            files += 1
+            if files > max_files:
+                return None
+        elif line.startswith("+") and not line.startswith("+++"):
+            added.append(re.sub(r"\s+", "", line[1:]))
+        elif line.startswith("-") and not line.startswith("---"):
+            removed.append(re.sub(r"\s+", "", line[1:]))
+    return "".join(added) == "".join(removed)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--convention", type=float, default=DEFAULT_CONVENTION)
+    ap.add_argument("--code-floor", type=int, default=DEFAULT_CODE_FLOOR)
+    ap.add_argument("--trivial-floor", type=int, default=DEFAULT_TRIVIAL_FLOOR)
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+
+    commits = []
+    for line in tg("log", "--first-parent", ref, f"--since={a.since}", f"--until={a.until}",
+                   "--format=%H%x01%P%x01%s%x01%b%x02").split("\x02"):
+        line = line.strip("\n")
+        if not line.strip():
+            continue
+        sha, parents, subj, body = line.split("\x01", 3)
+        ps = parents.split()
+        if len(ps) >= 2:
+            if re.match(r"^\s*merge\b", subj, re.I):
+                first = next((l.strip() for l in body.splitlines() if l.strip()), "")
+                subj = first or tg("log", "-1", "--format=%s", ps[1]).strip()
+            rng = [f"{ps[0]}..{sha}"]
+        else:
+            rng = [f"{sha}^", sha] if ps else [sha]
+        commits.append({"sha": sha, "subject": subj.strip(), "range": rng, "merge": len(ps) >= 2})
+    if not commits:
+        print("S-15: no landings in window.")
+        return 0
+
+    typed = [c for c in commits if TYPED_RE.match(c["subject"]) and
+             TYPED_RE.match(c["subject"]).group(1).lower() in KNOWN_TYPES]
+    share = len(typed) / len(commits)
+    print(f"S-15: {len(commits)} landing(s) on {ref}; typed subjects: {len(typed)} ({share:.1%}).")
+
+    # ---- R-019 ------------------------------------------------------------
+    cands_019, examined = [], 0
+    if len(typed) < DEFAULT_MIN_TYPED or share < a.convention:
+        print(f"R-019: NOT APPLICABLE — typed subjects are not this repository's convention "
+              f"({share:.1%} of landings, bar {a.convention:.0%}).")
+    else:
+        types = collections.Counter(TYPED_RE.match(c["subject"]).group(1).lower() for c in typed)
+        print("  types: " + ", ".join(f"{t} {n}" for t, n in types.most_common(10)))
+        # Learn the homes from which typed landings touch which directories.
+        cache, n_src, n_test = {}, 0, 0
+        touch_src, touch_test = collections.Counter(), collections.Counter()
+        for c in typed:
+            t = TYPED_RE.match(c["subject"]).group(1).lower()
+            ns, st = content(c["range"]); cache[c["sha"]] = (ns, st)
+            grp = "src" if t in SOURCE_TYPES else ("test" if t in TEST_TYPES else None)
+            if not grp:
+                continue
+            if grp == "src":
+                n_src += 1
+            else:
+                n_test += 1
+            dirs = set()
+            for p, _, _ in ns:
+                if kind(p) == "noise":
+                    continue
+                parts = p.split("/")
+                for depth in (1, 2):
+                    if len(parts) > depth:
+                        dirs.add("/".join(parts[:depth]))
+            for d in dirs:
+                (touch_src if grp == "src" else touch_test)[d] += 1
+        source_homes, test_homes = set(), set()
+        if n_src >= HOME_MIN_LANDINGS:
+            for d in set(touch_src) | set(touch_test):
+                ps = touch_src[d] / n_src
+                pt = touch_test[d] / n_test if n_test >= HOME_MIN_LANDINGS else 0.0
+                if ps >= HOME_MIN_TOUCH and (pt == 0 or ps / pt >= HOME_RATIO):
+                    source_homes.add(d)
+                if n_test >= HOME_MIN_LANDINGS and pt >= HOME_MIN_TOUCH and (ps == 0 or pt / ps >= HOME_RATIO):
+                    test_homes.add(d)
+        print("  source home, by where this repository's feat/fix/refactor/perf landings go: "
+              + (", ".join(sorted(source_homes)[:6]) + (" …" if len(source_homes) > 6 else "") if source_homes else "none learned"))
+        print("  test home, by where its test-typed landings go: "
+              + (", ".join(sorted(test_homes)[:6]) + (" …" if len(test_homes) > 6 else "") if test_homes else "none learned"))
+        if not source_homes:
+            print("  With no source home learned, a restrictive type has nothing to stray into: R-019 cannot tell.")
+
+        def in_dirs(p, homes):
+            parts = p.split("/")
+            return any("/".join(parts[:d]) in homes for d in (1, 2) if len(parts) > d)
+
+        def strays(p):
+            return kind(p) == "code" and in_dirs(p, source_homes) and not in_dirs(p, test_homes)
+
+        for c in typed:
+            t = TYPED_RE.match(c["subject"]).group(1).lower()
+            if t not in RESTRICTIVE:
+                continue
+            examined += 1
+            ns, st = cache[c["sha"]]
+            home = RESTRICTIVE[t]
+            # Only churn that strays into a source home (and out of any test
+            # home) counts against a restrictive type.
+            if not source_homes:
+                break
+            code = sum(add + dele for p, add, dele in ns
+                       if strays(p) and not (home == "tooling" and TOOLING_RE.match(p)))
+            reason = None
+            if t in ("docs", "doc") and code >= a.code_floor:
+                reason = f"docs: carries {code} lines in the source home"
+            elif t in ("test", "tests") and code >= a.code_floor:
+                reason = f"test: carries {code} lines in the source home"
+            elif t in ("ci", "build") and code >= a.code_floor:
+                reason = f"{t}: carries {code} lines in the source home, outside tooling paths"
+            elif t == "style" and code >= a.code_floor:
+                neutral = whitespace_neutral(c["range"])
+                if neutral is False:
+                    reason = f"style: {code} source-home lines that do not survive whitespace removal unchanged"
+            if reason:
+                cands_019.append((c, reason, code))
+        print(f"  restrictive types examined: {examined}")
+        print()
+        if cands_019:
+            print(f"R-019: CANDIDATE FINDING — {len(cands_019)} typed landing(s) whose type could not hold their content.")
+            for c, reason, code in sorted(cands_019, key=lambda x: -x[2])[:15]:
+                print(f"    {c['sha'][:12]}  {reason:<62}  {c['subject'][:45]}")
+            print("  A type used loosely by convention, a docs change that regenerated an")
+            print("  example, a test change that moved a fixture — R-019's Not a violation applies.")
+        else:
+            print("R-019: no finding — every restrictive type held its content.")
+
+    # ---- R-020 ------------------------------------------------------------
+    print()
+    def trivial_claim(subject):
+        """The trivial word must be the subject's HEAD CLAIM: a short subject
+        (six words or fewer once the type prefix and pull-request suffix are
+        stripped), or one that opens with the word. Not a word in a long
+        subject, not the feature's domain ("…for list formatting"), not a
+        backticked identifier (`Rename` events). Twelve-word subjects and
+        domain terms were most of the first run's false positives."""
+        core = re.sub(r"\s*\(#\d+\)\s*$", "", subject)
+        core = re.sub(r"^\s*[a-z]+(\([^)]*\))?!?:\s*", "", core, flags=re.I)
+        m = TRIVIAL_RE.search(core)
+        if not m:
+            return None
+        start, end = m.span()
+        if core[max(0, start - 1):start] in ("`", "'", '"') or core[end:end + 1] in ("`", "'", '"'):
+            return None
+        words = len(core.split())
+        if words <= 6 or re.match(r"^\W*" + re.escape(m.group(1)), core, re.I):
+            return m.group(1).lower()
+        return None
+
+    trivial = [c for c in commits if trivial_claim(c["subject"]) and
+               not (TYPED_RE.match(c["subject"]) and
+                    TYPED_RE.match(c["subject"]).group(1).lower() in ("feat", "fix", "refactor", "perf"))]
+    cands_020 = []
+    for c in trivial:
+        ns, st = content(c["range"])
+        # Tooling and configuration are not source, whatever their extension:
+        # a "clean up" of a lint config is a clean-up of a lint config.
+        code = sum(add + dele for p, add, dele in ns if kind(p) == "code" and not TOOLING_RE.match(p))
+        if code < a.trivial_floor:
+            continue
+        m = trivial_claim(c["subject"])
+        # Each trivial class has a shape that IS that class; a landing in that
+        # shape is what it says, however large.
+        n_files = sum(1 for p, _, _ in ns if kind(p) == "code" and not TOOLING_RE.match(p))
+        if m.startswith("rename") and st and sum(1 for s in st.values() if s == "R") / len(st) >= 0.8:
+            continue
+        if m in ("lint", "linting", "linter", "clippy", "formatting", "reformat", "reformatting",
+                 "prettier", "whitespace") and n_files >= 20 and code / n_files <= 8:
+            continue        # a sweep: many files, a few lines each — the shape of a lint fix
+        if m.startswith("bump") and ns and all(kind(p) == "noise" or TOOLING_RE.match(p) for p, _, _ in ns):
+            continue
+        if m in ("whitespace", "formatting", "prettier", "reformat", "reformatting", "lint", "linting",
+                 "linter", "clippy", "tidy", "tidying") and whitespace_neutral(c["range"]) is True:
+            continue
+        cands_020.append((c, m, code))
+    print(f"R-020: {len(trivial)} landing(s) whose subject names a trivial class; "
+          f"{len(cands_020)} carry {a.trivial_floor}+ source lines outside that class's shape.")
+    if cands_020:
+        print("R-020: CANDIDATE FINDING")
+        for c, m, code in sorted(cands_020, key=lambda x: -x[2])[:15]:
+            print(f"    {c['sha'][:12]}  {code:>6} source lines  [{m}]  {c['subject'][:55]}")
+        print("  A lint fix that changed logic to satisfy the linter, a rename that also")
+        print("  refactored, a 'cleanup' that was a rewrite — R-020's Not a violation applies.")
+        print("  The subject is the finding; read the diff to say what it should have said.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

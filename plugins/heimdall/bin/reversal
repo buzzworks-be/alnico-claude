@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""Does landed work get revisited here — and when it is backed out, does it come back changed?
+
+The measurement behind signal S-8 and the checks behind R-012 and R-013. Both
+rules derive from P-9: a process that never revisits does not correct. Every
+other rule in the frame counts what is present in a range; this one looks for
+the shape of correction — a revert, a fix that names what it fixed, a file
+that was rewritten — and for the one shape that shows nothing was learned.
+
+Three readings, in order of how much they can claim:
+
+  S-8   how much of the window's work is reversal or repair at all, and whether
+        fixes reference their subject. Reported as shape. A high rate is at
+        least as consistent with a working safety net as with poor work.
+
+  R-012 content that was backed out and then came back BYTE-IDENTICAL, within
+        the window, with nothing changed in between. Matched by patch-id, so
+        it is a hard fact about the record: the thing removed returned with
+        nothing learned. A re-land that differs is reported separately as an
+        observation, never as a finding.
+
+  R-026 a re-land after a revert, where the repository ships tests with its
+        code, must carry verification the first attempt lacked. The first
+        attempt was backed out; the second is the one that learned, or did
+        not. Conditional on the repository's test practice, as R-011 is.
+
+  R-013 files whose content was majority-replaced by several distinct landings
+        inside one window. Narrower on purpose than the retired "rework commit
+        ratio", which counted any touch of a previously-touched file and
+        saturated at 84-98% everywhere. This prints both figures side by side
+        so a reader can see whether the narrower one actually discriminates.
+
+Usage:
+  bin/reversal --since "3 months ago"
+  bin/reversal --since 2026-01-01 --until 2026-04-01 --rewrites 3
+"""
+
+import argparse
+import collections
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE, TEST_RE, DOC_RE, FORGE_COMMITTERS  # noqa: E402
+
+REVERT_SUBJECT_RE = re.compile(r'^\s*revert\b', re.I)
+REVERTS_SHA_RE = re.compile(r'this reverts commit ([0-9a-f]{7,40})', re.I)
+# A squash landing keeps the branch's subject and drops git's own "This reverts
+# commit <sha>" body, so on such repositories every revert names its target
+# only by quoting its subject. Resolve that to the most recent earlier commit
+# with the same subject.
+REVERT_QUOTED_RE = re.compile(r'^\s*revert:?\s*"?(.+?)"?\s*(\(#\d+\))?\s*$', re.I)
+RELAND_RE = re.compile(r'^\s*(re-?land|re-?apply|re-?introduce|redo)\b', re.I)
+FIX_REF_RE = re.compile(
+    r'\b(fix(es|ed)?|close[sd]?|resolve[sd]?)\b[^\n]{0,40}?(#\d+|[0-9a-f]{7,40})'
+    r'|\bfixes:\s*\S', re.I)
+PR_SUFFIX_RE = re.compile(r'\s*\(#\d+\)\s*$')
+
+
+DEFAULT_ACT_GAP = 60
+DEFAULT_REWRITES = 3       # distinct landings majority-replacing one file
+DEFAULT_REWRITE_SHARE = 0.5
+DEFAULT_MIN_LINES = 20     # a file smaller than this is rewritten by any edit
+
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        sys.exit(f"reversal: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def tg_try(*args):
+    """For commands whose non-zero exit is an answer, not a failure — a missing
+    path, a sha that never reached this history, a ref with no merge-base. Only
+    target-git's own refusals (2: nothing attached, 3: mutating subcommand) end
+    the run."""
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode in (2, 3):
+        sys.stderr.write(p.stderr)
+        sys.exit(p.returncode)
+    return p.returncode, p.stdout
+
+
+def patch_id(*diffargs):
+    """A content fingerprint of a change, independent of sha, date and message.
+    Bytes throughout: a diff can carry binary hunks, and decoding one as text
+    ended a run on the third repository tried."""
+    diff = subprocess.run([str(ROOT / "bin" / "target-git"), *diffargs], capture_output=True)
+    if diff.returncode != 0 or not diff.stdout.strip():
+        return None
+    pid = subprocess.run(["git", "patch-id", "--stable"], input=diff.stdout,
+                         capture_output=True, cwd=str(ROOT))
+    out = pid.stdout.split()
+    return out[0].decode("ascii", "replace") if out else None
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def commits(ref, since, until):
+    """Every commit reachable in the window, oldest first, with whether it sits
+    on the first-parent line (a landing) or inside a branch."""
+    fp = set(tg("log", "--first-parent", ref, f"--since={since}",
+                f"--until={until}", "--format=%H").split())
+    out = []
+    for line in tg("log", ref, "--reverse", f"--since={since}", f"--until={until}",
+                   "--format=%H%x01%P%x01%ct%x01%s%x01%b%x02").split("\x02"):
+        line = line.strip("\n")
+        if not line.strip():
+            continue
+        sha, parents, ts, subject, body = line.split("\x01", 4)
+        out.append({"sha": sha, "parents": parents.split(), "ts": int(ts),
+                    "subject": subject, "body": body, "landed": sha in fp})
+    return out
+
+
+def landings(ref, since, until, act_gap_min):
+    """Merges by first-parent diff; runs of direct commits grouped by act gap.
+    The same unit the rest of the frame uses."""
+    out, act, gap = [], [], act_gap_min * 60
+
+    def flush():
+        if act:
+            out.append(("act", act[0][0], [("show", "--numstat", "--format=", s)
+                                           for s, _ in act], act[0][1]))
+            act.clear()
+
+    for line in tg("log", "--first-parent", ref, "--reverse", f"--since={since}",
+                   f"--until={until}", "--format=%H%x01%P%x01%ct%x01%ce").splitlines():
+        if not line.strip():
+            continue
+        sha, parents, ts, ce = line.split("\x01")
+        plist, ts = parents.split(), int(ts)
+        if len(plist) >= 2:
+            flush()
+            out.append(("merge", sha, [("diff", "--numstat", f"{plist[0]}..{sha}")], ts))
+        elif ce.strip().lower() in FORGE_COMMITTERS:
+            flush()
+            act.append((sha, ts))
+            flush()
+        else:
+            if act and ts - act[-1][1] > gap:
+                flush()
+            act.append((sha, ts))
+    flush()
+    return out
+
+
+def line_count(ref, path):
+    rc, out = tg_try("show", f"{ref}:{path}")
+    return out.count("\n") if rc == 0 else None
+
+
+def kind(path):
+    if NOISE_RE.search(path):
+        return "noise"
+    if TEST_RE.search(path):
+        return "test"
+    if DOC_RE.search(path):
+        return "doc"
+    return "code"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--act-gap", type=int, default=DEFAULT_ACT_GAP)
+    ap.add_argument("--rewrites", type=int, default=DEFAULT_REWRITES,
+                    help="distinct landings majority-replacing a file before it is reported")
+    ap.add_argument("--rewrite-share", type=float, default=DEFAULT_REWRITE_SHARE,
+                    help="share of a file's prior lines a landing must delete to count as a rewrite")
+    ap.add_argument("--min-lines", type=int, default=DEFAULT_MIN_LINES)
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+
+    cs = commits(ref, a.since, a.until)
+    by_sha = {c["sha"]: c for c in cs}
+    if not cs:
+        print("S-8: no commits in window.")
+        return 0
+
+    # ---- S-8: reversal and repair, as shape -------------------------------
+    reverts, relands, fixrefs = [], [], 0
+    for i, c in enumerate(cs):
+        text = c["subject"] + "\n" + c["body"]
+        if REVERT_SUBJECT_RE.search(c["subject"]) or REVERTS_SHA_RE.search(text):
+            m = REVERTS_SHA_RE.search(text)
+            target = m.group(1) if m else None
+            if not target:
+                q = REVERT_QUOTED_RE.match(c["subject"])
+                if q:
+                    want = PR_SUFFIX_RE.sub("", q.group(1)).strip().lower()
+                    for earlier in reversed(cs[:i]):
+                        if PR_SUFFIX_RE.sub("", earlier["subject"]).strip().lower() == want:
+                            target = earlier["sha"]
+                            break
+            reverts.append((c, target))
+        elif RELAND_RE.search(c["subject"]):
+            relands.append(c)
+        if FIX_REF_RE.search(text):
+            fixrefs += 1
+
+    landed_n = sum(1 for c in cs if c["landed"])
+    print(f"S-8: {len(cs)} commit(s) in window on {ref} ({landed_n} on the trunk line).")
+    print(f"  reverts: {len(reverts)}   re-lands by subject: {len(relands)}   "
+          f"commits naming what they fix: {fixrefs} ({fixrefs / len(cs):.0%})")
+    for c, target in reverts:
+        where = "trunk" if c["landed"] else "in-branch"
+        print(f"    revert {c['sha'][:12]} [{where}]  {c['subject'][:70]}"
+              + (f"  → reverts {target[:12]}" if target else "  → target not in window"))
+
+    # ---- R-012: reverted, then re-landed unchanged -------------------------
+    findings_012, observations_012 = [], []
+    for rc, target in reverts:
+        if not target:
+            continue
+        # What came back? The patch that was reverted, fingerprinted.
+        rc_full = tg_try("rev-parse", "--verify", f"{target}^{{commit}}")
+        if rc_full[0] != 0:
+            continue
+        target_sha = rc_full[1].strip()
+        target_pid = patch_id("show", "--format=", target_sha)
+        if not target_pid:
+            continue
+        original_subject = PR_SUFFIX_RE.sub("", by_sha.get(target_sha, {}).get(
+            "subject", tg("log", "-1", "--format=%s", target_sha).strip()))
+        # "Later" is log order, not timestamp: a re-land committed in the same
+        # second as its revert (a scripted revert-and-retry, or a fixture) has
+        # an equal timestamp and was invisible to a time comparison.
+        idx = next(i for i, c in enumerate(cs) if c["sha"] == rc["sha"])
+        later = cs[idx + 1:]
+        exact = None
+        for c in later:
+            if len(c["parents"]) >= 2:
+                continue
+            if patch_id("show", "--format=", c["sha"]) == target_pid:
+                exact = c
+                break
+        if exact:
+            findings_012.append((rc, target_sha, exact, original_subject))
+            continue
+        # Same subject, different content: a re-land that changed. Worth a
+        # reader's attention, never a finding — it is the healthy shape.
+        for c in later:
+            if PR_SUFFIX_RE.sub("", c["subject"]).strip().lower() == original_subject.strip().lower():
+                observations_012.append((rc, target_sha, c, original_subject))
+                break
+
+    print()
+    if findings_012:
+        print("R-012: CANDIDATE FINDING — reverted work came back byte-identical.")
+        for rc, tsha, again, subj in findings_012:
+            gap_h = (again["ts"] - rc["ts"]) / 3600
+            print(f"  {tsha[:12]} reverted by {rc['sha'][:12]}, re-landed unchanged as "
+                  f"{again['sha'][:12]} {gap_h:.0f}h later — \"{subj[:60]}\"")
+        print("  Patch-id equality: the same diff, line for line. Whatever the revert")
+        print("  was for, nothing about the change itself moved before it returned.")
+        print("  Adjudicate against R-012's Not a violation section: a revert taken for")
+        print("  release timing, or a re-land after the cause was fixed ELSEWHERE, is not this.")
+    else:
+        print("R-012: no finding — no reverted change returned unchanged within the window.")
+    for rc, tsha, again, subj in observations_012:
+        print(f"  observation: {tsha[:12]} reverted, then re-landed CHANGED as "
+              f"{again['sha'][:12]} — \"{subj[:60]}\". The healthy shape; not a finding.")
+
+    # ---- R-026: the re-land carries what the first attempt lacked ------------
+    def test_and_code(sha):
+        test = code = 0
+        for row in tg("show", "--numstat", "-M", "--format=", sha).splitlines():
+            c = row.split("\t")
+            if len(c) == 3 and c[0].isdigit() and c[1].isdigit():
+                k = kind(c[2])
+                if k == "test":
+                    test += int(c[0]) + int(c[1])
+                elif k == "code":
+                    code += int(c[0]) + int(c[1])
+        return test, code
+
+    pairs = [(tsha, again) for _, tsha, again, _ in findings_012] + \
+            [(tsha, again) for _, tsha, again, _ in observations_012]
+    print()
+    if not pairs:
+        print("R-026: no re-land after a revert in the window; nothing to ask.")
+    else:
+        # The convention, as R-011 establishes it: share of substantial trunk
+        # landings in the window that carry a test change.
+        subst = [c for c in cs if c["landed"] and len(c["parents"]) < 2]
+        rates = []
+        for c in subst:
+            t, k = test_and_code(c["sha"])
+            if k >= 25:
+                rates.append(t > 0)
+        conv = (sum(rates) / len(rates)) if rates else 0.0
+        if len(rates) < 10 or conv < 0.5:
+            print(f"R-026: NOT APPLICABLE — tests accompany {conv:.0%} of substantial landings here "
+                  f"({len(rates)} measured); the repository does not evidently ship them with code.")
+        else:
+            print(f"R-026: convention — tests accompany {conv:.0%} of {len(rates)} substantial landings.")
+            cands = []
+            for tsha, again in pairs:
+                t0, k0 = test_and_code(tsha); t1, k1 = test_and_code(again["sha"])
+                learned = t1 > 0 and t0 == 0
+                print(f"  {tsha[:12]} (tests {t0}, code {k0}) → re-land {again['sha'][:12]} (tests {t1}, code {k1})"
+                      + ("  — verification added" if learned else ""))
+                if k1 >= 25 and t1 == 0:
+                    cands.append((tsha, again, k1))
+            if cands:
+                print(f"R-026: CANDIDATE FINDING — {len(cands)} re-land(s) of reverted work still carry no test change,")
+                print("  in a repository that normally ships one. A revert taken for reasons a test could")
+                print("  not have caught — timing, a dependency, a flaky pipeline — is R-026's first exemption.")
+            else:
+                print("R-026: no finding — every re-land carried verification.")
+
+    # ---- R-013: files majority-replaced by several distinct landings -------
+    units = landings(ref, a.since, a.until, a.act_gap)
+    rewrites = collections.defaultdict(list)     # path -> [landing sha]
+    touched_before, touches_prev = set(), 0
+    landings_with_files = 0
+    revert_shas = {c["sha"] for c, _ in reverts}
+    for k, sha, diffargs, ts in units:
+        if sha in revert_shas:
+            continue        # a revert replaces a file by design; it is correction, not churn
+        files = {}
+        for arg in diffargs:
+            for row in tg(*arg).splitlines():
+                cols = row.split("\t")
+                if len(cols) == 3 and cols[0].isdigit() and cols[1].isdigit():
+                    add, dele = int(cols[0]), int(cols[1])
+                    p = cols[2]
+                    prev = files.get(p, (0, 0))
+                    files[p] = (prev[0] + add, prev[1] + dele)
+        if not files:
+            continue
+        landings_with_files += 1
+        # The retired measure, printed for contrast: does this landing touch
+        # anything an earlier landing in the window touched?
+        if any(p in touched_before for p in files):
+            touches_prev += 1
+        touched_before.update(files)
+        parent = f"{sha}^" if k == "act" else f"{sha}^1"
+        for p, (add, dele) in files.items():
+            if kind(p) == "noise" or dele < a.min_lines * a.rewrite_share:
+                continue
+            before = line_count(parent, p)
+            if before is None or before < a.min_lines:
+                continue
+            if dele / before >= a.rewrite_share:
+                rewrites[p].append(sha)
+
+    print()
+    multi = {p: s for p, s in rewrites.items() if len(s) >= 2}
+    flagged = {p: s for p, s in rewrites.items() if len(s) >= a.rewrites}
+    print(f"R-013: {landings_with_files} landing(s) with file changes; "
+          f"{len(rewrites)} file(s) majority-replaced at least once, "
+          f"{len(multi)} more than once, {len(flagged)} at least {a.rewrites} times.")
+    if landings_with_files:
+        print(f"  for contrast, the retired measure: {touches_prev}/{landings_with_files} "
+              f"landings ({touches_prev / landings_with_files:.0%}) touch a file an earlier "
+              f"landing touched — it saturates, which is why it was retired.")
+    if flagged:
+        print("R-013: CANDIDATE FINDING — files that did not settle.")
+        by_kind = collections.Counter(kind(p) for p in flagged)
+        print("  by kind: " + ", ".join(f"{k} {n}" for k, n in by_kind.most_common()))
+        for p, shas in sorted(flagged.items(), key=lambda kv: -len(kv[1]))[:15]:
+            print(f"    {len(shas)}x  [{kind(p)}]  {p}   "
+                  + " ".join(s[:8] for s in shas))
+        print("  A file under active design, a generated file, a config every feature")
+        print("  touches — all innocent. Read the landings before believing it.")
+    else:
+        print("R-013: no finding.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

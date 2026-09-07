@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""
+Which practices does this repository rely on with nothing in it to carry them?
+
+The mechanical check behind rule R-009. P-6 holds that discipline carried by
+tooling, templates and conventions survives the people who established it, and
+discipline carried by habit leaves when they do. No single increment shows which
+of the two a repository has — but the *carrier* is a fact about the tree, and
+its absence is checkable.
+
+So the check runs backwards, like the rest of the frame. It cannot show that a
+practice lives in habit. It can show that **nothing in the repository would keep
+it going**: the practice is observed at a high rate, and no template, hook,
+pipeline, ownership file or written convention in the tree requires, prompts or
+produces it.
+
+It computes nothing per contributor. P-6 forbids resolving consistency into a
+comparison of identifiable people, and this check satisfies that by
+construction: it reads paths and configuration, never authorship. There is no
+contributor floor because there is no contributor axis.
+
+A finding means "no carrier in the tree". It never means "not enforced" —
+branch protection, required reviewers and organisation-level pipelines are
+invisible from git, and a repository can be rigorously governed with no in-tree
+evidence at all.
+
+Usage:
+  bin/unenforced-practice --since "2 weeks ago"
+  bin/unenforced-practice --since 2026-01-01 --until 2026-02-01
+"""
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE, TEST_RE, DOC_RE, INLINE_TEST_RE, FORGE_COMMITTERS  # noqa: E402
+
+DEFAULT_RELIANCE = 0.60   # practice rate above which the repo evidently relies on it
+DEFAULT_MIN_CHANGES = 5   # below this the rate is an accident
+DEFAULT_ACT_GAP = 60      # minutes; direct commits closer than this are one landing
+
+
+CI_GLOBS = [
+    r"^\.github/workflows/.*\.ya?ml$", r"^\.gitlab-ci\.yml$", r"^Jenkinsfile$",
+    r"^\.circleci/.*", r"^azure-pipelines\.ya?ml$", r"^\.drone\.yml$",
+    r"^\.travis\.yml$", r"^buildkite\.ya?ml$", r"^\.buildkite/.*",
+]
+HOOK_GLOBS = [
+    r"^\.pre-commit-config\.ya?ml$", r"^\.husky/.*", r"^lefthook\.ya?ml$",
+    r"^\.githooks/.*", r"^\.hooks/.*",
+]
+TEMPLATE_GLOBS = [
+    r"^\.github/pull_request_template\.md$", r"^\.github/PULL_REQUEST_TEMPLATE",
+    r"^PULL_REQUEST_TEMPLATE\.md$", r"^docs/PULL_REQUEST_TEMPLATE\.md$",
+    r"^\.github/ISSUE_TEMPLATE", r"^\.gitlab/merge_request_templates/.*",
+]
+CONVENTION_GLOBS = [
+    r"^CONTRIBUTING\.md$", r"^\.github/CONTRIBUTING\.md$", r"^docs/CONTRIBUTING\.md$",
+    r"^CLAUDE\.md$", r"^AGENTS\.md$", r"^\.cursorrules$",
+]
+# "template" must be the file, not a word in its title. The first version
+# matched any decision record whose subject happened to mention templating,
+# which reads as a carrier and suppresses a finding — carrier false positives
+# under-report, the opposite of the bias the rest of this check carries.
+DOC_TEMPLATE_GLOBS = [
+    r"(^|/)(adr|adrs|decisions|rfcs?)/(\d+[-_])?template\.(md|rst|adoc)$",
+    r"(^|/)_?template\.(md|rst|adoc)$",
+]
+OWNER_GLOBS = [r"^(\.github/|docs/)?CODEOWNERS$"]
+
+TEST_TOKENS = re.compile(
+    r"\b(pytest|jest|vitest|mocha|go test|cargo test|npm (run )?test|yarn test|"
+    r"gradle|mvn|rspec|phpunit|tox|nose|unittest|ctest|bazel test|make test)\b", re.I)
+DOC_TOKENS = re.compile(
+    r"\b(adr|decision record|design doc|rfc|documentation|docs?/|changelog|"
+    r"spec|specification)\b", re.I)
+
+
+
+def git(*args, check=True):
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True)
+    if check and proc.returncode != 0:
+        sys.exit(f"unenforced-practice: git failed: {' '.join(args)}\n{proc.stderr}")
+    return proc.stdout
+
+
+def show(ref, path):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), "show", f"{ref}:{path}"],
+                       capture_output=True, text=True)
+    return p.stdout if p.returncode == 0 else ""
+
+
+
+
+def inline_tests(diffargs):
+    """True if any added line in this landing carries a test marker."""
+    for a in diffargs:
+        for line in git(*a).splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                if INLINE_TEST_RE.search(line):
+                    return True
+    return False
+
+
+def classify(path):
+    if NOISE_RE.search(path):
+        return "noise"
+    if TEST_RE.search(path):
+        return "test"
+    if DOC_RE.search(path):
+        return "doc"
+    return "code"
+
+
+def matching(tree, globs):
+    rxs = [re.compile(g) for g in globs]
+    return [f for f in tree if any(rx.search(f) for rx in rxs)]
+
+
+def numstat_files(*args):
+    files = []
+    for row in git(*args).splitlines():
+        cols = row.split("\t")
+        if len(cols) == 3:
+            files.append(cols[2])
+    return files
+
+
+def landings(since, until, ref, act_gap_min):
+    """The unit is a *landing*, not a commit.
+
+    "Did this change arrive with tests" is a question about the change as it
+    reached the trunk, not about each commit inside it. A branch that puts code
+    in one commit and its tests in the next arrived with tests; counting those
+    commits separately would score it 50%.
+
+    So: each merge is one landing, measured by what it brought to the trunk (its
+    first-parent diff), and runs of consecutive direct commits are grouped into
+    one landing by the act gap.
+
+    The first version selected work with --no-merges --first-parent, which on a
+    repository that lands everything through pull requests selects *nothing* —
+    every first-parent commit is a merge. It reported zero code-bearing changes
+    over an 84-commit window, and was blind on the most common workflow there
+    is.
+    """
+    out = git("log", "--first-parent", ref, "--reverse",
+              f"--since={since}", f"--until={until}",
+              "--format=%H%x01%P%x01%ct%x01%ce")
+    gap = act_gap_min * 60
+    units = []
+    act = []          # [(sha, timestamp), ...] of consecutive direct commits
+
+    def flush():
+        if not act:
+            return
+        files = set()
+        for sha, _ in act:
+            files.update(numstat_files("show", "--numstat", "--format=", sha))
+        if files:
+            units.append(("act", act[0][0], sorted(files),
+                          [("show", "--unified=0", "--format=", sh)
+                           for sh, _ in act]))
+        act.clear()
+
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        sha, parents, ts, ce = line.split("\x01")
+        plist, ts = parents.split(), int(ts)
+        if len(plist) >= 2:
+            flush()
+            files = numstat_files("diff", "--numstat", f"{plist[0]}..{sha}")
+            if files:
+                units.append(("merge", sha, files,
+                              [("diff", "--unified=0", f"{plist[0]}..{sha}")]))
+        elif ce.strip().lower() in FORGE_COMMITTERS:
+            flush()
+            act.append((sha, ts))
+            flush()
+        else:
+            if act and ts - act[-1][1] > gap:
+                flush()
+            act.append((sha, ts))
+    flush()
+    return units
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--reliance", type=float, default=DEFAULT_RELIANCE,
+                    help="practice rate above which the repository evidently relies on it")
+    ap.add_argument("--min-changes", type=int, default=DEFAULT_MIN_CHANGES)
+    ap.add_argument("--act-gap", type=int, default=DEFAULT_ACT_GAP,
+                    help="minutes; consecutive direct commits within this gap "
+                         "are one landing")
+    args = ap.parse_args()
+
+    ref = args.ref or git("symbolic-ref", "--short", "HEAD").strip()
+    tree = [f for f in git("ls-tree", "-r", "--name-only", ref).splitlines() if f]
+
+    ci = matching(tree, CI_GLOBS)
+    hooks = matching(tree, HOOK_GLOBS)
+    templates = matching(tree, TEMPLATE_GLOBS)
+    conventions = matching(tree, CONVENTION_GLOBS)
+    doc_templates = matching(tree, DOC_TEMPLATE_GLOBS)
+    owners = matching(tree, OWNER_GLOBS)
+
+    ci_text = "".join(show(ref, f) for f in ci[:20])
+    prose_text = "".join(show(ref, f) for f in (templates + conventions)[:20])
+
+    # Which carriers would keep each practice going if everyone left?
+    test_carriers = []
+    if TEST_TOKENS.search(ci_text):
+        test_carriers.append(f"CI running tests ({ci[0]})" if ci else "CI running tests")
+    if hooks:
+        test_carriers.append(f"commit hooks ({hooks[0]})")
+    if TEST_TOKENS.search(prose_text):
+        test_carriers.append("a written convention requiring tests")
+
+    doc_carriers = []
+    if templates:
+        doc_carriers.append(f"a change template ({templates[0]})")
+    if doc_templates:
+        doc_carriers.append(f"a document template ({doc_templates[0]})")
+    if DOC_TOKENS.search(prose_text):
+        doc_carriers.append("a written convention naming documentation")
+    if DOC_TOKENS.search(ci_text):
+        doc_carriers.append("a CI job referencing documentation")
+
+    units = landings(args.since, args.until, ref, args.act_gap)
+    code_changes = with_test = with_doc = 0
+    merges = sum(1 for k, _, _, _ in units if k == "merge")
+    inline_counted = 0
+    for _kind, _sha, files, diffargs in units:
+        kinds = {classify(f) for f in files}
+        if "code" not in kinds:
+            continue
+        code_changes += 1
+        if "test" in kinds:
+            with_test += 1
+        elif inline_tests(diffargs):
+            with_test += 1
+            inline_counted += 1
+        if "doc" in kinds:
+            with_doc += 1
+
+    print(f"R-009: {len(units)} landing(s) in window "
+          f"({merges} merged, {len(units) - merges} direct), "
+          f"{code_changes} carrying code.")
+    if inline_counted:
+        print(f"  {inline_counted} landing(s) counted as carrying tests found inside "
+              "the source file rather than in a test file.")
+    print(f"  carriers in tree: CI {len(ci)} · hooks {len(hooks)} · "
+          f"templates {len(templates)} · conventions {len(conventions)} · "
+          f"doc templates {len(doc_templates)} · CODEOWNERS {len(owners)}")
+
+    if code_changes < args.min_changes:
+        print(f"R-009: NOT APPLICABLE — fewer than {args.min_changes} code-bearing "
+              f"landings in the window.")
+        print("  A practice rate over this few changes is an accident, not reliance.")
+        return 0
+
+    findings = []
+    for name, hits, carriers, what in (
+        ("tests alongside code", with_test, test_carriers,
+         "nothing in the tree runs or requires tests"),
+        ("reasoning alongside code", with_doc, doc_carriers,
+         "nothing in the tree asks for a decision record, design note or doc"),
+    ):
+        rate = hits / code_changes
+        print()
+        print(f"  practice: {name}")
+        print(f"    observed on {hits}/{code_changes} code-bearing changes ({rate:.0%})")
+        if carriers:
+            print("    carried by: " + "; ".join(carriers))
+        else:
+            print("    carried by: nothing found in the tree")
+        if rate < args.reliance:
+            print(f"    NOT APPLICABLE — below the reliance bar ({args.reliance:.0%}); "
+                  f"the repository does not evidently rely on this practice.")
+            continue
+        if carriers:
+            print("    no finding — the practice has a carrier that outlives its people.")
+            continue
+        findings.append((name, rate, what))
+
+    if not findings:
+        print()
+        print("R-009: no finding.")
+        return 0
+
+    print()
+    print("R-009: CANDIDATE FINDING — practice without a carrier.")
+    for name, rate, what in findings:
+        print(f"  '{name}' holds on {rate:.0%} of code-bearing changes, and {what}.")
+    print()
+    print("  This says the discipline is not visible in the repository, never that")
+    print("  it is unenforced: branch protection, required reviewers and")
+    print("  organisation-level pipelines are invisible from git. Adjudicate")
+    print("  against R-009's Not a violation section before believing it.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

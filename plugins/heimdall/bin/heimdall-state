@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""
+Print the directory Heimdall keeps its state in, creating it if needed.
+
+Heimdall has two roots and conflating them is the defect this exists to
+prevent.
+
+**Code root** — `principles/`, `bin/`, the rules. Every script already finds it
+from its own location, and that stays correct in both modes.
+
+**State root** — `.heimdall/` (the attached target) and `cases/` (the readings).
+In a checkout these sit beside the code. Installed as a plugin they cannot: the
+plugin root is a managed cache, replaced wholesale on update and shared across
+every project, so state written there would be destroyed by an update and
+visible to projects it does not belong to.
+
+Resolution, in order:
+
+1. `$HEIMDALL_STATE` if set — always wins, so a checkout can be pointed
+   elsewhere and a plugin can be pointed somewhere the operator chose.
+2. Installed as a plugin: `$CLAUDE_PLUGIN_DATA`, the per-plugin directory
+   that survives updates.
+3. Otherwise, a checkout: the code root itself.
+
+Whether this is a plugin is answered two ways, either sufficing. The explicit
+one: `$CLAUDE_PLUGIN_ROOT` names this code root. The structural one: this
+code root is not the top of a git work tree — a plugin cache has no git
+history of its own, and where it sits inside some unrelated repository the
+top level is that repository, not this directory. The first version read only
+the environment variable, and a host that ran the plugin without setting it
+left the cache reading as a checkout, at which point bin/principles-ref ran
+git where there was none and exited 128 instead of falling back to the plugin
+version pin built for exactly that case. Reported from a session that had
+HEIMDALL_STATE set and CLAUDE_PLUGIN_ROOT not.
+
+Usage:
+  bin/heimdall-state            print the state root
+  bin/heimdall-state --mode     print "checkout" or "plugin"
+  bin/heimdall-state --explain  print every step of that decision, for a field report
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+HOME = Path(__file__).resolve().parent.parent
+
+
+def is_plugin_install(explain=None):
+    """Plugin or checkout, decided once, here.
+
+    A checkout is where Heimdall is BUILT: its rules are under version control
+    in this very directory. Anything else — a managed cache with no history, a
+    cache nested inside some unrelated repository, a copy somebody `git init`ed
+    — is Heimdall installed to be RUN, and must never be asked for a sha. Two
+    ways to be a plugin, either sufficing:
+
+      1. the host says so: CLAUDE_PLUGIN_ROOT names this code root;
+      2. the tree says so: this code root is not the top of a git work tree
+         in which principles/PRINCIPLES.md is a tracked file.
+
+    The second test replaced "is there a .git here" after a field report: a
+    cache that had been `git init`ed read as a checkout, principles/ showed as
+    untracked, and principles-ref refused for the wrong reason.
+    """
+    say = explain if explain else (lambda *_: None)
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if plugin_root and Path(plugin_root).resolve() == HOME:
+        say("CLAUDE_PLUGIN_ROOT names this code root → plugin")
+        return True
+    say(f"CLAUDE_PLUGIN_ROOT={plugin_root!r}" + (" (does not name this code root)" if plugin_root else " (unset)"))
+    try:
+        top = subprocess.run(["git", "-C", str(HOME), "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True)
+    except OSError:
+        say("git not runnable → plugin")
+        return True
+    if top.returncode != 0:
+        say("not inside any git work tree → plugin")
+        return True
+    toplevel = Path(top.stdout.strip()).resolve()
+    if toplevel != HOME:
+        say(f"inside a work tree whose top is {toplevel}, not this code root → plugin")
+        return True
+    tracked = subprocess.run(["git", "-C", str(HOME), "ls-files", "--error-unmatch",
+                              "principles/PRINCIPLES.md"], capture_output=True, text=True)
+    if tracked.returncode != 0:
+        say("this code root is a git top-level, but principles/ is not tracked in it → plugin")
+        return True
+    say("this code root is a git top-level and principles/ is tracked in it → checkout")
+    return False
+
+
+def resolve():
+    is_plugin = is_plugin_install()
+
+    override = os.environ.get("HEIMDALL_STATE")
+    if override:
+        return Path(override).expanduser(), ("plugin" if is_plugin else "checkout")
+
+    if is_plugin:
+        data = os.environ.get("CLAUDE_PLUGIN_DATA")
+        if not data:
+            sys.exit("heimdall: running as a plugin but CLAUDE_PLUGIN_DATA is unset, "
+                     "and there is nowhere safe to keep a case.\n"
+                     "Set HEIMDALL_STATE to a writable directory and retry.")
+        return Path(data).expanduser(), "plugin"
+
+    return HOME, "checkout"
+
+
+def main():
+    if "--explain" in sys.argv[1:]:
+        # For a field report: every step of the decision, so the next one can
+        # say WHY a cache read as a checkout instead of that it did.
+        print(f"code root: {HOME}")
+        is_plugin_install(explain=lambda m: print("  " + m))
+        state, mode = resolve()
+        print(f"HEIMDALL_STATE={os.environ.get('HEIMDALL_STATE')!r}  "
+              f"CLAUDE_PLUGIN_DATA={os.environ.get('CLAUDE_PLUGIN_DATA')!r}")
+        print(f"mode: {mode}\nstate root: {state}")
+        return 0
+    state, mode = resolve()
+    if "--mode" in sys.argv[1:]:
+        print(mode)
+        return 0
+    try:
+        state.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        sys.exit(f"heimdall: cannot create state directory {state}: {e}")
+    print(state)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

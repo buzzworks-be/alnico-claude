@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""
+Did anyone have time to decide the specification was right before building on it?
+
+This is the mechanical check behind rule R-002. Writing a specification and
+building against it are two acts, and the interval between them is where a
+person decides whether the specification is any good. This finds increments
+where that interval did not exist.
+
+Same necessary-condition shape as R-001, and the same reading rate: a decision
+about a specification requires at least enough time to have read it. When
+implementation begins sooner than the specification could have been read, no
+decision was taken — arithmetic, not judgement.
+
+Two failing shapes:
+
+  same act      one commit carries both a substantial specification and a
+                substantial implementation. The interval is zero by construction.
+  no interval   the specification lands alone, but implementation follows before
+                the specification could have been read.
+
+Usage:
+  bin/spec-decision-gap --since "last week"
+  bin/spec-decision-gap --since "2026-06-01" --until "2026-07-01" --spec-min 200
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import FORGE_COMMITTERS  # noqa: E402
+
+DOC_EXT = (".md", ".rst", ".adoc", ".txt")
+CODE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".sql", ".go", ".rs",
+            ".java", ".rb", ".php", ".cs", ".kt", ".swift", ".c", ".cc", ".cpp", ".h")
+GENERATED = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
+             "go.sum", "Cargo.lock", ".snap")
+
+DEFAULT_RATE = 1000.0   # lines an hour; matches R-001 deliberately
+DEFAULT_SPEC_MIN = 100  # below this, not a specification worth deciding on
+DEFAULT_CODE_MIN = 100  # below this, not an implementation
+
+
+def tg(*args):
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(proc.returncode)
+    return proc.stdout
+
+
+def resolve(expr):
+    """Turn a date expression into epoch seconds, so a window has a length.
+
+    Pure Python on purpose. This used to shell out to `date -d`, which is a GNU
+    extension: BSD date, which is what macOS ships, rejects it outright. Every
+    window-based extractor carried the same call, so on macOS every --since
+    failed — ISO dates included — and the whole frame was unusable. Reported
+    from a plugin run there.
+
+    Accepts what the skills and rules actually pass: ISO dates and datetimes,
+    `N unit ago`, `now`, `today`, `yesterday`, and a bare epoch.
+    """
+    import re as _re
+    from datetime import datetime, timedelta, timezone
+    s = str(expr).strip().lower()
+    now = datetime.now(timezone.utc)
+
+    if s in ("now", "today"):
+        return int(now.timestamp())
+    if s == "yesterday":
+        return int((now - timedelta(days=1)).timestamp())
+    if _re.fullmatch(r"@?\d{9,}", s):
+        return int(s.lstrip("@"))
+
+    m = _re.fullmatch(r"(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago", s)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        days = {"day": 1, "week": 7, "month": 30, "year": 365}
+        if unit in days:
+            return int((now - timedelta(days=n * days[unit])).timestamp())
+        secs = {"second": 1, "minute": 60, "hour": 3600}
+        return int((now - timedelta(seconds=n * secs[unit])).timestamp())
+
+    iso = str(expr).strip().replace("Z", "+00:00")
+    for fmt in (None, "%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d"):
+        try:
+            dt = datetime.fromisoformat(iso) if fmt is None else datetime.strptime(iso, fmt)
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+
+    sys.exit(f"spec-decision-gap: could not resolve date {expr!r}. Accepted: an ISO date, "
+             f"'N days|weeks|months|years ago', 'now', 'today', 'yesterday'.")
+
+
+
+
+def iso(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def collect(since, until, ref):
+    commits, cur = [], None
+    skipped_forge = 0
+    for line in tg("log", "--numstat", "--format=\x1d%H|%at|%P|%ce|%s",
+                   f"--since={since}", f"--until={until}", ref).split("\x1d"):
+        if not line.strip():
+            continue
+        head, _, stats = line.partition("\n")
+        sha, at, parents, cemail, subject = head.split("|", 4)
+        if len(parents.split()) > 1:      # merges duplicate their branch's churn
+            continue
+        # A squashed pull request puts specification and implementation into one
+        # commit by construction, so it always reads as "same act, zero interval"
+        # — the artefact this rule's own caveat names. The zero is the squash,
+        # not a decision that never happened.
+        if cemail.strip().lower() in FORGE_COMMITTERS:
+            skipped_forge += 1
+            continue
+        cur = {"sha": sha, "at": int(at), "subject": subject,
+               "spec": 0, "code": 0, "spec_files": [], "code_files": []}
+        for l in stats.splitlines():
+            b = l.split("\t")
+            if len(b) != 3 or b[2].endswith(GENERATED):
+                continue
+            n = (int(b[0]) if b[0].isdigit() else 0) + (int(b[1]) if b[1].isdigit() else 0)
+            if b[2].endswith(DOC_EXT):
+                cur["spec"] += n
+                cur["spec_files"].append(b[2])
+            elif b[2].endswith(CODE_EXT):
+                cur["code"] += n
+                cur["code_files"].append(b[2])
+        commits.append(cur)
+    commits.sort(key=lambda c: c["at"])
+    return commits, skipped_forge
+
+
+def examine(commits, rate, spec_min, code_min):
+    findings = []
+    specs = 0
+    for i, c in enumerate(commits):
+        if c["spec"] < spec_min:
+            continue
+        specs += 1
+        needed_min = c["spec"] / rate * 60
+
+        if c["code"] >= code_min:
+            findings.append({
+                "shape": "same act", "commit": c["sha"], "subject": c["subject"],
+                "at": iso(c["at"]), "spec_churn": c["spec"], "code_churn": c["code"],
+                "spec_files": len(c["spec_files"]), "code_files": len(c["code_files"]),
+                "decision_interval_min": 0.0,
+                "reading_time_needed_min": round(needed_min, 1),
+                "share_of_needed": 0.0,
+                "near_boundary": False,
+            })
+            continue
+
+        for nxt in commits[i + 1:]:
+            if nxt["code"] >= code_min:
+                gap = (nxt["at"] - c["at"]) / 60
+                if gap < needed_min:
+                    findings.append({
+                        "shape": "no interval", "commit": c["sha"],
+                        "subject": c["subject"], "at": iso(c["at"]),
+                        "spec_churn": c["spec"], "code_churn": nxt["code"],
+                        "spec_files": len(c["spec_files"]),
+                        "code_files": len(nxt["code_files"]),
+                        "implemented_by": nxt["sha"], "implementing_subject": nxt["subject"],
+                        "decision_interval_min": round(gap, 1),
+                        "reading_time_needed_min": round(needed_min, 1),
+                        # How close the interval came. A finding at 75% of the
+                        # time needed is a different claim from one at 5%, and
+                        # an adjudicator should not have to divide to see it —
+                        # the same reasoning that made R-006's boundary
+                        # artefact mechanical after a reader computed it by
+                        # hand.
+                        "share_of_needed": round(gap / needed_min, 2)
+                        if needed_min else 0.0,
+                        "near_boundary": bool(needed_min)
+                        and gap / needed_min >= NEAR_BOUNDARY,
+                    })
+                break
+    return specs, findings
+
+
+NEAR_BOUNDARY = 0.60   # share of the needed interval above which a finding is
+                       # reported as near-boundary rather than plainly short
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--since", required=True)
+    p.add_argument("--until", default="now")
+    p.add_argument("--ref", default=None)
+    p.add_argument("--rate", type=float, default=DEFAULT_RATE)
+    p.add_argument("--spec-min", type=int, default=DEFAULT_SPEC_MIN)
+    p.add_argument("--code-min", type=int, default=DEFAULT_CODE_MIN)
+    a = p.parse_args()
+
+    ref = a.ref
+    if not ref:
+        meta = ROOT / ".heimdall" / "target.json"
+        ref = json.loads(meta.read_text())["defaultBranch"] if meta.exists() else "HEAD"
+
+    since, until = iso(resolve(a.since)), iso(resolve(a.until))
+    commits, skipped_forge = collect(since, until, ref)
+    specs, findings = examine(commits, a.rate, a.spec_min, a.code_min)
+
+    result = {
+        "window": {"since": since, "until": until, "ref": ref},
+        "parameters": {"lines_per_hour": a.rate,
+                       "spec_min_lines": a.spec_min, "code_min_lines": a.code_min},
+        "commits_examined": len(commits),
+        "forge_mediated_skipped": skipped_forge,
+        "substantial_specifications": specs,
+        "without_a_decision_interval": len(findings),
+        "findings": sorted(findings, key=lambda f: -f["spec_churn"]),
+    }
+    print(json.dumps(result, indent=2))
+
+    w = [f"{since[:10]} .. {until[:10]} on {ref}   "
+         f"(spec>={a.spec_min}, code>={a.code_min}, {a.rate:.0f} lines/h)"]
+    if skipped_forge:
+        total = len(commits) + skipped_forge
+        w.append(f"skipped {skipped_forge} of {total} landing(s): accepted by a forge, so "
+                 "specification and code arrive squashed into one commit and the")
+        w.append("  interval between them is not in git. Their zero is the squash, not a "
+                 "decision that never happened.")
+        if skipped_forge >= total / 2:
+            w.append("  Most of this window was skipped. Treat R-002 as NOT APPLICABLE here "
+                     "and say so; a low finding count is not coverage.")
+    if not specs:
+        w.append(f"no specification change of {a.spec_min}+ lines in this window.")
+    else:
+        w.append(f"{len(findings)} of {specs} substantial specifications were built on "
+                 f"before they could have been read")
+        for f in result["findings"][:10]:
+            w.append(f"  {f['commit'][:8]}  {f['shape']:<12} spec {f['spec_churn']:>5} "
+                     f"code {f['code_churn']:>5}  gap {f['decision_interval_min']:>6.1f}m "
+                     f"needed {f['reading_time_needed_min']:>5.1f}m "
+                     f"({f['share_of_needed']:.0%}{' NEAR' if f['near_boundary'] else ''})"
+                     f"  {f['subject'][:34]}")
+        w.append("necessary-condition test: no decision was possible, not that none was made.")
+    sys.stderr.write("\n".join(w) + "\n")
+
+
+if __name__ == "__main__":
+    main()

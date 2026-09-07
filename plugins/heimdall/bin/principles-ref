@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+#
+# Print the citable version of the principles, or refuse to.
+#
+# A case file cites rules by id. If principles/ moves while an assessment is
+# running, the cited rule and the applied rule are not the same thing, and the
+# case file stops being reproducible. So this refuses on any uncommitted change
+# under principles/, and otherwise prints the sha to stamp into the record.
+#
+# Usage:
+#   sha="$(bin/principles-ref)"   # sha on stdout, diagnostics on stderr
+
+set -euo pipefail
+# When something fails under set -e, say WHERE and under WHICH bash. Every
+# macOS field report so far carried the symptom and not the line, and each
+# took a guess to fix. bash 3.2 supports an ERR trap; $LINENO and
+# $BASH_VERSION are enough to turn the next report into a diagnosis.
+trap 'echo "heimdall: $(basename "$0") failed at line $LINENO under bash $BASH_VERSION" >&2' ERR
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODE="$("$ROOT/bin/heimdall-state" --mode)"
+
+# A case file's principles_sha answers "which standard read this", and that
+# question has to survive both installations. Installed as a plugin there may be
+# no git history to take a sha from, so the plugin's own version is pinned
+# instead — less precise, and honest about being less precise, which beats a
+# case file that cites nothing.
+# Where the code root is decides this, not the presence of a git repository. The
+# plugin's code root is a managed cache that an update replaces wholesale, so no
+# sha taken from it means anything — and if that cache happens to sit inside some
+# unrelated repository (a dotfiles checkout, say), the old condition fell
+# through and stamped THAT repository's sha into the case file as the standard
+# the reading was made against. A case file citing a frame that never existed is
+# worse than one citing a version.
+VER="$(python3 - "$ROOT/.claude-plugin/plugin.json" <<'VERPY' 2>/dev/null || echo unknown
+import json, sys
+print(json.load(open(sys.argv[1]))["version"])
+VERPY
+)"
+
+pin_version() {
+  n="$(grep -l "^status: active" "$ROOT"/principles/rules/R-*.md 2>/dev/null | wc -l | tr -d ' ')"
+  echo "heimdall $VER: principles @ plugin v$VER, $n active rule(s) ($1)" >&2
+  echo "plugin-v$VER"
+}
+
+if [ "$MODE" = "plugin" ]; then
+  pin_version "no git history in the plugin cache"
+  exit 0
+fi
+cd "$ROOT"
+
+# Every git call from here is guarded. Under set -e an unguarded one that
+# fails takes the script down with git's own exit 128, which a field report
+# then has to explain instead of the pin explaining itself. A checkout where
+# git cannot answer is pinned by version, with a note saying why.
+if ! dirty="$(git status --porcelain -- principles/ 2>/dev/null)"; then
+  pin_version "git could not read this directory; it resolved as a checkout but has no usable history"
+  exit 0
+fi
+if [ -n "$dirty" ]; then
+  {
+    echo "heimdall: principles/ has uncommitted changes — refusing to assess."
+    echo "$dirty" | sed 's/^/  /'
+    echo
+    echo "Commit the rules, then assess against them. A case file cites rule"
+    echo "ids; if the rules move underneath it, the citation points at something"
+    echo "that was never applied."
+  } >&2
+  exit 4
+fi
+
+# A checkout by heimdall-state's reckoning, but degrade rather than crash if
+# git still cannot answer: the case file needs SOME identifier for the frame it
+# was read against, and a version is honest where a sha is unavailable.
+if ! sha="$(git rev-parse HEAD 2>/dev/null)"; then
+  pin_version "this directory has no git history to take a sha from"
+  exit 0
+fi
+# grep exits 1 on no matches, which pipefail would turn into a script failure.
+active="$({ grep -lE '^status:[[:space:]]*active' principles/rules/*.md 2>/dev/null || true; } | wc -l | tr -d ' ')"
+
+echo "heimdall $VER: principles @ ${sha:0:12}, ${active} active rule(s)" >&2
+if [ "$active" -eq 0 ]; then
+  echo "heimdall: no active rules — an assessment has nothing to judge against." >&2
+fi
+
+echo "$sha"

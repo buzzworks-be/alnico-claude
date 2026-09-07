@@ -1,0 +1,689 @@
+#!/usr/bin/env python3
+"""Draw one of the five charts a case file may carry, as inline SVG.
+
+The design is docs/graphics.md. Nothing here is drawn unasked: /profile offers
+a chart when the strip row makes it relevant and calls this only for the ones
+the reader picks. The script writes one .svg into the case directory (or
+--out) that carries everything a reader needs: the frame above the chart —
+rule and principle with their titles, the principle's signature and what it
+reads, from the table in principles/README.md — and the figures the chart is
+read against below it. The same frame and caption are printed, for the
+conversation; nothing else is written.
+
+  1  landing timeline            R-001 R-004 R-006 R-007   P-1
+  2  care by size band           R-011 R-027               P-8
+  3  care over time, risk shaded R-021 … R-025             P-14 P-15
+  4  size against interval       R-023                     P-14
+  5  stocks of what did not land R-014 R-015               P-10
+
+Every chart keeps the denominator in view: what adhered is drawn beside what
+did not, never a rate alone; thin bands are hatched and labelled; a band with
+nothing in it has no bar and says so. Colour carries route and kind only —
+no red, no green, nothing that grades.
+
+No library. The data comes from the extractors' own functions, imported by
+path, so a chart and the table beside it are computed the same way; the only
+numbers here that the text output does not also print are the ones a picture
+needs and a table does not (a landing's position on a time axis).
+
+Usage:
+  bin/case-charts 2 --since "3 months ago"
+  bin/case-charts 1 --since 2026-01-01 --until 2026-04-01 --id 2026-04-01-abc1234-def5678
+  bin/case-charts 5 --out /tmp/charts        # no case open: --out is required
+"""
+
+import argparse
+import collections
+import json
+import math
+import re
+import statistics
+import subprocess
+import sys
+from datetime import datetime, timezone
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+BIN = ROOT / "bin"
+sys.path.insert(0, str(BIN))
+
+# ---- palette: literal, muted, and never a judgement ---------------------------
+PAPER, INK, INK2, RULE = "#ECEBE5", "#1F2024", "#5A5C60", "#D6D3CB"
+ALL, WITH, LINE, DARK = "#C9C5BC", "#4A6B7C", "#9A948A", "#5A5C60"
+ROUTE = {"merge": WITH, "direct": LINE, "forge": ALL}
+RISK = {"release": "#DDD9CC", "major": "#D3CEBF", "post-revert": "#E4E0D5", "breaking": "#CFCABC"}
+FONT = "IBM Plex Sans, Helvetica Neue, Arial, sans-serif"
+MONO = "IBM Plex Mono, Menlo, monospace"
+
+CHARTS = {
+    1: ("Landing timeline", ["R-001", "R-004", "R-006", "R-007"], ["P-1"]),
+    2: ("Care by size band", ["R-011", "R-027"], ["P-8"]),
+    3: ("Care over time, risk windows shaded", ["R-022", "R-024", "R-025"], ["P-14", "P-15"]),
+    4: ("Size against review interval", ["R-023"], ["P-14"]),
+    5: ("Stocks of what did not land", ["R-014", "R-015"], ["P-10"]),
+}
+
+
+def load(name):
+    """Import an extractor by path. Their main() is guarded, so this runs nothing."""
+    return SourceFileLoader(name.replace("-", "_"), str(BIN / name)).load_module()
+
+
+def tg(*args):
+    p = subprocess.run([str(BIN / "target-git"), *args], capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        sys.exit(f"case-charts: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def resolve_ts(expr):
+    """Any date git understands, to a unix timestamp.
+
+    Through target-git, never plain git: the session may be standing in a
+    directory that is not a repository at all, and the first field run of this
+    script failed exactly there — the resolver ran against the cwd and could
+    not read the very format its own help text shows."""
+    out = tg("rev-parse", f"--since={expr}")
+    m = re.search(r"--max-age=(\d+)", out)
+    if not m:
+        sys.exit(f"case-charts: cannot read date: {expr}")
+    return int(m.group(1))
+
+
+def default_ref():
+    state = subprocess.run([str(BIN / "heimdall-state")], capture_output=True, text=True).stdout.strip()
+    meta = Path(state or ROOT) / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def case_dir():
+    p = subprocess.run([str(BIN / "case-dir"), "--check"], capture_output=True, text=True)
+    return Path(p.stdout.strip()) if p.returncode == 0 and p.stdout.strip() else None
+
+
+def codename():
+    d = case_dir()
+    return d.name.upper() if d else "NO CASE"
+
+
+# ---- the frame, for captions --------------------------------------------------
+
+def rule_titles():
+    out = {}
+    for f in (ROOT / "principles" / "rules").glob("R-*.md"):
+        rid = title = None
+        for line in f.read_text().splitlines()[:12]:
+            if line.startswith("id:"):
+                rid = line.split(":", 1)[1].strip()
+            elif line.startswith("title:"):
+                title = line.split(":", 1)[1].strip()
+        if rid and title:
+            out[rid] = title
+    return out
+
+
+def principle_rows():
+    """id -> (title, signature, reads) from the table at the top of principles/README.md.
+
+    The README ships with the plugin from 0.12.2; before that it did not, and
+    the caption crashed on an install that had every rule and no table. If it
+    is missing, titles come from PRINCIPLES.md headings and the signature and
+    reads columns are left blank rather than the chart left undrawn."""
+    out = {}
+    readme = ROOT / "principles" / "README.md"
+    if readme.exists():
+        for line in readme.read_text().splitlines():
+            m = re.match(r"^\|\s*(P-\d+)\s*\|(.*?)\|(.*?)\|(.*?)\|(.*?)\|\s*$", line)
+            if m:
+                out[m.group(1)] = (m.group(2).strip(), m.group(4).strip(), m.group(5).strip())
+    if not out:
+        prin = ROOT / "principles" / "PRINCIPLES.md"
+        if prin.exists():
+            for line in prin.read_text().splitlines():
+                m = re.match(r"^## (P-\d+)\.\s+(.*)$", line)
+                if m:
+                    out[m.group(1)] = (m.group(2).strip(), "", "")
+    return out
+
+
+def frame_rows(n):
+    """(label, text) rows: each rule with its title, each principle with its
+    title, then the principle's signature and what it reads."""
+    rules = rule_titles(); prin = principle_rows()
+    _, rids, pids = CHARTS[n]
+    rows = [(r, rules.get(r, "")) for r in rids]
+    rows += [(p, prin.get(p, ("", "", ""))[0]) for p in pids]
+    sigs = sorted({prin[p][1] for p in pids if p in prin and prin[p][1]})
+    reads = sorted({prin[p][2] for p in pids if p in prin and prin[p][2]})
+    if sigs or reads:
+        rows.append(("signature", " · ".join(sigs).lower()))
+        rows.append(("reads", " · ".join(reads).lower()))
+    else:
+        rows.append(("signature, reads", "not available on this install (principles/README.md missing)"))
+    return rows
+
+
+def frame_table(n):
+    """The frame as a markdown table, for the conversation."""
+    out = ["| | |", "|---|---|"]
+    for label, text in frame_rows(n):
+        out.append(f"| **{label}** | {text} |")
+    return "\n".join(out)
+
+
+def with_frame(svg, name, title, rows, caption):
+    """The chart with its frame drawn above it and its caption below, so the
+    picture says what it is and what it shows even when it travels alone."""
+    import textwrap
+    line_h, pad = 15, 12
+    head_h = pad + 20 + len(rows) * line_h + pad
+    cap_lines = textwrap.wrap(caption, width=150)
+    foot_h = pad + len(cap_lines) * 14 + pad
+    total = head_h + svg.h + foot_h
+    esc = lambda t: t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    parts = [f'<rect x="0" y="0" width="{svg.w}" height="{total}" fill="{PAPER}"/>']
+    y = pad + 14
+    parts.append(f'<text x="16" y="{y}" font-family="{FONT}" font-size="13" fill="{INK}" font-weight="500">'
+                 f'{esc(name)} — {esc(title)}</text>')
+    y += 6
+    for label, text in rows:
+        y += line_h
+        parts.append(f'<text x="16" y="{y}" font-family="{MONO}" font-size="10.5" fill="{INK}" font-weight="500">{esc(label)}</text>')
+        parts.append(f'<text x="112" y="{y}" font-family="{FONT}" font-size="10.5" fill="{INK2}">{esc(text)}</text>')
+    parts.append(f'<line x1="16" y1="{head_h - 4}" x2="{svg.w - 16}" y2="{head_h - 4}" stroke="{RULE}" stroke-width="0.8"/>')
+    inner = f'<g transform="translate(0,{head_h})">' + "".join(svg.parts) + "</g>"
+    y = head_h + svg.h
+    parts.append(f'<line x1="16" y1="{y + 2}" x2="{svg.w - 16}" y2="{y + 2}" stroke="{RULE}" stroke-width="0.8"/>')
+    y += pad + 10
+    for line in cap_lines:
+        parts.append(f'<text x="16" y="{y}" font-family="{FONT}" font-size="10.5" fill="{INK2}">{esc(line)}</text>')
+        y += 14
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {svg.w} {total}" '
+            f'width="{svg.w}" height="{total}" font-family="{FONT}">' + "".join(parts) + inner + "</svg>")
+
+
+# ---- a small SVG writer ------------------------------------------------------
+
+class SVG:
+    def __init__(self, w, h):
+        self.w, self.h, self.parts = w, h, []
+        self.parts.append(f'<rect x="0" y="0" width="{w}" height="{h}" fill="{PAPER}"/>')
+        self.parts.append('<defs><pattern id="thin" width="6" height="6" patternUnits="userSpaceOnUse" '
+                          'patternTransform="rotate(45)"><rect width="6" height="6" fill="' + PAPER + '"/>'
+                          '<rect width="2.5" height="6" fill="' + ALL + '"/></pattern></defs>')
+
+    def rect(self, x, y, w, h, fill, stroke=None, opacity=1.0):
+        s = f' stroke="{stroke}" stroke-width="1"' if stroke else ""
+        self.parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{max(w, 0):.1f}" height="{max(h, 0):.1f}" fill="{fill}"{s} opacity="{opacity}"/>')
+
+    def line(self, x1, y1, x2, y2, stroke, width=1.0, dash=None, opacity=1.0):
+        d = f' stroke-dasharray="{dash}"' if dash else ""
+        self.parts.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{stroke}" stroke-width="{width}"{d} opacity="{opacity}" stroke-linecap="round"/>')
+
+    def path(self, pts, stroke, width=1.5):
+        if len(pts) < 2:
+            return
+        d = "M " + " L ".join(f"{x:.1f} {y:.1f}" for x, y in pts)
+        self.parts.append(f'<path d="{d}" fill="none" stroke="{stroke}" stroke-width="{width}" stroke-linejoin="round"/>')
+
+    def circle(self, x, y, r, fill, opacity=0.8):
+        self.parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" opacity="{opacity}"/>')
+
+    def text(self, x, y, s, size=11, fill=INK2, anchor="start", mono=False, weight=400, rotate=None):
+        s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        fam = MONO if mono else FONT
+        r = f' transform="rotate({rotate} {x:.1f} {y:.1f})"' if rotate else ""
+        self.parts.append(f'<text x="{x:.1f}" y="{y:.1f}" font-family="{fam}" font-size="{size}" fill="{fill}" '
+                          f'text-anchor="{anchor}" font-weight="{weight}"{r}>{s}</text>')
+
+    def render(self):
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {self.w} {self.h}" width="{self.w}" height="{self.h}" '
+                f'font-family="{FONT}">' + "".join(self.parts) + "</svg>")
+
+
+def nice_max(v, ticks=4, headroom=1.15):
+    """A top-of-axis value with room above the tallest bar for its label, on a
+    step from {1, 2, 5} × 10^k so the ticks read as round numbers."""
+    need = max(v, 1) * headroom / ticks
+    k = 10 ** math.floor(math.log10(need))
+    for m in (1, 2, 5, 10):
+        if m * k >= need:
+            return m * k * ticks
+    return 10 * k * ticks
+
+
+def y_axis(svg, x0, y0, y1, vmax, fmt=lambda v: f"{v:g}", ticks=4):
+    for i in range(ticks + 1):
+        v = vmax * i / ticks
+        y = y1 - (y1 - y0) * i / ticks
+        svg.line(x0, y, svg.w - 16, y, RULE, 0.6)
+        svg.text(x0 - 6, y + 4, fmt(v), 10, INK2, "end")
+
+
+def legend(svg, x, y, items):
+    for label, color, kind in items:
+        if kind == "bar":
+            svg.rect(x, y - 9, 11, 11, color, stroke=RULE if color == ALL else None)
+        elif kind == "thin":
+            svg.rect(x, y - 9, 11, 11, "url(#thin)", stroke=ALL)
+        elif kind == "line":
+            svg.line(x, y - 4, x + 11, y - 4, color, 2)
+        elif kind == "dot":
+            svg.circle(x + 5, y - 4, 3.5, color)
+        svg.text(x + 16, y, label, 10.5, INK2)
+        x += 16 + 6.2 * len(label) + 18
+
+
+def date(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+
+
+# ---- 1. landing timeline ------------------------------------------------------
+
+def chart_timeline(a, ref, cot):
+    series = cot.build_series(ref, a.since_ts, a.act_gap, a.until_ts)
+    W, H, L, R, T, B = 900, 300, 56, 16, 28, 60
+    svg = SVG(W, H)
+    if not series:
+        svg.text(W / 2, H / 2, "no landings in the window", 12, INK2, "middle")
+        return svg, "No landings in the window."
+    t0, t1 = a.since_ts, a.until_ts or int(datetime.now(timezone.utc).timestamp())
+    vmax = max(l["code"] for l in series) or 1
+    lg = lambda v: math.log10(max(v, 1) + 1)
+    ymax = lg(vmax) * 1.05
+    sx = lambda ts: L + (W - L - R) * (ts - t0) / max(1, t1 - t0)
+    sy = lambda v: (H - B) - (H - B - T) * lg(v) / ymax
+    # y ticks on a log scale: 1, 10, 100, 1000, ...
+    e = 0
+    while 10 ** e <= vmax * 1.2:
+        y = sy(10 ** e)
+        svg.line(L, y, W - R, y, RULE, 0.6)
+        svg.text(L - 6, y + 4, f"{10 ** e:,}", 10, INK2, "end")
+        e += 1
+    svg.text(14, T + 10, "code lines", 10, INK2, "start", rotate=None)
+    # month ticks
+    d = datetime.fromtimestamp(t0, timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    while int(d.timestamp()) < t1:
+        x = sx(int(d.timestamp()))
+        if L <= x <= W - R - 18:
+            svg.line(x, H - B, x, H - B + 4, INK2, 0.8)
+            svg.text(x, H - B + 15, d.strftime("%b %y"), 9.5, INK2, "middle")
+        d = (d.replace(year=d.year + 1, month=1) if d.month == 12 else d.replace(month=d.month + 1))
+    svg.line(L, H - B, W - R, H - B, INK2, 0.8)
+    # marks: a vertical stroke per landing, colour by route; interval bar for merges
+    counts = collections.Counter(l["route"] for l in series)
+    for l in series:
+        x, y = sx(l["ts"]), sy(l["code"])
+        svg.line(x, H - B, x, y, ROUTE[l["route"]], 1.6, opacity=0.85)
+        if l["merge"] and l["interval"]:
+            svg.line(sx(l["ts"] - l["interval"]), y, x, y, WITH, 1.0, opacity=0.6)
+    legend(svg, L, H - 14, [("merged branch (bar to the left: its review interval)", WITH, "line"),
+                            ("direct to trunk", LINE, "line"), ("forge landing, interval not in git", ALL, "line")])
+    cap = (f"{len(series)} landings between {date(t0)} and {date(t1)}: {counts['merge']} merged, "
+           f"{counts['direct']} direct, {counts['forge']} forge-mediated. Height is code lines on a log scale; "
+           f"a bar running left from a merge is the interval between its branch tip and its landing, the time "
+           f"in which it could have been read. A forge landing has no interval in git and is never judged.")
+    return svg, cap
+
+
+# ---- 2. care by size band -----------------------------------------------------
+
+def chart_care_by_band(a, ref, cot, dp):
+    series = cot.build_series(ref, a.since_ts, a.act_gap, a.until_ts)
+    BANDS = [(1, 24), (25, 99), (100, 299), (300, 999), (1000, 10 ** 9)]
+    lab = lambda lo, hi: f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+"
+    line_bands = []
+    for lo, hi in BANDS:
+        rows = [l for l in series if lo <= l["code"] <= hi]
+        line_bands.append((lab(lo, hi), len(rows), sum(1 for l in rows if l["test"])))
+    # the other axis, from decision-points' own reader
+    recs = []
+    for sha, subject, n, diffargs in dp.landings(ref, a.since, a.until, a.act_gap):
+        files, inline = dp.read_landing(diffargs)
+        code = sum(f["add"] + f["del"] for f in files.values() if f["kind"] == "code")
+        test = sum(f["add"] + f["del"] for f in files.values() if f["kind"] == "test")
+        if code == 0:
+            continue
+        net = sum(f["dadd"] for f in files.values()) - sum(f["ddel"] for f in files.values())
+        recs.append((max(net, 0), test > 0 or inline))
+    dec_bands = []
+    for lo, hi in dp.DBANDS:
+        rows = [r for r in recs if lo <= r[0] <= hi]
+        dec_bands.append((lab(lo, hi) if lo != hi else f"{lo}", len(rows), sum(1 for r in rows if r[1])))
+
+    W, H = 900, 330
+    svg = SVG(W, H)
+    MIN_BAND = 5
+
+    def panel(x0, x1, title, bands, note):
+        T, B = 40, 70
+        vmax = nice_max(max([n for _, n, _ in bands] + [1]))
+        y0, y1 = T, H - B
+        y_axis(svg, x0, y0, y1, vmax, lambda v: f"{v:.0f}")
+        svg.text(x0, 18, title, 12, INK, weight=500)
+        svg.text(x0, 31, note, 9.5, INK2)
+        n = len(bands)
+        slot = (x1 - x0) / n
+        for i, (label, total, with_) in enumerate(bands):
+            bx = x0 + slot * i + slot * 0.18
+            bw = slot * 0.64
+            thin = 0 < total < MIN_BAND
+            if total:
+                h_all = (y1 - y0) * total / vmax
+                svg.rect(bx, y1 - h_all, bw, h_all, "url(#thin)" if thin else ALL, stroke=ALL)
+                h_w = (y1 - y0) * with_ / vmax
+                svg.rect(bx, y1 - h_w, bw, h_w, WITH, opacity=0.9 if not thin else 0.6)
+                svg.text(bx + bw / 2, y1 - h_all - 4, f"{with_}/{total}", 9.5, INK2, "middle", mono=True)
+            svg.text(bx + bw / 2, y1 + 14, label + (" · thin" if thin else "") + (" · none" if not total else ""),
+                     9.5, INK2, "middle")
+            if total:
+                svg.text(bx + bw / 2, y1 + 26, f"{with_ / total:.0%}", 9.5, INK2, "middle", mono=True)
+        svg.line(x0, y1, x1, y1, INK2, 0.8)
+
+    panel(56, 440, "by code lines (R-011)", line_bands, "bar: every landing in the band; steel: arrived with a test")
+    panel(500, 884, "by net decisions added (R-027)", dec_bands, "same landings, the other axis")
+    legend(svg, 56, H - 14, [("arrived with a test", WITH, "bar"), ("arrived without", ALL, "bar"),
+                             ("thin band, under five landings: shown, not judged", ALL, "thin")])
+    rates = ", ".join(f"{l} {w}/{n}" + (" thin" if 0 < n < MIN_BAND else "") for l, n, w in line_bands if n)
+    drates = ", ".join(f"{l} {w}/{n}" + (" thin" if 0 < n < MIN_BAND else "") for l, n, w in dec_bands if n)
+    cap = (f"{len(series)} landings between {date(a.since_ts)} and {date(a.until_ts) if a.until_ts else 'now'}. "
+           f"Each bar is every landing in the band and the steel part arrived with a test change or an inline "
+           f"test; the grey remainder did not, and is read against the steel beside it. Tested, by line band: "
+           f"{rates}. By net decisions added: {drates}. The convention bar both rules test against is 50%; "
+           f"the bands from 100 lines up are one pooled regime under R-011.")
+    return svg, cap
+
+
+# ---- 3. care over time --------------------------------------------------------
+
+def chart_care_over_time(a, ref, cot):
+    now = int(datetime.now(timezone.utc).timestamp()); day = 86400
+    span = a.windows * a.window * day
+    since = now - span
+    series = cot.build_series(ref, since, a.act_gap)
+    windows = [[] for _ in range(a.windows)]
+    for l in series:
+        i = min((now - l["ts"]) // (a.window * day), a.windows - 1)
+        windows[i].append(l)
+    windows = windows[::-1]
+    rows = []
+    for i, w in enumerate(windows):
+        end = now - (a.windows - 1 - i) * a.window * day
+        t, nt = cot.rate(w, "test"); d, nd = cot.rate(w, "doc")
+        rows.append({"start": end - a.window * day, "end": end, "n": len(w), "n_floor": nt, "test": t, "doc": d})
+    # risk moments, as the extractor defines them
+    tags = []
+    for line in tg("for-each-ref", "--format=%(refname:short)%01%(creatordate:unix)", "refs/tags").splitlines():
+        name, ts = line.split("\x01"); ts = int(ts or 0)
+        if ts >= since:
+            tags.append((ts, name))
+    tags.sort()
+    gaps = [b[0] - a_[0] for a_, b in zip(tags, tags[1:])]
+    release_days = min(cot.RISK_DAYS, max(1, (statistics.median(gaps) / day) / 4)) if gaps else cot.RISK_DAYS
+    moments = []
+    for ts, name in tags:
+        moments.append(("release", ts - int(release_days * day), ts))
+        if cot.MAJOR_TAG_RE.match(name):
+            moments.append(("major", ts - cot.RISK_DAYS * day, ts + cot.RISK_DAYS * day))
+    for l in series:
+        if cot.REVERT_RE.search(l["subject"]):
+            moments.append(("post-revert", l["ts"], l["ts"] + cot.RISK_DAYS * day))
+        if cot.BREAKING_RE.search(l["subject"] + "\n" + l["body"]):
+            moments.append(("breaking", l["ts"] - cot.RISK_DAYS * day // 2, l["ts"] + cot.RISK_DAYS * day // 2))
+    kinds = collections.Counter(m[0] for m in moments)
+
+    W, H, L, R, T, B = 900, 330, 56, 16, 52, 72
+    svg = SVG(W, H)
+    x0, x1, y0, y1 = L, W - R, T, H - B
+    sx = lambda ts: x0 + (x1 - x0) * (ts - since) / span
+    # shading first, so bars sit on top
+    for kd, lo, hi in moments:
+        svg.rect(max(x0, sx(lo)), y0, min(x1, sx(hi)) - max(x0, sx(lo)), y1 - y0, RISK[kd], opacity=0.9)
+    y_axis(svg, x0, y0, y1, 100, lambda v: f"{v:.0f}%")
+    slot = (x1 - x0) / a.windows
+    pts = []
+    for i, r in enumerate(rows):
+        bx = x0 + slot * i + slot * 0.2
+        bw = slot * 0.6
+        thin = r["n_floor"] < cot.MIN_LANDINGS_PER_WINDOW
+        if r["test"] is not None:
+            h = (y1 - y0) * r["test"]
+            if thin:
+                svg.rect(bx, y1 - h, bw, h, PAPER, stroke=WITH)
+            else:
+                svg.rect(bx, y1 - h, bw, h, WITH, opacity=0.9)
+        if r["doc"] is not None:
+            pts.append((bx + bw / 2, y1 - (y1 - y0) * r["doc"]))
+        svg.text(bx + bw / 2, y1 + 14, date(r["end"])[:7], 9.5, INK2, "middle")
+        svg.text(bx + bw / 2, y1 + 26, f"n={r['n_floor']}" + (" thin" if thin else ""), 9, INK2, "middle", mono=True)
+    svg.path(pts, LINE, 1.8)
+    for x, y in pts:
+        svg.circle(x, y, 2.5, LINE, 1)
+    svg.line(x0, y1, x1, y1, INK2, 0.8)
+    svg.text(x0, 18, f"care per window · {a.windows} windows of {a.window} days", 12, INK, weight=500)
+    svg.text(x0, 31, "bar: tests arrived; line: reasoning arrived; shaded: a window the repository itself marked as risk", 9.5, INK2)
+    items = [("tests arrived, % of landings above the floor", WITH, "bar"), ("reasoning arrived, %", LINE, "line")]
+    items += [(f"{k} ({n})", RISK[k], "bar") for k, n in kinds.most_common()]
+    legend(svg, L, H - 14, items)
+    tr = ", ".join(f"{date(r['end'])[:7]} {r['test']:.0%} (n={r['n_floor']})" for r in rows if r["test"] is not None)
+    cap = (f"{len(series)} landings over {a.windows} windows of {a.window} days ending {date(now)}. Bars are the share "
+           f"of landings above the code floor that arrived with a test; a hollow bar is a window under "
+           f"{cot.MIN_LANDINGS_PER_WINDOW} such landings, shown and not judged. The line is the share that arrived "
+           f"with reasoning. Shaded spans are the moments the repository itself declared as risk — "
+           + (", ".join(f"{n} {k}" for k, n in kinds.most_common()) if kinds else "none in this span")
+           + (f"; release run-up {release_days:.0f} days, scaled to the tag cadence" if tags else "")
+           + f". Tests by window: {tr}.")
+    return svg, cap
+
+
+# ---- 4. size against interval ------------------------------------------------
+
+def chart_size_interval(a, ref, cot):
+    series = cot.build_series(ref, a.since_ts, a.act_gap, a.until_ts)
+    pts = [(l["code"], l["interval"]) for l in series
+           if l["merge"] and l["interval"] is not None and l["code"] >= cot.CODE_FLOOR]
+    W, H, L, R, T, B = 900, 360, 64, 16, 36, 64
+    svg = SVG(W, H)
+    if len(pts) < 3:
+        svg.text(W / 2, H / 2, f"{len(pts)} merge(s) with a measurable interval; nothing to plot", 12, INK2, "middle")
+        return svg, (f"{len(pts)} merged landings with a measurable review interval in the window; the rule needs "
+                     f"{cot.MIN_MERGES_FOR_RHO}. A squash or applied-patch history has none, and this chart says so rather than drawing it.")
+    hours = [max(i / 3600, 1 / 60) for _, i in pts]
+    xs = [c for c, _ in pts]
+    lx = lambda v: math.log10(v)
+    xmin, xmax = lx(max(1, min(xs))), lx(max(xs)) * 1.02
+    ymin, ymax = lx(min(hours)), lx(max(hours)) * 1.02 + 0.1
+    x0, x1, y0, y1 = L, W - R, T, H - B
+    sx = lambda v: x0 + (x1 - x0) * (lx(v) - xmin) / max(1e-9, xmax - xmin)
+    sy = lambda h: y1 - (y1 - y0) * (lx(h) - ymin) / max(1e-9, ymax - ymin)
+    e = math.floor(xmin)
+    while 10 ** e <= 10 ** xmax:
+        x = sx(10 ** e)
+        if x0 <= x <= x1:
+            svg.line(x, y0, x, y1, RULE, 0.6); svg.text(x, y1 + 14, f"{10 ** e:,}", 10, INK2, "middle")
+        e += 1
+    for h_, label in [(1 / 60, "1 min"), (1, "1 h"), (24, "1 day"), (24 * 7, "1 week"), (24 * 30, "30 days"), (24 * 365, "1 year")]:
+        y = sy(h_)
+        if y0 <= y <= y1:
+            svg.line(x0, y, x1, y, RULE, 0.6); svg.text(x0 - 6, y + 4, label, 10, INK2, "end")
+    for (c, i), h_ in zip(pts, hours):
+        svg.circle(sx(c), sy(h_), 3.2, WITH, 0.55)
+    rho = cot.spearman(pts)
+    svg.text(x0, 18, "review interval against code lines, one point per merged landing", 12, INK, weight=500)
+    svg.text(x1, 18, f"rank correlation {rho:+.2f}  ·  n={len(pts)}" if rho is not None else f"n={len(pts)}", 11, INK, "end", mono=True)
+    svg.text((x0 + x1) / 2, H - 30, "code lines (log)", 10, INK2, "middle")
+    svg.line(x0, y1, x1, y1, INK2, 0.8); svg.line(x0, y0, x0, y1, INK2, 0.8)
+    cap = (f"{len(pts)} merged landings of at least {cot.CODE_FLOOR} code lines between {date(a.since_ts)} and "
+           f"{date(a.until_ts) if a.until_ts else 'now'}, review interval against size, both on log scales. "
+           f"Rank correlation {rho:+.2f}" if rho is not None else "")
+    cap += (". A flat cloud is a process whose reading time does not grow with what there is to read; a rising one "
+            "is bigger changes waiting longer. R-023 reads the trend of this correlation across windows; this is the whole span.")
+    return svg, cap
+
+
+# ---- 5. stocks -----------------------------------------------------------------
+
+def chart_stocks(a, ref, md):
+    day = 86400
+    now = int(datetime.now(timezone.utc).timestamp())
+    W, H = 900, 340
+    svg = SVG(W, H)
+    # panel A: branches, from the sidecars this case's readings left behind
+    cdir = case_dir()
+    readings = []
+    if cdir:
+        for f in sorted(cdir.glob("s9-*.json")):
+            try:
+                d = json.loads(f.read_text())
+            except ValueError:
+                continue
+            readings.append((d.get("reading", f.name)[:10], d.get("outstanding", {})))
+    T, B, y0 = 40, 72, 40
+    y1 = H - B
+
+    def panel_a(x0, x1):
+        svg.text(x0, 18, "branches that did not land here (R-014)", 12, INK, weight=500)
+        if len(readings) >= 2:
+            svg.text(x0, 31, "bar: stale stock at each reading; lines: resolved and begun since the previous", 9.5, INK2)
+            stock = [sum(1 for v in o.values() if v.get("stale")) for _, o in readings]
+            resolved, begun = [0], [0]
+            for (_, prev), (_, cur) in zip(readings, readings[1:]):
+                resolved.append(sum(1 for h in prev if h not in cur))
+                begun.append(sum(1 for h in cur if h not in prev))
+            vmax = nice_max(max(stock + resolved + begun + [1]))
+            y_axis(svg, x0, y0, y1, vmax, lambda v: f"{v:.0f}")
+            slot = (x1 - x0) / len(readings)
+            p_r, p_b = [], []
+            for i, (label, _) in enumerate(readings):
+                bx = x0 + slot * i + slot * 0.25; bw = slot * 0.5
+                h = (y1 - y0) * stock[i] / vmax
+                svg.rect(bx, y1 - h, bw, h, ALL, stroke=ALL)
+                svg.text(bx + bw / 2, y1 - h - 4, str(stock[i]), 9.5, INK2, "middle", mono=True)
+                svg.text(bx + bw / 2, y1 + 14, label, 9.5, INK2, "middle")
+                cx = bx + bw / 2
+                p_r.append((cx, y1 - (y1 - y0) * resolved[i] / vmax))
+                p_b.append((cx, y1 - (y1 - y0) * begun[i] / vmax))
+            svg.path(p_r, LINE, 1.8); svg.path(p_b, DARK, 1.8)
+            for x, y in p_r: svg.circle(x, y, 2.5, LINE, 1)
+            for x, y in p_b: svg.circle(x, y, 2.5, DARK, 1)
+            svg.line(x0, y1, x1, y1, INK2, 0.8)
+            return (f"branches: {len(readings)} readings of this case; stale stock "
+                    + " → ".join(str(s) for s in stock)
+                    + f"; resolved since previous {resolved[1:]}, begun {begun[1:]}. Resolved is landed or deleted, git cannot say which.")
+        elif len(readings) == 1:
+            label, o = readings[0]
+            svg.text(x0, 31, "one reading: survivors by the window they were begun in — inflow only, nothing about growth", 9.5, INK2)
+            stale = [v for v in o.values() if v.get("stale")]
+            per = collections.Counter(min((now - v["begun"]) // (30 * day), 5) for v in stale)
+            labels = ["<30d", "30-60d", "60-90d", "90-120d", "120-150d", "older"]
+            vmax = nice_max(max(list(per.values()) + [1]))
+            y_axis(svg, x0, y0, y1, vmax, lambda v: f"{v:.0f}")
+            slot = (x1 - x0) / 6
+            for i in range(6):
+                bx = x0 + slot * i + slot * 0.25; bw = slot * 0.5
+                h = (y1 - y0) * per.get(i, 0) / vmax
+                svg.rect(bx, y1 - h, bw, h, ALL, stroke=ALL)
+                svg.text(bx + bw / 2, y1 + 14, labels[i], 9.5, INK2, "middle")
+            svg.line(x0, y1, x1, y1, INK2, 0.8)
+            return (f"branches: one reading ({label}), {len(stale)} stale survivors by the window they were begun in; "
+                    "inflow with the outflow deleted, so nothing here says whether the stock grows. A second reading "
+                    "with --record makes the delta drawable.")
+        else:
+            svg.text((x0 + x1) / 2, (y0 + y1) / 2, "no reading recorded: run bin/open-ended-work --record", 11, INK2, "middle")
+            return "branches: no sidecar in this case; nothing to draw."
+
+    def panel_b(x0, x1):
+        svg.text(x0, 18, "recorded obligations (R-015)", 12, INK, weight=500)
+        svg.text(x0, 31, "bar: markers in the tree at each window's end; lines: added and removed in it", 9.5, INK2)
+        bounds = [now - (a.windows - i) * a.window * day for i in range(a.windows + 1)]
+        revs = []
+        for t in bounds:
+            p = subprocess.run([str(BIN / "target-git"), "rev-list", "-1", "--first-parent", f"--before={t}", ref],
+                               capture_output=True, text=True)
+            revs.append(p.stdout.strip() or None)
+        stocks = [sum(md.stock_at(r, md.DEFAULT_MARKERS).values()) if r else None for r in revs]
+        gross = [md.gross_in_window(ref, str(bounds[i]), str(bounds[i + 1]), md.DEFAULT_MARKERS) for i in range(a.windows)]
+        vals = [s for s in stocks if s is not None] + [g for ad, rm in gross for g in (ad, rm)]
+        vmax = nice_max(max(vals + [1]))
+        y_axis(svg, x0, y0, y1, vmax, lambda v: f"{v:.0f}")
+        slot = (x1 - x0) / a.windows
+        p_a, p_r = [], []
+        for i in range(a.windows):
+            bx = x0 + slot * i + slot * 0.25; bw = slot * 0.5
+            s = stocks[i + 1]
+            if s is not None:
+                h = (y1 - y0) * s / vmax
+                svg.rect(bx, y1 - h, bw, h, ALL, stroke=ALL)
+                svg.text(bx + bw / 2, y1 - h - 4, str(s), 9.5, INK2, "middle", mono=True)
+            svg.text(bx + bw / 2, y1 + 14, date(bounds[i + 1])[:7], 9.5, INK2, "middle")
+            cx = bx + bw / 2
+            p_a.append((cx, y1 - (y1 - y0) * gross[i][0] / vmax))
+            p_r.append((cx, y1 - (y1 - y0) * gross[i][1] / vmax))
+        svg.path(p_a, DARK, 1.8); svg.path(p_r, LINE, 1.8)
+        for x, y in p_a: svg.circle(x, y, 2.5, DARK, 1)
+        for x, y in p_r: svg.circle(x, y, 2.5, LINE, 1)
+        svg.line(x0, y1, x1, y1, INK2, 0.8)
+        return (f"markers: stock {stocks[0]} → {stocks[-1]} over {a.windows} windows of {a.window} days; "
+                f"added per window {[ad for ad, _ in gross]}, removed {[rm for _, rm in gross]}. Removed is what adhered.")
+
+    ca = panel_a(56, 440)
+    cb = panel_b(500, 884)
+    legend(svg, 56, H - 14, [("stock", ALL, "bar"), ("resolved / removed since previous", LINE, "line"), ("begun / added since previous", DARK, "line")])
+    return svg, ca + " " + cb
+
+
+# ---- main ----------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("chart", type=int, choices=sorted(CHARTS))
+    ap.add_argument("--since", default="3 months ago")
+    ap.add_argument("--until", default=None)
+    ap.add_argument("--ref")
+    ap.add_argument("--act-gap", type=int, default=60)
+    ap.add_argument("--windows", type=int, default=8, help="charts 3 and 5")
+    ap.add_argument("--window", type=int, default=90, help="days; charts 3 and 5")
+    ap.add_argument("--id", default=None, help="reading id the file is named after; default: today's date")
+    ap.add_argument("--out", default=None, help="directory; default: the open case's directory")
+    a = ap.parse_args()
+    a.since_ts = resolve_ts(a.since)
+    a.until_ts = resolve_ts(a.until) if a.until else None
+    a.until = a.until or "now"
+    ref = a.ref or default_ref()
+    out = Path(a.out) if a.out else case_dir()
+    if not out:
+        sys.exit("case-charts: no case open; pass --out <dir>")
+    out.mkdir(parents=True, exist_ok=True)
+    rid = a.id or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    cot = load("care-over-time")
+    n = a.chart
+    if n == 1:
+        svg, cap = chart_timeline(a, ref, cot)
+    elif n == 2:
+        svg, cap = chart_care_by_band(a, ref, cot, load("decision-points"))
+    elif n == 3:
+        svg, cap = chart_care_over_time(a, ref, cot)
+    elif n == 4:
+        svg, cap = chart_size_interval(a, ref, cot)
+    else:
+        svg, cap = chart_stocks(a, ref, load("marker-debt"))
+
+    title, _, _ = CHARTS[n]
+    name = codename()
+    rows = frame_rows(n)
+    path = out / f"{rid}-chart-{n}.svg"
+    path.write_text(with_frame(svg, name, title, rows, cap))
+
+    # The SVG is the whole deliverable — frame above, chart, caption below.
+    # What is printed is for the conversation: the same frame and caption in
+    # text, so the reader who asked sees what was drawn without opening it.
+    print(f"## {name} — {title}\n\n{frame_table(n)}\n\n{cap}\n")
+    sys.stderr.write(f"case-charts: wrote {path}\n")
+
+
+if __name__ == "__main__":
+    main()

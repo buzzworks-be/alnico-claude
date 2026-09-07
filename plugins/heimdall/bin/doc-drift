@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""
+Which documents have fallen behind the code they claim to describe?
+
+This is the mechanical check behind rule R-005. Documentation rot is invisible
+in any single increment — no commit says "and we did not update the docs" — so
+unlike the other checks this one reads the repository's *state* at a ref, given
+the history behind it.
+
+The linkage problem is the crux: which code does a document describe? Guessing
+from directory layout would be fiction. Instead the link is derived from the
+document's own content: a document that names a code path is claiming to
+describe it. For every such claim, two questions:
+
+  drift     how much have the named files changed since the document last did?
+  staleness how long the document has stood still while its subject kept moving
+            (the gap between the document's last change and the named files'
+            most recent one)
+  phantoms  does the document name files that no longer exist?
+
+Drift alone is not rot: a frequently-maintained document naming many files will
+always show churn since its latest touch — that is a document keeping up, not
+one left behind. Rot requires both: substantial drift AND a document that has
+stood still for a meaningful time while it accumulated. Phantoms need neither
+threshold; the claim is simply false.
+
+A phantom is the strong form — the document asserts the existence of something
+that is gone, and no reading of "describes a stable aspect" survives that.
+
+Usage:
+  bin/doc-drift                        # state at the target's HEAD
+  bin/doc-drift --ref <ref>            # state at another ref
+  bin/doc-drift --drift-min 300        # raise the drift threshold
+"""
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+DOC_EXT = (".md", ".rst", ".adoc")
+CODE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".sql", ".go", ".rs",
+            ".java", ".rb", ".php", ".cs", ".kt", ".swift", ".c", ".cc", ".cpp",
+            ".h", ".sh", ".yml", ".yaml", ".json")
+GENERATED = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
+             "go.sum", "Cargo.lock", ".snap")
+
+# Documents that are records of a moment, immutable by convention. Staleness is
+# their nature, not their failure. Matched on path segments, case-insensitive.
+# Markers of a generated document. Its claims rot for the reader exactly like a
+# hand-written one's, but the remedy is regenerating the artifact, not editing
+# prose — findings carry the distinction so the case file can say the right ask.
+GENERATED_DOC_RE = re.compile(r"@generated|do not edit by hand|auto-?generated", re.I)
+
+RECORD_RE = re.compile(
+    r"(^|/)(adrs?|rfcs?|decisions?|postmortems?|meeting-notes?|security-reviews?)(/|$)"
+    r"|changelog|history\.md|news\.md|releases?\.md",
+    re.I,
+)
+
+DEFAULT_DRIFT_MIN = 200   # lines of churn in named files since the doc last moved
+DEFAULT_STALE_MIN = 14    # days the doc must have stood still behind its subject
+
+
+def tg(*args):
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(proc.returncode)
+    return proc.stdout
+
+
+def iso(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--ref", default=None, help="ref to read the state at (default: target HEAD)")
+    p.add_argument("--drift-min", type=int, default=DEFAULT_DRIFT_MIN)
+    p.add_argument("--stale-min", type=int, default=DEFAULT_STALE_MIN,
+                   help="days between the doc's last change and its subject's "
+                        "latest change before drift counts as rot")
+    p.add_argument("--include-records", action="store_true",
+                   help="also check decision records, changelogs and other "
+                        "immutable-by-convention documents (off by default)")
+    a = p.parse_args()
+
+    ref = a.ref
+    if not ref:
+        meta = ROOT / ".heimdall" / "target.json"
+        ref = json.loads(meta.read_text())["headSha"] if meta.exists() else "HEAD"
+
+    tree = tg("ls-tree", "-r", "--name-only", ref).splitlines()
+    tree_set = set(tree)
+    code_files = [f for f in tree if f.endswith(CODE_EXT) and not f.endswith(GENERATED)]
+    docs = [f for f in tree if f.endswith(DOC_EXT)]
+
+    findings, unlinked, records, checked = [], [], 0, 0
+    for doc in docs:
+        if RECORD_RE.search(doc) and not a.include_records:
+            records += 1
+            continue
+        text = tg("show", f"{ref}:{doc}")
+        generated = bool(GENERATED_DOC_RE.search(text[:2000]))
+
+        # A named path is a claim. Match tree paths verbatim; for deleted-file
+        # detection, also collect path-shaped tokens that are NOT in the tree.
+        named = [f for f in code_files if f in text]
+        tokens = set(re.findall(r"[A-Za-z0-9_.@-]+(?:/[A-Za-z0-9_.@-]+)+\.\w{1,4}", text))
+        phantom_candidates = sorted(
+            t for t in tokens
+            if t not in tree_set and t.endswith(CODE_EXT) and not t.endswith(GENERATED)
+        )
+        if not named and not phantom_candidates:
+            unlinked.append(doc)
+            continue
+        checked += 1
+
+        last_line = tg("log", "-1", "--format=%at", ref, "--", doc).strip()
+        if not last_line.isdigit():
+            continue
+        last_at = int(last_line)
+
+        # A phantom only counts if the named file existed when the doc was last
+        # written — otherwise it may be a typo or an external path, not rot.
+        last_commit = tg("log", "-1", "--format=%H", ref, "--", doc).strip()
+        then_tree = set(tg("ls-tree", "-r", "--name-only", last_commit).splitlines())
+        phantoms = [t for t in phantom_candidates if t in then_tree]
+
+        drift, subject_last = 0, None
+        if named:
+            for line in tg("log", "--numstat", "--format=",
+                           f"--since={iso(last_at)}", ref, "--", *named).splitlines():
+                b = line.split("\t")
+                if len(b) == 3:
+                    drift += ((int(b[0]) if b[0].isdigit() else 0)
+                              + (int(b[1]) if b[1].isdigit() else 0))
+            t = tg("log", "-1", "--format=%at", ref, "--", *named).strip()
+            subject_last = int(t) if t.isdigit() else None
+
+        stale_days = round((subject_last - last_at) / 86400, 1) if subject_last else 0.0
+        adrift = drift >= a.drift_min and stale_days >= a.stale_min
+        if adrift or phantoms:
+            findings.append({
+                "document": doc,
+                "generated": generated,
+                "remedy": "regenerate the artifact" if generated else "update or retire the document",
+                "last_changed": iso(last_at),
+                "named_files": len(named),
+                "drift_since": drift,
+                "stale_days_behind_subject": stale_days,
+                "phantom_references": phantoms,
+            })
+
+    result = {
+        "state_at": ref,
+        "parameters": {"drift_min_lines": a.drift_min, "stale_min_days": a.stale_min,
+                       "records_excluded": not a.include_records},
+        "documents": {"total": len(docs), "record_kind_excluded": records,
+                      "unlinked": len(unlinked), "checked": checked},
+        "documents_adrift": len(findings),
+        "findings": sorted(findings,
+                           key=lambda f: (-len(f["phantom_references"]), -f["drift_since"])),
+    }
+    print(json.dumps(result, indent=2))
+
+    w = [f"state at {ref[:12]}   (drift >= {a.drift_min} lines and >= {a.stale_min} days "
+         f"stale; {records} record-kind doc(s) excluded, {len(unlinked)} unlinked)"]
+    w.append(f"{len(findings)} of {checked} linked documents are adrift")
+    for f in result["findings"][:12]:
+        ph = f" PHANTOM x{len(f['phantom_references'])}" if f["phantom_references"] else ""
+        ph += " GEN" if f["generated"] else ""
+        w.append(f"  {f['document'][:48]:<50} last {f['last_changed'][:10]}  "
+                 f"names {f['named_files']:>3}  drift {f['drift_since']:>6}  "
+                 f"stale {f['stale_days_behind_subject']:>5}d{ph}")
+    w.append("a named path is a claim; drift and phantoms measure the claim, not the prose.")
+    sys.stderr.write("\n".join(w) + "\n")
+
+
+if __name__ == "__main__":
+    main()

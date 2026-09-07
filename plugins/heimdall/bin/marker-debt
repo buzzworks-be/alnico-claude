@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Are the obligations this repository writes down for itself being discharged?
+
+The measurement behind signal S-10 and the check behind R-015, under P-10:
+work begun is work owed. A marker — TODO, FIXME, HACK and whatever else the
+repository uses — is a recorded obligation. The level says nothing: a
+repository that writes none is not cleaner, it is silent, and comparing two
+repositories' counts is meaningless. Only the repository's own trend carries
+anything, so this reads consecutive windows and reports the derivative.
+
+Three figures: gross markers added and removed per window (from the diffs),
+the stock at each window boundary (from the tree), and the age of what
+survives (from blame on the files that hold them, capped). Conditional, like
+R-003 and R-011: where the repository does not evidently use markers, there is
+nothing to read and the rule says so.
+
+Usage:
+  bin/marker-debt
+  bin/marker-debt --window 30 --windows 6 --markers 'TODO|FIXME|HACK'
+"""
+
+import argparse
+import json
+import re
+import statistics
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE  # noqa: E402
+
+DEFAULT_MARKERS = r"TODO|FIXME|HACK|XXX|BUG"
+
+DEFAULT_WINDOW_DAYS = 30
+DEFAULT_WINDOWS = 4
+DEFAULT_MIN_ACTIVITY = 10     # gross added+removed over the span, below which n/a
+DEFAULT_GROWTH = 0.25         # stock must rise by this share over the span
+DEFAULT_BLAME_CAP = 300       # files blamed for marker age
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        sys.exit(f"marker-debt: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def tg_try(*args):
+    """For commands whose non-zero exit is an answer, not a failure — a missing
+    path, a sha that never reached this history, a ref with no merge-base. Only
+    target-git's own refusals (2: nothing attached, 3: mutating subcommand) end
+    the run."""
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode in (2, 3):
+        sys.stderr.write(p.stderr)
+        sys.exit(p.returncode)
+    return p.returncode, p.stdout
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def stock_at(rev, marker_re):
+    """Marker lines in the tree at a revision, by file, noise excluded."""
+    rc, out = tg_try("grep", "-c", "-E", f"\\b({marker_re})\\b", rev, "--", ".")
+    per_file = {}
+    for row in out.splitlines():
+        # rev:path:count
+        try:
+            _, path, n = row.rsplit(":", 2)
+        except ValueError:
+            continue
+        if NOISE_RE.search(path):
+            continue
+        per_file[path] = int(n)
+    return per_file
+
+
+def gross_in_window(ref, since, until, marker_re):
+    rx = re.compile(rf"\b({marker_re})\b")
+    added = removed = 0
+    path = None
+    out = tg("log", "--first-parent", ref, f"--since={since}", f"--until={until}",
+             "-p", "--unified=0", "--format=", "-M")
+    for line in out.splitlines():
+        if line.startswith("+++ ") or line.startswith("--- "):
+            p = line[4:]
+            path = p[2:] if p.startswith(("a/", "b/")) else p
+            continue
+        if path is None or path == "/dev/null" or NOISE_RE.search(path):
+            continue
+        if line.startswith("+") and rx.search(line):
+            added += 1
+        elif line.startswith("-") and rx.search(line):
+            removed += 1
+    return added, removed
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--window", type=int, default=DEFAULT_WINDOW_DAYS)
+    ap.add_argument("--windows", type=int, default=DEFAULT_WINDOWS)
+    ap.add_argument("--markers", default=DEFAULT_MARKERS,
+                    help="alternation of marker words; word-bounded, case-sensitive")
+    ap.add_argument("--min-activity", type=int, default=DEFAULT_MIN_ACTIVITY)
+    ap.add_argument("--growth", type=float, default=DEFAULT_GROWTH)
+    ap.add_argument("--blame-cap", type=int, default=DEFAULT_BLAME_CAP)
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+    now = int(datetime.now(timezone.utc).timestamp())
+    day = 86400
+
+    # Window boundaries, oldest first: t0 < t1 < ... < tK = now
+    bounds = [now - (a.windows - i) * a.window * day for i in range(a.windows + 1)]
+    revs = []
+    for t in bounds:
+        rc, out = tg_try("rev-list", "-1", "--first-parent", f"--before={t}", ref)
+        revs.append(out.strip() or None)
+    if not revs[0]:
+        print(f"S-10: the history does not reach back {a.windows} window(s) of "
+              f"{a.window} days; shorten --windows or --window.")
+        return 0
+
+    stocks = [sum(stock_at(r, a.markers).values()) if r else None for r in revs]
+    gross = []
+    for i in range(a.windows):
+        gross.append(gross_in_window(ref, str(bounds[i]), str(bounds[i + 1]), a.markers))
+
+    print(f"S-10: markers /{a.markers}/ on {ref}, {a.windows} window(s) of {a.window} days.")
+    print(f"  {'window':<18}{'stock at end':>13}{'added':>8}{'removed':>9}{'net':>6}")
+    for i in range(a.windows):
+        end = datetime.fromtimestamp(bounds[i + 1], timezone.utc).strftime("%Y-%m-%d")
+        add, rem = gross[i]
+        print(f"  {'ending ' + end:<18}{stocks[i + 1] if stocks[i + 1] is not None else '?':>13}"
+              f"{add:>8}{rem:>9}{add - rem:>+6}")
+    print(f"  stock at start of span: {stocks[0]}")
+
+    activity = sum(x + y for x, y in gross)
+    if activity < a.min_activity:
+        print()
+        print(f"R-015: NOT APPLICABLE — {activity} marker(s) added or removed over the span, "
+              f"below {a.min_activity}.")
+        print("  The repository does not evidently record obligations this way. A count")
+        print("  of zero is silence, not cleanliness, and there is no trend to read.")
+        return 0
+
+    # Age of what survives, from blame on the files holding markers at the tip.
+    rx = re.compile(rf"\b({a.markers})\b")
+    per_file = stock_at(ref, a.markers)
+    ages = []
+    blamed = 0
+    for path in sorted(per_file, key=lambda p: -per_file[p])[: a.blame_cap]:
+        rc, out = tg_try("blame", "--line-porcelain", ref, "--", path)
+        if rc != 0:
+            continue
+        blamed += 1
+        t = None
+        for line in out.splitlines():
+            if line.startswith("author-time "):
+                t = int(line.split()[1])
+            elif line.startswith("\t") and t is not None and rx.search(line):
+                ages.append((now - t) / day)
+    print()
+    if ages:
+        ages.sort()
+        span = a.window * a.windows
+        print(f"  surviving markers: {len(ages)} in {blamed} file(s) blamed"
+              f"{' (capped)' if len(per_file) > a.blame_cap else ''}; "
+              f"median age {statistics.median(ages):.0f}d, oldest {ages[-1]:.0f}d, "
+              f"{sum(1 for x in ages if x > span)} older than the whole span read here.")
+
+    start, end = stocks[0], stocks[-1]
+    net_up = sum(1 for add, rem in gross if add - rem > 0)
+    growth = (end - start) / start if start else (float("inf") if end else 0.0)
+    print(f"  stock {start} → {end} over the span ({growth:+.0%}); "
+          f"net positive in {net_up} of {a.windows} window(s).")
+    print()
+    if growth >= a.growth and net_up >= max(2, a.windows - 1):
+        print("R-015: CANDIDATE FINDING — recorded obligations accumulate.")
+        print("  The repository writes markers and, window after window, removes")
+        print("  fewer than it adds. Markers used as an index, a deliberate backlog, a")
+        print("  window of pure feature work — R-015's Not a violation section applies.")
+    else:
+        print("R-015: no finding — the marker stock is not rising across the span.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

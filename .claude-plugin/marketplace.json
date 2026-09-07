@@ -1,0 +1,18 @@
+{
+  "name": "alnico-claude",
+  "owner": {
+    "name": "buzzworks.be"
+  },
+  "plugins": [
+    {
+      "name": "heimdall",
+      "description": "Heimdall is a process telemeter that assembles a case file with observations of how software was produced",
+      "author": {
+        "name": "Jan Van Coppenolle"
+      },
+      "license": "Apache-2.0",
+      "version": "0.12.11",
+      "source": "./plugins/heimdall"
+    }
+  ]
+}

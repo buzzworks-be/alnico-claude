@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""Does a merge carry only what its branches carried?
+
+The measurement behind signal S-13 and the check behind R-017, under P-12: the
+record must describe the change it carries. A merge commit says "I combined
+these two lines of work". Sometimes it also did something else — resolved a
+conflict by hand, regenerated a lockfile, fixed a test, slipped in a change —
+and that something was reviewed on neither branch, because it existed on
+neither branch. It exists only in the merge, where nobody reads.
+
+The check is mechanical. For each merge, git recomputes what the automatic
+merge of the two parents would have produced (`git merge-tree`), and the
+merge's actual tree is diffed against it. Whatever differs is content from
+neither parent. Two kinds, kept apart:
+
+  in a conflicted file   the merge had to choose; a hand-written resolution
+                         is expected there and is reported as the size of
+                         the resolution, never as a finding by itself.
+  outside any conflict   nothing needed a decision, and the merge changed it
+                         anyway. That is the R-017 candidate.
+
+Repositories that land by squash or applied patch have no merges and this
+reports not applicable. Merges that absorbed an unrelated history (no
+merge-base) are skipped and counted.
+
+Usage:
+  bin/merge-provenance --since "6 months ago"
+  bin/merge-provenance --since 2026-01-01 --until 2026-04-01
+"""
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE, kind  # noqa: E402
+
+DEFAULT_MIN_LINES = 1     # any line outside a conflict is content from nowhere
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        sys.exit(f"merge-provenance: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def tg_try(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode in (2, 3):
+        sys.stderr.write(p.stderr)
+        sys.exit(p.returncode)
+    return p.returncode, p.stdout
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def numstat(a, b):
+    rows = []
+    for r in tg("diff", "--numstat", a, b).splitlines():
+        c = r.split("\t")
+        if len(c) == 3:
+            rows.append((c[2], int(c[0]) if c[0].isdigit() else 0,
+                         int(c[1]) if c[1].isdigit() else 0))
+    return rows
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--min-lines", type=int, default=DEFAULT_MIN_LINES)
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+
+    probe = subprocess.run(["git", "merge-tree", "-h"], capture_output=True, text=True)
+    if "--write-tree" not in (probe.stdout + probe.stderr):
+        print("S-13: NOT APPLICABLE — this git has no `merge-tree --write-tree` (needs 2.38+);")
+        print("  the automatic merge cannot be recomputed here.")
+        return 0
+
+    merges = []
+    for line in tg("log", "--first-parent", "--merges", ref, f"--since={a.since}",
+                   f"--until={a.until}", "--format=%H%x01%P%x01%ct%x01%s").splitlines():
+        sha, parents, ts, subj = line.split("\x01", 3)
+        merges.append((sha, parents.split(), int(ts), subj))
+    if not merges:
+        print("S-13: NOT APPLICABLE — no merge commits in the window; the repository")
+        print("  lands by squash, rebase or applied patch, and a merge's provenance")
+        print("  is not a question it can be asked.")
+        return 0
+
+    absorbed = octopus = 0
+    rows = []
+    for sha, ps, ts, subj in merges:
+        if len(ps) != 2:
+            octopus += 1
+            continue
+        rc, mb = tg_try("merge-base", ps[0], ps[1])
+        if rc != 0 or not mb.strip():
+            absorbed += 1
+            continue
+        rc, out = tg_try("merge-tree", "--write-tree", "--name-only", ps[0], ps[1])
+        if rc > 1:
+            continue
+        lines = out.split("\n")
+        auto_tree = lines[0].strip()
+        conflicted = set()
+        if rc == 1:
+            # conflicted files follow the tree id, then an empty line, then messages
+            for l in lines[1:]:
+                if not l.strip():
+                    break
+                conflicted.add(l.strip())
+        extra_out, extra_in = [], []
+        for path, add, dele in numstat(auto_tree, sha):
+            if kind(path) == "noise":
+                continue
+            (extra_in if path in conflicted else extra_out).append((path, add, dele))
+        rows.append({"sha": sha, "ts": ts, "subject": subj, "conflicted": len(conflicted),
+                     "resolution": sum(x + y for _, x, y in extra_in),
+                     "outside": extra_out,
+                     "outside_lines": sum(x + y for _, x, y in extra_out)})
+
+    n = len(rows)
+    clean = sum(1 for r in rows if r["outside_lines"] == 0 and r["resolution"] == 0)
+    with_conf = sum(1 for r in rows if r["conflicted"])
+    with_out = [r for r in rows if r["outside_lines"] >= a.min_lines]
+    print(f"S-13: {len(merges)} merge(s) on {ref} in window; {n} examined"
+          f"{f', {absorbed} absorbed an unrelated history' if absorbed else ''}"
+          f"{f', {octopus} octopus' if octopus else ''}.")
+    print(f"  identical to the automatic merge: {clean}   with a conflict resolution: {with_conf}"
+          f"   changing files outside any conflict: {len(with_out)}")
+    if with_conf:
+        res = sorted(r["resolution"] for r in rows if r["conflicted"])
+        print(f"  resolution size (lines, in conflicted files): median {res[len(res)//2]}, max {res[-1]}")
+    print()
+    if not with_out:
+        print("R-017: no finding — every merge carries only what its branches carried,")
+        print("  or changes only what a conflict made it decide.")
+        return 0
+    print(f"R-017: CANDIDATE FINDING — {len(with_out)} merge(s) changed files no conflict touched.")
+    for r in sorted(with_out, key=lambda r: -r["outside_lines"])[:15]:
+        files = ", ".join(p for p, _, _ in r["outside"][:3]) + (" …" if len(r["outside"]) > 3 else "")
+        print(f"    {r['sha'][:12]}  {r['outside_lines']:>5} lines in {len(r['outside'])} file(s)"
+              f"{'  (+' + str(r['conflicted']) + ' conflicted)' if r['conflicted'] else ''}"
+              f"  {r['subject'][:40]}")
+        print(f"                  {files}")
+    print("  Content from neither parent, outside any conflict, was reviewed on no")
+    print("  branch. A lockfile regenerated at merge, a generated file, a formatter")
+    print("  run — R-017's Not a violation section applies. Read the merge's diff")
+    print("  against the automatic merge before believing it.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

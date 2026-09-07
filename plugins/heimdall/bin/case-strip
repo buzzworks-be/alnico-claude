@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""
+Render a case file's rule outcomes as one line, and a case as a stack of them.
+
+The strip is the visual primitive that composes: a case file is one row, a case
+is rows over time, and a season would be cases at the same scale. It is text so
+it costs nothing, pastes anywhere, and survives a terminal.
+
+**It renders a cell for every rule that exists, not every rule the case file
+mentions.** A reading that omitted a rule shows `!`, not a shorter strip. That
+is the whole point: silence about a rule reads as coverage of it, and a case
+file with four rules missing looks clean unless something insists on showing the
+gap. Frame drift is legible too, and told apart from silence: a rule that did
+not exist at the reading's pin renders `∅`, never `!` — the strip must not
+accuse a correct case file of silence about a rule it could not have known. A
+sha pin is resolved through git where there is git; a version pin through
+each rule's `introduced:` field; a pin that resolves through neither renders
+`~`, which says the strip could not tell, rather than guessing either way.
+
+Reads `outcomes:` from case-file frontmatter. It does not parse prose: a strip
+derived from the narrative would disagree with the record eventually, and the
+disagreement would be invisible.
+
+Usage:
+  bin/case-strip                     the open case, one row per reading
+  bin/case-strip cases/orchard       a named case
+  bin/case-strip path/to/one.md      a single case file
+"""
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent          # code: principles/rules
+STATE = Path(subprocess.run([str(ROOT / "bin" / "heimdall-state")],
+                            capture_output=True, text=True,
+                            check=True).stdout.strip())   # cases/
+
+CELL = {
+    "pass": "✓",
+    "violation": "✗",
+    "cannot-tell": "?",
+    "not-applicable": "–",
+    "observation": "·",
+    "not-reported": "!",
+    # Distinct from "!" on purpose. A silence about a rule that existed is a
+    # gap in the case file; a blank where a rule did not yet exist, or had been
+    # retired, is not the case file's fault and must not read as one.
+    "no-such-rule": "∅",
+    # The pin could not be resolved to a rule set at all — a sha from a
+    # checkout read where there is no git, say. Neither an accusation nor an
+    # exoneration: the strip does not know, and says so.
+    "unknown-frame": "~",
+}
+LEGEND = [
+    ("✓", "pass"),
+    ("✗", "violation"),
+    ("?", "cannot tell"),
+    ("–", "not applicable"),
+    ("·", "observation (draft)"),
+    ("!", "not reported — rule existed, case file silent"),
+    ("∅", "no such rule at this reading's frame"),
+    ("~", "frame unresolvable — could not tell whether the rule existed"),
+]
+
+# The block is meant to survive a terminal, a ticket field and a chat message
+# without reflowing, so every line stays inside 80 display columns. Each rule
+# costs four columns, so the rules are rendered in BLOCKS of at most ten: a
+# header and one row per reading for R-001 to R-010, a blank line, the same
+# for R-011 to R-020, and so on. Severity sits on the last block only, once
+# per reading. At twenty-six rules a single line ran to 132 columns and
+# wrapped into noise on the first terminal that showed it.
+BLOCK = 10
+
+def rule_ids():
+    """Every rule id this strip may have to render — active and retired.
+
+    Columns come from the union, not from the current rules directory. Retiring
+    a rule used to delete its column outright, so a historical row that had
+    recorded an outcome for it silently lost that cell and a reader could not
+    tell the reading had covered a rule that has since gone. Ids are never
+    reused, so the union only grows and the gaps in it are meaningful.
+    """
+    ids = set()
+    for d in (ROOT / "principles" / "rules", ROOT / "principles" / "retired"):
+        if d.is_dir():
+            ids |= {f.name.split("-")[0] + "-" + f.name.split("-")[1]
+                    for f in d.glob("R-*.md") if not f.name.startswith("_")}
+    return sorted(ids)
+
+
+def rules_at(sha, _cache={}):
+    """Which rule ids existed at a given principles sha, or None if unknowable.
+
+    Lets a missing outcome be told apart from a rule that did not exist yet.
+    Returns None when the sha cannot be resolved here — a case file produced by
+    a plugin install stamps a version, not a sha — and the caller then falls
+    back to reporting the cell as an unexplained silence, which is the safe
+    direction to be wrong in.
+    """
+    if sha in _cache:
+        return _cache[sha]
+    out = None
+    m = re.fullmatch(r"plugin-v(\d+)\.(\d+)\.(\d+)", sha or "")
+    if m:
+        # A version pin: a rule existed at it if it was introduced at or
+        # before that version. Read from each rule's own frontmatter, so the
+        # answer travels with the rule and needs no history.
+        pin = tuple(int(x) for x in m.groups())
+        out = set()
+        for f in (ROOT / "principles" / "rules").glob("R-*.md"):
+            intro = _introduced(f)
+            if intro is not None and intro <= pin:
+                out.add("-".join(f.name.split("-")[:2]))
+    elif sha and len(sha) >= 7 and all(c in "0123456789abcdef" for c in sha.lower()):
+        r = subprocess.run(["git", "-C", str(ROOT), "ls-tree", "--name-only",
+                            f"{sha}:principles/rules"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            out = {"-".join(n.split("-")[:2]) for n in r.stdout.split()
+                   if n.startswith("R-")}
+    _cache[sha] = out
+    return out
+
+
+def _introduced(rule_path):
+    for line in rule_path.read_text(errors="replace").splitlines()[:20]:
+        if line.startswith("introduced:"):
+            v = line.split(":", 1)[1].split("#", 1)[0].strip()
+            try:
+                return tuple(int(x) for x in v.split("."))
+            except ValueError:
+                return None
+    return None
+
+
+def frontmatter(path):
+    """Minimal reader for the subset this needs. No dependency, and the file
+    format is ours — a YAML parser here would be a dependency bought to read
+    six keys."""
+    text = path.read_text(errors="replace").splitlines()
+    if not text or text[0].strip() != "---":
+        return {}
+    out, outcomes, in_outcomes = {}, {}, False
+    for line in text[1:]:
+        if line.strip() == "---":
+            break
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indented = line[:1].isspace()
+        key, _, val = line.strip().partition(":")
+        val = val.split("#", 1)[0].strip()
+        if indented and in_outcomes:
+            outcomes[key.strip()] = val
+            continue
+        in_outcomes = key.strip() == "outcomes"
+        if not indented:
+            out[key.strip()] = val
+    out["outcomes"] = outcomes
+    return out
+
+
+def row(fm, ids):
+    outs = fm.get("outcomes", {})
+    known = rules_at((fm.get("principles_sha") or "").strip())
+    cells = []
+    for rid in ids:
+        raw = outs.get(rid)
+        if raw is None:
+            if known is None:
+                cells.append(CELL["unknown-frame"])
+                continue
+            if rid not in known:
+                cells.append(CELL["no-such-rule"])
+                continue
+        v = (raw or "not-reported").strip().lower().replace(" ", "-")
+        cells.append(CELL.get(v, "!"))
+    return cells
+
+
+def short(fm):
+    rng = fm.get("range", "")
+    head = rng.split("..")[-1][:8] if ".." in rng else rng[:8]
+    date = (fm.get("assessed_at", "") or "")[:10]
+    return date, head
+
+
+def main():
+    arg = sys.argv[1] if len(sys.argv) > 1 else None
+    if arg is None:
+        r = subprocess.run([str(ROOT / "bin" / "case-dir"), "--check"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.stderr.write(r.stderr)
+            return 3
+        target = Path(r.stdout.strip())
+    else:
+        target = Path(arg)
+        if not target.is_absolute() and not target.exists():
+            target = STATE / target
+
+    if target.is_file():
+        files, codename = [target], target.parent.name
+    elif target.is_dir():
+        files = sorted(f for f in target.glob("*.md") if not f.name.startswith("_"))
+        codename = target.name
+    else:
+        sys.exit(f"case-strip: no such case or file: {target}")
+
+    if not files:
+        print(f"{codename.upper()}: no case files.")
+        return 0
+
+    ids = rule_ids()
+    label_w = 22
+    rows = []
+    for f in files:
+        fm = frontmatter(f)
+        date, head = short(fm)
+        # Case files written before the rename carry "verdict" for what is now
+        # "severity". Read them rather than show a shrug: they are delivered
+        # artifacts and rewriting them to match a newer schema is the drift this
+        # repository exists to notice.
+        sev = fm.get("severity") or fm.get("verdict") or "?"
+        rows.append((date, head, row(fm, ids), sev))
+
+    blocks = [ids[i:i + BLOCK] for i in range(0, len(ids), BLOCK)]
+    for b, block_ids in enumerate(blocks):
+        nums = [i.split("-")[1] for i in block_ids]
+        label = codename.upper() if b == 0 else ""
+        print(f"{label:<{label_w}}R- " + " ".join(f"{n:>3}" for n in nums))
+        last = b == len(blocks) - 1
+        for date, head, cells, sev in rows:
+            seg = cells[b * BLOCK:(b + 1) * BLOCK]
+            print(f"{date} {head:<{label_w - 11}}   "
+                  + " ".join(f"{c:>3}" for c in seg)
+                  + (f"   {sev}" if last else ""))
+        if not last:
+            print()
+
+    missing = sum(1 for f in files for c in row(frontmatter(f), ids) if c == "!")
+    print()
+    # Four short entries, then the two long ones on their own lines. Packing
+    # seven into two rows pushed the second past 80, which is the promise this
+    # block exists to keep.
+    print("  " + "   ".join(f"{sym} {name}" for sym, name in LEGEND[:4]))
+    for sym, name in LEGEND[4:]:
+        print(f"  {sym} {name}")
+    if missing:
+        print(f"\n  {missing} cell(s) not reported. A rule that existed and was "
+              f"not written down\n  is not a rule that passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

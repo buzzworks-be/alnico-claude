@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""
+How much BRANCHING did a landing add, and did care follow it?
+
+The measurement behind signal S-17. A landing's size in lines is the axis
+every size-banded rule uses (R-003, R-011, R-016). This adds a second one: the
+number of decision points — if, loop, case, catch, boolean operator — in the
+lines it added, less those in the lines it removed. That is McCabe's
+cyclomatic number computed the only way a bare clone allows: on the diff, by
+token, with no parser. It is a count of how many new ways the code can go,
+not of how good the code is; the second is a judgement and outside this
+instrument, the first is a fact about the change.
+
+Why a second axis at all. The empirical literature has the number as a
+proxy for lines for most software (Shepperd 1988), but only a moderate one
+with high variance at the level of a single change (Landman et al. 2016):
+a 60-line landing can carry two decisions or thirty. Every rule here treats
+those two landings identically. This asks whether a repository's own care —
+the test that arrived with the work — follows the second axis where the
+first one cannot see it, and where the repository's branching concentrates,
+which is a gradient of stakes it never declared.
+
+What it reports:
+
+  1. per line band, the spread of decisions added, and the rank correlation
+     between the two axes across all landings — whether the second axis
+     carries anything the first does not, on this history;
+  2. per DECISION band, the rate at which a test arrived, beside the same
+     rate per line band — the R-011 shape on the other axis;
+  3. the landings that are small in lines and large in decisions, and
+     whether they carried a test, against the rate of their line band;
+  4. per top-level area, the share of decisions added against the share of
+     lines, and the care in each — where the branching went.
+
+Counting is by extension family, on added and removed lines of CODE files
+only (bin/classify.py), skipping lines that begin as a comment. Strings are
+not stripped, so a decision keyword inside a string counts; generated code
+is skipped by the classifier's noise patterns, not by judgement.
+
+Usage:
+  bin/decision-points --since "3 months ago"
+  bin/decision-points --since 2026-01-01 --until 2026-04-01
+"""
+
+import argparse
+import collections
+import json
+import re
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import kind, INLINE_TEST_RE, FORGE_COMMITTERS  # noqa: E402
+
+BANDS = [(1, 24), (25, 99), (100, 299), (300, 999), (1000, 10 ** 9)]
+# Decision bands, on the NET count — decisions added less decisions removed,
+# floored at zero. A substitution that swaps one branch for another, a lint
+# fix, a rename of a condition adds no new way through the code, and the
+# first run listed exactly those as its top candidates on gross count. Zero
+# is its own band because a landing that adds no branching is a different
+# thing, not a small one. Chosen, not swept.
+DBANDS = [(0, 0), (1, 4), (5, 14), (15, 39), (40, 10 ** 9)]
+DEFAULT_ACT_GAP = 60
+DEFAULT_MIN_BAND = 8
+# A "dense" landing: at or under this many code lines and at or over this
+# many decisions added. The line floor is R-011's no-finding band's ceiling
+# plus the next band; the decision floor is where DBANDS' third band starts.
+DEFAULT_DENSE_LINES = 99
+DEFAULT_DENSE_DECISIONS = 5
+# The convention, as R-011 establishes it: the share of landings adding at
+# least the decision floor that arrived with a test, over the whole window.
+# Below the bar, or under the floor, R-027 is not applicable.
+CONVENTION_MIN = 0.50
+DEFAULT_MIN_CONVENTION = 8
+
+# One line-level pattern per extension family. Each counts what a control-flow
+# graph would add an edge for. Boolean operators count, as in the strict form
+# of the number; a switch's every case counts, as in the classic form.
+C_LIKE = re.compile(r"\b(if|for|while|case|catch|switch)\b|&&|\|\||\?\?|\s\?\s")
+PY = re.compile(r"\b(if|elif|for|while|except|and|or)\b")
+RUBY = re.compile(r"\b(if|elsif|unless|while|until|when|rescue|and|or)\b|&&|\|\|")
+RUST = re.compile(r"\b(if|for|while|loop|match)\b|&&|\|\||=>")
+SHELL = re.compile(r"\b(if|elif|for|while|until|case)\b|&&|\|\|")
+GENERIC = re.compile(r"\b(if|elif|elsif|for|while|case|when|catch|except|unless|until)\b|&&|\|\|")
+FAMILY = {
+    **{e: C_LIKE for e in ("c", "h", "cc", "cpp", "cxx", "hpp", "hh", "java", "js", "jsx", "mjs",
+                           "cjs", "ts", "tsx", "go", "cs", "kt", "kts", "swift", "php", "scala",
+                           "dart", "groovy", "m", "mm", "vue", "svelte")},
+    **{e: PY for e in ("py", "pyi", "pyx")},
+    **{e: RUBY for e in ("rb", "rake", "erb")},
+    "rs": RUST,
+    **{e: SHELL for e in ("sh", "bash", "zsh", "ksh")},
+}
+# Configuration is code for line counting (bin/classify.py, deliberately) but a
+# workflow's `if:` or a manifest's `when:` is not a path through a program.
+# No decisions are counted in these; the lines still count.
+NO_DECISIONS = re.compile(r"\.(ya?ml|json|toml|ini|cfg|conf|properties|env|lock|xml|csv)$", re.I)
+NONE_RE = re.compile(r"(?!x)x")
+COMMENT_START = re.compile(r"^\s*(//|#|/\*|\*|--|<!--|;;?)")
+# Files with no extension: shell if they look like it, else generic.
+SHEBANG_SHELL = re.compile(r"^#!.*\b(ba|z|k|da)?sh\b")
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        sys.exit(f"decision-points: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    state = subprocess.run([str(ROOT / "bin" / "heimdall-state")], capture_output=True, text=True).stdout.strip()
+    if state:
+        meta = Path(state) / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def pattern_for(path):
+    if NO_DECISIONS.search(path):
+        return NONE_RE
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path.rsplit("/", 1)[-1] else ""
+    return FAMILY.get(ext, GENERIC)
+
+
+def band_of(n, bands):
+    for lo, hi in bands:
+        if lo <= n <= hi:
+            return f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+"
+    return None
+
+
+def labels(bands):
+    return [f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+" for lo, hi in bands]
+
+
+# ---- landings ----------------------------------------------------------------
+
+def landings(ref, since, until, act_gap_min):
+    """Same unit as R-009/R-011/R-016: a merge by its first-parent diff, a
+    forge-committed commit on its own, direct commits grouped by act gap."""
+    out, act, gap = [], [], act_gap_min * 60
+
+    def flush():
+        if act:
+            out.append((act[0][0], act[0][2], len(act),
+                        [("show", "--unified=0", "-M", "--format=", s) for s, _, _ in act]))
+            act.clear()
+
+    for line in tg("log", "--first-parent", ref, "--reverse", f"--since={since}",
+                   f"--until={until}", "--format=%H%x01%P%x01%ct%x01%ce%x01%s").splitlines():
+        if not line.strip():
+            continue
+        sha, parents, ts, ce, subject = line.split("\x01", 4)
+        plist, ts = parents.split(), int(ts)
+        if len(plist) >= 2:
+            flush()
+            out.append((sha, subject, 1, [("diff", "--unified=0", "-M", f"{plist[0]}..{sha}")]))
+        elif ce.strip().lower() in FORGE_COMMITTERS:
+            flush()
+            act.append((sha, ts, subject))
+            flush()
+        else:
+            if act and ts - act[-1][1] > gap:
+                flush()
+            act.append((sha, ts, subject))
+    flush()
+    return out
+
+
+def read_landing(diffargs):
+    """One pass over the unified diff: per file, its kind, its churn, and for
+    code files the decision tokens on added and removed lines."""
+    files = {}          # path -> dict(kind, add, del, dadd, ddel)
+    cur = None
+    inline = False
+    for args in diffargs:
+        for line in tg(*args).splitlines():
+            if line.startswith("diff --git "):
+                cur = None
+                continue
+            if line.startswith("+++ "):
+                p = line[4:]
+                if p.startswith("b/"):
+                    p = p[2:]
+                if p == "/dev/null":
+                    cur = None
+                    continue
+                cur = files.setdefault(p, {"kind": kind(p), "add": 0, "del": 0,
+                                           "dadd": 0, "ddel": 0, "pat": pattern_for(p)})
+                continue
+            if line.startswith("--- ") or line.startswith("@@") or cur is None:
+                continue
+            if line.startswith("+"):
+                body = line[1:]
+                cur["add"] += 1
+                if cur["kind"] != "test" and INLINE_TEST_RE.search(line):
+                    inline = True
+                if cur["kind"] == "code" and not COMMENT_START.match(body):
+                    cur["dadd"] += len(cur["pat"].findall(body))
+            elif line.startswith("-"):
+                body = line[1:]
+                cur["del"] += 1
+                if cur["kind"] == "code" and not COMMENT_START.match(body):
+                    cur["ddel"] += len(cur["pat"].findall(body))
+    return files, inline
+
+
+def spearman(xs, ys):
+    def ranks(v):
+        order = sorted(range(len(v)), key=lambda i: v[i])
+        r = [0.0] * len(v)
+        i = 0
+        while i < len(order):
+            j = i
+            while j + 1 < len(order) and v[order[j + 1]] == v[order[i]]:
+                j += 1
+            avg = (i + j) / 2 + 1
+            for k in range(i, j + 1):
+                r[order[k]] = avg
+            i = j + 1
+        return r
+    if len(xs) < 3:
+        return None
+    rx, ry = ranks(xs), ranks(ys)
+    mx, my = statistics.mean(rx), statistics.mean(ry)
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    den = (sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry)) ** 0.5
+    return num / den if den else None
+
+
+def pct(xs, q):
+    if not xs:
+        return 0
+    s = sorted(xs)
+    return s[min(len(s) - 1, int(round(q * (len(s) - 1))))]
+
+
+def area_of(path):
+    return path.split("/", 1)[0] if "/" in path else "(root)"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref")
+    ap.add_argument("--act-gap", type=int, default=DEFAULT_ACT_GAP)
+    ap.add_argument("--min-band", type=int, default=DEFAULT_MIN_BAND)
+    ap.add_argument("--dense-lines", type=int, default=DEFAULT_DENSE_LINES)
+    ap.add_argument("--dense-decisions", type=int, default=DEFAULT_DENSE_DECISIONS)
+    ap.add_argument("--list", type=int, default=12, help="how many dense landings to print")
+    ap.add_argument("--convention-min", type=float, default=CONVENTION_MIN)
+    ap.add_argument("--min-convention", type=int, default=DEFAULT_MIN_CONVENTION)
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+
+    recs = []
+    for sha, subject, ncommits, diffargs in landings(ref, a.since, a.until, a.act_gap):
+        files, inline = read_landing(diffargs)
+        code = sum(f["add"] + f["del"] for f in files.values() if f["kind"] == "code")
+        test = sum(f["add"] + f["del"] for f in files.values() if f["kind"] == "test")
+        if code == 0:
+            continue
+        dadd = sum(f["dadd"] for f in files.values())
+        ddel = sum(f["ddel"] for f in files.values())
+        areas = collections.Counter()
+        alines = collections.Counter()
+        for p, f in files.items():
+            if f["kind"] == "code":
+                areas[area_of(p)] += f["dadd"]
+                alines[area_of(p)] += f["add"] + f["del"]
+        net = max(0, dadd - ddel)
+        recs.append({"sha": sha, "subject": subject, "commits": ncommits, "code": code,
+                     "test": test, "inline": inline, "verified": test > 0 or inline,
+                     "dadd": dadd, "ddel": ddel, "net": net, "files": len(files),
+                     "band": band_of(code, BANDS), "dband": band_of(net, DBANDS),
+                     "areas": areas, "alines": alines})
+
+    print(f"S-17 decision points  ref={ref}  since={a.since}  until={a.until}")
+    if not recs:
+        print("  no code-bearing landings in window.")
+        return
+    print(f"  {len(recs)} code-bearing landing(s); decisions added in total: "
+          f"{sum(r['dadd'] for r in recs)}, removed: {sum(r['ddel'] for r in recs)}")
+
+    # 1. the two axes
+    rho = spearman([r["code"] for r in recs], [r["net"] for r in recs])
+    print(f"\n  1. net decisions added per landing, by line band"
+          f"   (rank correlation lines~decisions: {rho:+.2f})" if rho is not None else
+          "\n  1. decisions added per landing, by line band")
+    print(f"  {'code lines':<12}{'landings':>9}{'median':>8}{'p90':>6}{'max':>6}{'per 100 lines':>15}")
+    for lab in labels(BANDS):
+        rows = [r for r in recs if r["band"] == lab]
+        if not rows:
+            continue
+        ds = [r["net"] for r in rows]
+        dens = 100 * sum(ds) / max(1, sum(r["code"] for r in rows))
+        print(f"  {lab:<12}{len(rows):>9}{statistics.median(ds):>8.0f}{pct(ds, .9):>6}{max(ds):>6}{dens:>15.1f}")
+
+    # 2. care by decision band, beside care by line band
+    print(f"\n  2. a test arrived with the landing — by decision band, and by line band")
+    print(f"  {'decisions':<12}{'landings':>9}{'tested':>8}{'rate':>7}    {'code lines':<12}{'landings':>9}{'tested':>8}{'rate':>7}")
+    dl, ll = labels(DBANDS), labels(BANDS)
+    for i in range(max(len(dl), len(ll))):
+        left = right = ""
+        if i < len(dl):
+            rows = [r for r in recs if r["dband"] == dl[i]]
+            t = sum(1 for r in rows if r["verified"])
+            rate = f"{t / len(rows):.0%}" if rows else "-"
+            flag = "" if len(rows) >= a.min_band else " *"
+            left = f"{dl[i]:<12}{len(rows):>9}{t:>8}{rate:>7}{flag}"
+        if i < len(ll):
+            rows = [r for r in recs if r["band"] == ll[i]]
+            t = sum(1 for r in rows if r["verified"])
+            rate = f"{t / len(rows):.0%}" if rows else "-"
+            left = left.ljust(38)
+            right = f"    {ll[i]:<12}{len(rows):>9}{t:>8}{rate:>7}"
+        print(f"  {left}{right}")
+    print(f"  (* under the band floor of {a.min_band}, reported and not judged)")
+
+    # 3. dense landings: small in lines, large in decisions — R-011's silent zone
+    branching = [r for r in recs if r["net"] >= a.dense_decisions]
+    dense = [r for r in branching if r["code"] <= a.dense_lines]
+    small_other = [r for r in recs if r["code"] <= a.dense_lines and r["net"] < a.dense_decisions]
+    print(f"\n  3. dense landings: at most {a.dense_lines} code lines and at least "
+          f"{a.dense_decisions} net decisions added — {len(dense)} of "
+          f"{len(dense) + len(small_other)} landings that small")
+    if dense:
+        t = sum(1 for r in dense if r["verified"])
+        tb = sum(1 for r in small_other if r["verified"])
+        print(f"     tested: {t}/{len(dense)} ({t / len(dense):.0%});"
+              f" the other small landings: {tb}/{len(small_other)}"
+              f" ({(tb / len(small_other)) if small_other else 0:.0%})")
+    # the convention, over every landing that adds that much branching
+    conv_t = sum(1 for r in branching if r["verified"])
+    conv = conv_t / len(branching) if branching else 0
+    if len(branching) < a.min_convention:
+        verdict = (f"R-027: cannot tell — {len(branching)} landing(s) add {a.dense_decisions}+ decisions,"
+                   f" under the floor of {a.min_convention}")
+    elif conv < a.convention_min:
+        verdict = (f"R-027: not applicable — {conv_t}/{len(branching)} ({conv:.0%}) of landings adding"
+                   f" {a.dense_decisions}+ decisions carry a test, below the bar of {a.convention_min:.0%}")
+    else:
+        verdict = (f"R-027: applies — {conv_t}/{len(branching)} ({conv:.0%}) of landings adding"
+                   f" {a.dense_decisions}+ decisions carry a test")
+    print(f"     {verdict}")
+    cands = [r for r in dense if not r["verified"]]
+    if conv >= a.convention_min and len(branching) >= a.min_convention:
+        print(f"     candidates — dense and no test change beside them: {len(cands)}")
+        for r in sorted(cands, key=lambda r: -r["net"])[:a.list]:
+            print(f"     {r['sha'][:10]}  {r['code']:>4} lines  {r['net']:>3} net ({r['dadd']:>3} added)  {r['files']:>2} files  {r['subject'][:56]}")
+    if dense:
+        print(f"     the densest landings, for the record:")
+        for r in sorted(dense, key=lambda r: -r["net"])[:a.list]:
+            v = "test" if r["test"] else ("inline" if r["inline"] else "none")
+            print(f"     {r['sha'][:10]}  {r['code']:>4} lines  {r['net']:>3} net  {v:<6}  {r['subject'][:60]}")
+
+    # 4. where the branching went
+    print(f"\n  4. where the decisions went — by top-level area, share of decisions added"
+          f" against share of code lines, and the care in each")
+    tot_d = sum(r["dadd"] for r in recs) or 1
+    tot_l = sum(r["code"] for r in recs) or 1
+    per_area = collections.defaultdict(lambda: {"d": 0, "l": 0, "landings": 0, "tested": 0})
+    for r in recs:
+        for ar, d in r["areas"].items():  # gross added, per area: where new branching went
+            per_area[ar]["d"] += d
+        for ar, l in r["alines"].items():
+            per_area[ar]["l"] += l
+            per_area[ar]["landings"] += 1
+            per_area[ar]["tested"] += 1 if r["verified"] else 0
+    print(f"  {'area':<28}{'decisions':>10}{'share':>7}{'lines share':>12}{'ratio':>7}{'landings':>9}{'tested':>7}")
+    rows = sorted(per_area.items(), key=lambda kv: -kv[1]["d"])
+    for ar, v in rows[:15]:
+        sd, sl = v["d"] / tot_d, v["l"] / tot_l
+        ratio = f"{sd / sl:.2f}" if sl else "-"
+        rate = f"{v['tested'] / v['landings']:.0%}" if v["landings"] else "-"
+        print(f"  {ar[:27]:<28}{v['d']:>10}{sd:>7.0%}{sl:>12.0%}{ratio:>7}{v['landings']:>9}{rate:>7}")
+
+
+if __name__ == "__main__":
+    main()

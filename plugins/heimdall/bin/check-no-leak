@@ -1,0 +1,420 @@
+#!/usr/bin/env bash
+#
+# Refuse to let the observed target leak into Heimdall's own history.
+#
+# Heimdall is the instrument; it is target-agnostic and shareable. The readings
+# are not. Nothing identifying the target — its name, its owner, its URL — may
+# appear in a tracked file or a commit message here.
+#
+# The identifiers are read at runtime from .heimdall/target.json, which is
+# gitignored. That is deliberate: this guard knows what to look for without
+# itself recording it.
+#
+# Usage:
+#   bin/check-no-leak          check tracked files and this branch's messages
+
+set -euo pipefail
+# When something fails under set -e, say WHERE and under WHICH bash. Every
+# macOS field report so far carried the symptom and not the line, and each
+# took a guess to fix. bash 3.2 supports an ERR trap; $LINENO and
+# $BASH_VERSION are enough to turn the next report into a diagnosis.
+trap 'echo "heimdall: $(basename "$0") failed at line $LINENO under bash $BASH_VERSION" >&2' ERR
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# This script's own absolute path. --self-test re-invokes THIS file, not the
+# installed name: a test that hardcodes bin/check-no-leak silently exercises the
+# good copy when you run it from a modified one, and passes over the very defect
+# you are testing for. That happened.
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+# Code root above; state root below. In a checkout they are the same directory;
+# installed as a plugin they must not be. See bin/heimdall-state.
+STATE="$("$ROOT/bin/heimdall-state")"
+MODE="$("$ROOT/bin/heimdall-state" --mode)"
+cd "$STATE"
+
+# Scan tracked files for one needle. Prints matching "path:line:text" lines and
+# nothing else; the caller decides what a hit means.
+#
+# Capture the output and test whether it is empty — NEVER branch on this
+# pipeline's exit status. xargs batches a large file list and returns 123 if any
+# single batch's grep exits non-zero, which happens whenever that batch simply
+# contains no match. This sweep used to sit directly in an `if`, so a real hit
+# printed in an early batch was followed by an empty later batch, the `if` read
+# 123 as false, and the guard announced a clean checkout over a leak it had just
+# displayed. It failed open — the one way this file must never fail. Sweeps 2
+# and 3 always used the capture form; this one now matches them.
+#
+# Only regular files are scanned. git ls-files also lists symlinks, and a
+# symlink to a directory makes grep error out; that noise was suppressed with
+# 2>/dev/null, which is part of how the failure stayed invisible.
+scan_tracked() {
+  local needle="$1" f
+  local -a files=()
+  while IFS= read -r -d '' f; do
+    [ -f "$f" ] && files+=("$f")
+  done < <(git ls-files -z 2>/dev/null)
+  [ "${#files[@]}" -eq 0 ] && return 0
+  printf '%s\0' ${files[@]+"${files[@]}"} | xargs -0 grep -nIiF -- "$needle" || true
+}
+
+# Prove the guard still REFUSES over a planted leak.
+#
+# A first attempt tested only that the scan function printed something. It
+# passed against a deliberately re-broken copy, because the defect was never in
+# the scanning — it was at the call site, which branched on the pipeline's exit
+# status and so never reported what the scan had already printed. A test that
+# cannot fail on the bug it exists for is worse than none, so this one runs the
+# whole guard end to end against a throwaway repository and asserts the exit
+# code: 5 when a leak is planted, 0 when it is not.
+#
+# The fixture includes a symlink to a directory, because that is what made grep
+# exit non-zero and turned the original sweep blind.
+if [ "${1:-}" = "--self-test" ]; then
+  # The self-test invokes this script expecting it to FAIL (exit 5 over a
+  # planted leak, or a state root inside a repository); the diagnostic ERR
+  # trap would report each of those designed failures as a crash. Off here.
+  trap - ERR
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+
+  # The guard that runs depends on where Heimdall is installed, and so must
+  # the test of it. Installed as a plugin there are no tracked files, commit
+  # messages or refs to sweep; what the guard does there is refuse a state
+  # root that sits inside a git repository. Until this branch existed the
+  # self-test built a checkout fixture — whose state root IS a git repository
+  # — and from every plugin install reported the guard as failing, when the
+  # guard was refusing exactly what it should. Latent from the first plugin
+  # publish; found by running the shipped copy's own self-test.
+  if [ "$MODE" = "plugin" ]; then
+    fixture() {  # $1: directory to attach into
+      mkdir -p "$1/.heimdall/target.git"
+      printf '{"url":"https://github.com/acmewidgets/frobnicator.git",' > "$1/.heimdall/target.json"
+      printf '"defaultBranch":"main","headSha":"%040d"}\n' 0 >> "$1/.heimdall/target.json"
+    }
+    mkdir -p "$tmp/outside" "$tmp/inside"
+    fixture "$tmp/outside"
+    git -C "$tmp/inside" init -q
+    fixture "$tmp/inside"
+    rc=0
+    set +e
+    HEIMDALL_STATE="$tmp/outside" "$SELF" >/dev/null 2>&1
+    outside_exit=$?
+    HEIMDALL_STATE="$tmp/inside" "$SELF" >/dev/null 2>&1
+    inside_exit=$?
+    set -e
+    if [ "$inside_exit" -ne 5 ]; then
+      echo "heimdall: SELF-TEST FAILED — a state root inside a git repository" >&2
+      echo "was not refused (exit $inside_exit, expected 5). Failing OPEN." >&2
+      rc=1
+    fi
+    if [ "$outside_exit" -ne 0 ]; then
+      echo "heimdall: SELF-TEST FAILED — a state root outside any repository" >&2
+      echo "was reported as leaking (exit $outside_exit, expected 0)." >&2
+      rc=1
+    fi
+    if [ "$rc" -eq 0 ]; then
+      echo "heimdall: self-test passed (plugin) — the guard refuses a state root" >&2
+      echo "inside a git repository and passes one outside." >&2
+    fi
+    exit "$rc"
+  fi
+
+  git -C "$tmp" init -q
+  git -C "$tmp" config user.email heimdall@invalid
+  git -C "$tmp" config user.name heimdall
+
+  mkdir -p "$tmp/.heimdall/target.git" "$tmp/real"
+  # As in a real checkout: the attachment is gitignored, so the identifiers in
+  # target.json are not themselves a tracked leak. Without this the fixture
+  # tracks target.json and every needle matches it — which is correct behaviour
+  # by the guard and a broken fixture.
+  printf '.heimdall/\ncases/\n' > "$tmp/.gitignore"
+  printf '{"url":"https://github.com/acmewidgets/frobnicator.git",' > "$tmp/.heimdall/target.json"
+  printf '"defaultBranch":"main","headSha":"%040d"}\n' 0 >> "$tmp/.heimdall/target.json"
+  echo "an ordinary tracked file" > "$tmp/README.md"
+  echo "another one" > "$tmp/real/notes.md"
+  ln -s real "$tmp/link"
+  git -C "$tmp" add -A && git -C "$tmp" commit -qm "fixture"
+
+  rc=0
+  set +e
+  HEIMDALL_STATE="$tmp" "$SELF" >/dev/null 2>&1
+  clean_exit=$?
+  echo "the frobnicator lives at acmewidgets/frobnicator" > "$tmp/leak.md"
+  git -C "$tmp" add -A && git -C "$tmp" commit -qm "fixture 2" >/dev/null 2>&1
+  HEIMDALL_STATE="$tmp" "$SELF" >/dev/null 2>&1
+  leak_exit=$?
+  set -e
+
+  if [ "$leak_exit" -ne 5 ]; then
+    echo "heimdall: SELF-TEST FAILED — a planted identifier in a tracked file" >&2
+    echo "did not make the guard refuse (exit $leak_exit, expected 5)." >&2
+    echo "The guard is failing OPEN. Do not trust a clean run." >&2
+    rc=1
+  fi
+  if [ "$clean_exit" -ne 0 ]; then
+    echo "heimdall: SELF-TEST FAILED — a clean fixture was reported as leaking" >&2
+    echo "(exit $clean_exit, expected 0)." >&2
+    rc=1
+  fi
+  if [ "$rc" -eq 0 ]; then
+    echo "heimdall: self-test passed — the guard refuses over a planted leak" >&2
+    echo "and passes a clean tree." >&2
+  fi
+  exit "$rc"
+fi
+
+META=".heimdall/target.json"
+if [ ! -f "$META" ] && [ ! -d ".heimdall/target.git" ]; then
+  echo "heimdall: no target attached; nothing to check against." >&2
+  exit 0
+fi
+
+# Metadata and clone must agree. If they do not, the identifiers this guard
+# searches for may describe a different repository than the one attached, and a
+# leak guard that looks for the wrong strings is worse than none. Fail closed.
+if [ ! -f "$META" ] || [ ! -d ".heimdall/target.git" ]; then
+  echo "heimdall: .heimdall is inconsistent — metadata and clone do not agree." >&2
+  echo "heimdall: re-run bin/attach-target.sh before trusting this check." >&2
+  exit 6
+fi
+
+# In plugin mode there is no Heimdall repository: no tracked files, no commit
+# messages, no refs. The second rule's original surface is simply absent, and
+# saying so is better than passing silently — a guard that reports "clean"
+# without having looked is the failure this whole file exists to prevent.
+if [ "$MODE" = "plugin" ]; then
+  echo "heimdall: plugin mode — no Heimdall repository is present, so the" >&2
+  echo "tracked-file, commit-message and ref sweeps have nothing to sweep." >&2
+  echo "They are NOT APPLICABLE here, not passing." >&2
+
+  # What does still apply: case files must not sit where something could commit
+  # them. A state root inside somebody's project is the plugin-mode equivalent
+  # of the leak the tracked-file sweep catches in a checkout.
+  if git -C "$STATE" rev-parse --show-toplevel >/dev/null 2>&1; then
+    top="$(git -C "$STATE" rev-parse --show-toplevel)"
+    echo >&2
+    echo "heimdall: REFUSING — the state root is inside a git repository:" >&2
+    echo "  $top" >&2
+    echo "Case files cite the target. Anything under a working tree can be" >&2
+    echo "committed by someone who does not know that. Point HEIMDALL_STATE" >&2
+    echo "somewhere outside a repository and re-attach." >&2
+    exit 5
+  fi
+  echo "heimdall: state root is outside any git repository — nothing can" >&2
+  echo "commit a case file by accident." >&2
+  exit 0
+fi
+
+# Needles: the identifiers to search for, derived at runtime from the gitignored
+# metadata. Two sets come out of one pass — exact identifiers for file content
+# and commit messages, and a looser token set for ref names, because a harness
+# names a session branch after its task and that can carry the target with
+# prefixes stripped.
+# Heimdall's own publishing identity. Its plugin manifests and install
+# instructions must name the account it is published under, so that account is
+# necessarily in tracked files here. A target owned by the same account then
+# matches on the owner alone — equally true of every repository that account
+# owns, so it identifies nothing — and blocks the close of every such case.
+SELF_ORIGIN="$(git -C "$ROOT" remote get-url origin 2>/dev/null || true)"
+# Arrays are expanded as ${arr[@]+"${arr[@]}"} throughout. Under set -u, bash
+# before 4.4 treats an EMPTY array's "${arr[@]}" as an unbound variable and
+# exits — so on macOS a run with no ref-name needles, or the self-test's
+# fixture with few files, died on the expansion itself. The idiom expands to
+# nothing when the array is empty, on every bash.
+# `while read`, not mapfile: mapfile is bash 4+ and macOS ships bash 3.2.
+# There it is a command-not-found, and under `set -e` this guard dies
+# before deriving a single needle — so on macOS the leak sweep could not
+# run at all, and detach-target.sh, which gates on it, could not close a
+# case. It fails closed rather than open, which is the right direction,
+# but a guard that cannot run is not a guard.
+# And no heredoc inside a process substitution: bash 3.2 mis-parses that
+# construct — the heredoc body is read as the substitution's command list — so
+# on macOS the derivation died with a syntax error before the sweep ran. Third
+# defect of that family. The program goes to a temp file through a plain
+# heredoc, its output to a second, and the read is a plain redirect: nothing
+# here that bash 3.2 has ever mishandled.
+NEEDLE_PROG="$(mktemp "${TMPDIR:-/tmp}/heimdall-needles.XXXXXX")"
+NEEDLE_OUT="$(mktemp "${TMPDIR:-/tmp}/heimdall-needles.XXXXXX")"
+trap 'rm -f "$NEEDLE_PROG" "$NEEDLE_OUT"' EXIT
+cat > "$NEEDLE_PROG" <<'NEEDLEPY'
+import json, re, sys
+
+url = json.load(open(sys.argv[1]))["url"].rstrip("/")
+if url.endswith(".git"):
+    url = url[:-4]
+
+# Tokens that occur in every repository's refs, or in ordinary prose, and so
+# cannot distinguish this target from any other. A needle that always matches
+# is worse than a missing one: it fails the guard on nothing, blocks the close
+# of a case, and teaches whoever hits it to push past the guard — after which
+# it protects nothing at all. Observed twice: a target whose directory name
+# ended in a git structural word yielded that word as a needle, matching every
+# ref in every repository; and a path under a home directory yielded the name
+# of the home directory, matching ordinary prose everywhere.
+GENERIC = {
+    "origin", "master", "main", "trunk", "head", "heads", "refs", "remotes",
+    "branch", "branches", "tags", "commit", "commits", "repo", "repos",
+    "repository", "project", "projects", "source", "src", "code", "work",
+    "home", "user", "users", "tmp", "temp", "scratch", "scratchpad", "claude",
+    "github", "gitlab", "bitbucket", "https", "http", "www",
+    "develop", "feature", "release", "hotfix",
+}
+
+# A filesystem path has no owner. The parent directory is where the clone
+# happens to sit, not who it belongs to, and treating it as one produced the
+# needle "user" from /home/user/... — matching the word everywhere.
+is_path = url.startswith(("/", "./", "../", "~")) or (
+    "://" not in url and ":" not in url)
+
+owner = repo = None
+m = re.search(r"[:/]([^/:]+)/([^/]+)$", url)
+if m:
+    owner, repo = m.group(1), m.group(2)
+
+# The account Heimdall itself is published under, if it can be determined.
+self_owner = None
+if len(sys.argv) > 2 and sys.argv[2].strip():
+    su = sys.argv[2].strip().rstrip("/")
+    if su.endswith(".git"):
+        su = su[:-4]
+    m2 = re.search(r"[:/]([^/:]+)/([^/]+)$", su)
+    if m2:
+        self_owner = m2.group(1)
+if is_path:
+    repo = url.rsplit("/", 1)[-1] or repo
+    owner = None
+
+dropped = set()
+
+exact = {url}
+if repo:
+    exact.add(repo)
+if owner:
+    exact.add(f"{owner}/{repo}")
+    # The bare owner is a needle only when it is not also Heimdall's own. Where
+    # it is, the word is in this repository by necessity and says nothing about
+    # which of that account's repositories is attached. The qualified
+    # "owner/repo", the repo name and the full URL all remain needles, so the
+    # thing that actually identifies the target is still swept for. Ref names
+    # keep the owner token below: nothing obliges a branch name here to carry
+    # it, so a match there is still a real signal.
+    if not (self_owner and owner.lower() == self_owner.lower()):
+        exact.add(owner)
+    else:
+        print("O\t" + owner)
+for n in sorted(exact):
+    if len(n) < 4:
+        continue
+    if n.lower() in GENERIC:
+        dropped.add(n)
+        continue
+    print("N\t" + n)
+
+tokens = set()
+stem = (owner + "-" if owner else "") + (repo or "")
+for part in re.split(r"[-_./]", stem):
+    if len(part) >= 6:
+        tokens.add(part)
+for n in (owner, repo):
+    if n:
+        tokens.add(n)
+for n in sorted(tokens):
+    if n.lower() in GENERIC:
+        dropped.add(n)
+        continue
+    print("R\t" + n)
+
+# Say what was dropped. Reduced coverage the operator does not know about is
+# the failure this guard exists to prevent, one level up.
+for n in sorted(dropped):
+    print("D\t" + n)
+NEEDLEPY
+python3 "$NEEDLE_PROG" "$META" "$SELF_ORIGIN" > "$NEEDLE_OUT"
+DERIVED=()
+while IFS= read -r _line; do DERIVED+=("$_line"); done < "$NEEDLE_OUT"
+
+NEEDLES=()
+REF_NEEDLES=()
+DROPPED=()
+SELF_OWNER_DROPPED=""
+for line in ${DERIVED[@]+"${DERIVED[@]}"}; do
+  case "$line" in
+    "N	"*) NEEDLES+=("${line#N	}") ;;
+    "R	"*) REF_NEEDLES+=("${line#R	}") ;;
+    "D	"*) DROPPED+=("${line#D	}") ;;
+    "O	"*) SELF_OWNER_DROPPED="${line#O	}" ;;
+  esac
+done
+
+if [ "${#DROPPED[@]}" -gt 0 ]; then
+  echo "heimdall: note — dropped as too generic to identify anything:" \
+       ${DROPPED[*]+"${DROPPED[*]}"} >&2
+  echo "heimdall: the remaining identifiers still cover this target; if one of" >&2
+  echo "those words IS the target's distinctive name, sweep for it by hand." >&2
+fi
+
+if [ -n "$SELF_OWNER_DROPPED" ]; then
+  echo "heimdall: note — '$SELF_OWNER_DROPPED' owns this target AND owns Heimdall" >&2
+  echo "itself, so the bare owner is not swept for in tracked files: it is in this" >&2
+  echo "repository by necessity (plugin manifests, install instructions) and is" >&2
+  echo "equally true of every repository that account owns. Still swept for:" >&2
+  echo "the repository name, '$SELF_OWNER_DROPPED/<repo>', the full URL, and the" >&2
+  echo "owner in ref names. If you are writing about this target by owner alone," >&2
+  echo "this guard will not catch it." >&2
+fi
+
+if [ "${#NEEDLES[@]}" -eq 0 ]; then
+  echo "heimdall: could not derive identifiers from $META — refusing to pass." >&2
+  exit 5
+fi
+
+fail=0
+
+# 1. Tracked files. Untracked ones cannot be pushed; ignored ones are the point.
+for needle in ${NEEDLES[@]+"${NEEDLES[@]}"}; do
+  hits="$(scan_tracked "$needle")"
+  if [ -n "$hits" ]; then
+    echo "$hits" >&2
+    echo "heimdall: '$needle' appears in a tracked file (above)." >&2
+    fail=1
+  fi
+done
+
+# 2. Commit messages on this branch but not on the default branch.
+base="$(git rev-parse --verify -q origin/main 2>/dev/null || echo "")"
+range="${base:+$base..}HEAD"
+for needle in ${NEEDLES[@]+"${NEEDLES[@]}"}; do
+  hits="$(git log --format='%H %s%n%b' "$range" 2>/dev/null | grep -niF -- "$needle" || true)"
+  if [ -n "$hits" ]; then
+    echo "$hits" >&2
+    echo "heimdall: '$needle' appears in a commit message (above)." >&2
+    fail=1
+  fi
+done
+
+# 3. Ref names, local and remote. A branch pushed to this repository's remote
+# whose NAME carries the target identifies it to anyone listing branches —
+# content rules never see it. Remote heads are authoritative; local refs catch
+# the leak before a push does.
+refs="$(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>/dev/null)"
+remote_refs="$(git ls-remote --heads origin 2>/dev/null | awk '{print $2}')" || remote_refs=""
+[ -z "$remote_refs" ] && echo "heimdall: note — could not list remote heads; ref sweep is local-only." >&2
+for needle in ${NEEDLES[@]+"${NEEDLES[@]}"} ${REF_NEEDLES[@]+"${REF_NEEDLES[@]}"}; do
+  hits="$(printf '%s\n%s\n' "$refs" "$remote_refs" | grep -iF -- "$needle" | sort -u || true)"
+  if [ -n "$hits" ]; then
+    echo "$hits" | sed 's/^/  /' >&2
+    echo "heimdall: '$needle' appears in a branch or remote ref name (above)." >&2
+    fail=1
+  fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo >&2
+  echo "heimdall: the target must not leak into this repo. Move the offending" >&2
+  echo "content out of tracked files, amend the message if it is in a commit, and" >&2
+  echo "delete a leaking branch from the remote (git push origin --delete <name>)." >&2
+  exit 5
+fi
+
+echo "heimdall: no target identifiers in tracked files or branch commit messages." >&2

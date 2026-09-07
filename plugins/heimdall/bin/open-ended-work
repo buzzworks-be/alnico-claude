@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""How much begun work is outstanding here, and is it growing?
+
+The measurement behind signal S-9 and the check behind R-014, both under P-10:
+work begun is work owed. Every other reading in the frame examines what landed.
+This one examines what was started and has not.
+
+The naive measure is wrong on the most common workflow there is. "A branch
+whose tip is not an ancestor of the trunk" is only "unlanded" where branches
+land by merge commit. Where they land by squash — one new commit on the trunk,
+the branch's own commits never reaching it — EVERY surviving branch is
+unreachable, landed or not. So a branch is called landed here if any of three
+things holds: its tip is reachable from the trunk, it has no commits of its
+own, or its cumulative diff fingerprints (patch-id) to a commit on the trunk.
+Only what fails all three is outstanding.
+
+Then the confound that decides whether a rule can rest on this at all. Hosting
+platforms delete a branch on landing, or people do by hand, and where that is
+the convention the surviving refs ARE the outstanding stock. Where it is not,
+the stock is done-and-kept mixed with abandoned, and nothing in git separates
+them. The script establishes the convention from the landings it can see —
+what share of landed branches still have a ref — and R-014 stands down where
+it cannot.
+
+What git cannot show at all: branches that were begun, abandoned and deleted.
+The stock reported is a floor. And a surviving branch DID NOT LAND HERE, which
+is not the same as unfinished: work continues on forks, in successor branches
+and in places git does not see, and silence in the clone is not idleness.
+
+One reading sees only inflow. On a repository that removes refs on landing,
+everything that resolved has vanished, so "begun per window" counts survivors
+by their start date and says nothing about whether the stock is growing. The
+delta is a cross-reading quantity: with --record the reading leaves a sidecar
+in the case directory (hashed tips, no names — branch names carry handles, and
+P-6 forbids keeping them), and the next reading reports begun, resolved and
+still outstanding since, and whether the stale stock grew. R-014 rests on
+that delta where one exists.
+
+Usage:
+  bin/open-ended-work
+  bin/open-ended-work --window 30 --windows 4
+  bin/open-ended-work --record        # also leave this reading's sidecar in the case dir
+"""
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import FORGE_COMMITTERS  # noqa: E402
+
+# Refs that are not work: release and integration lines, and the platform's own.
+STRUCTURAL_RE = re.compile(
+    r"^(release|releases|rel|stable|hotfix|hotfixes|maint|maintenance|support|"
+    r"lts|v?\d+(\.\d+)*(\.x)?|dependabot/.*|renovate/.*|gh-pages|pages|docs?-site|"
+    r"develop|development|dev|next|canary|beta|staging|trunk|master|main)$", re.I)
+
+DEFAULT_WINDOW_DAYS = 30
+DEFAULT_WINDOWS = 4
+DEFAULT_MIN_STALE = 5
+DEFAULT_MIN_LANDED = 5        # landings needed before a retention convention is read
+DEFAULT_RUN = 3               # consecutive windows with stale work begun
+DEFAULT_RETENTION_BAR = 0.20   # landed branches still holding a ref, above which
+                               # the stock cannot be read as outstanding
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        sys.exit(f"open-ended-work: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def tg_try(*args):
+    """For commands whose non-zero exit is an answer, not a failure — a missing
+    path, a sha that never reached this history, a ref with no merge-base. Only
+    target-git's own refusals (2: nothing attached, 3: mutating subcommand) end
+    the run."""
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode in (2, 3):
+        sys.stderr.write(p.stderr)
+        sys.exit(p.returncode)
+    return p.returncode, p.stdout
+
+
+def patch_id(*diffargs):
+    """A content fingerprint of a change, independent of sha, date and message.
+    Bytes throughout: a diff can carry binary hunks, and decoding one as text
+    ended a run on the third repository tried."""
+    diff = subprocess.run([str(ROOT / "bin" / "target-git"), *diffargs], capture_output=True)
+    if diff.returncode != 0 or not diff.stdout.strip():
+        return None
+    pid = subprocess.run(["git", "patch-id", "--stable"], input=diff.stdout,
+                         capture_output=True, cwd=str(ROOT))
+    out = pid.stdout.split()
+    return out[0].decode("ascii", "replace") if out else None
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def is_ancestor(a, b):
+    return tg_try("merge-base", "--is-ancestor", a, b)[0] == 0
+
+
+def case_dir():
+    p = subprocess.run([str(ROOT / "bin" / "case-dir"), "--check"], capture_output=True, text=True)
+    return Path(p.stdout.strip()) if p.returncode == 0 and p.stdout.strip() else None
+
+
+def fingerprint(sha):
+    """A ref is remembered by a hash of its tip, never by its name or its sha."""
+    return hashlib.sha256(sha.encode()).hexdigest()[:16]
+
+
+def previous_sidecar(cdir):
+    if not cdir:
+        return None, None
+    files = sorted(cdir.glob("s9-*.json"))
+    if not files:
+        return None, None
+    try:
+        return json.loads(files[-1].read_text()), files[-1]
+    except ValueError:
+        return None, files[-1]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--window", type=int, default=DEFAULT_WINDOW_DAYS,
+                    help="days; a branch older than one window is stale")
+    ap.add_argument("--windows", type=int, default=DEFAULT_WINDOWS,
+                    help="how many consecutive windows to read back over")
+    ap.add_argument("--min-stale", type=int, default=DEFAULT_MIN_STALE)
+    ap.add_argument("--retention-bar", type=float, default=DEFAULT_RETENTION_BAR)
+    ap.add_argument("--record", action="store_true",
+                    help="write this reading's outstanding set to the case directory, hashed")
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+    now = int(datetime.now(timezone.utc).timestamp())
+    day = 86400
+
+    trunk_tip = tg("rev-parse", ref).strip()
+    heads = []
+    for line in tg("for-each-ref", "--format=%(refname:short)%01%(objectname)%01%(committerdate:unix)",
+                   "refs/heads").splitlines():
+        name, sha, ts = line.split("\x01")
+        if name == ref or sha == trunk_tip:
+            continue
+        heads.append((name, sha, int(ts)))
+
+    # ---- landings on the trunk, and how they arrived ------------------------
+    span_days = a.window * a.windows
+    trunk = []
+    for line in tg("log", "--first-parent", ref, f"--since={span_days} days ago",
+                   "--format=%H%x01%P%x01%ct%x01%ae%x01%ce").splitlines():
+        sha, parents, ts, ae, ce = line.split("\x01")
+        plist = parents.split()
+        shape = ("merge" if len(plist) >= 2 else
+                 "forge" if ce.strip().lower() in FORGE_COMMITTERS else
+                 "applied" if ae.strip().lower() != ce.strip().lower() else "direct")
+        trunk.append({"sha": sha, "p": plist, "ts": int(ts), "shape": shape})
+    landed_per_window = [0] * a.windows
+    for c in trunk:
+        if c["shape"] == "direct":
+            continue
+        i = min((now - c["ts"]) // (a.window * day), a.windows - 1)
+        landed_per_window[i] += 1
+
+    # ---- retention convention: do landed branches keep their ref? ----------
+    head_by_sha = {sha: name for name, sha, _ in heads}
+    merged_seen = merged_kept = 0
+    for c in trunk:
+        if c["shape"] == "merge":
+            merged_seen += 1
+            if c["p"][1] in head_by_sha:
+                merged_kept += 1
+
+    # Fingerprint the trunk's squash/applied landings so a surviving branch that
+    # landed that way can be recognised.
+    trunk_pids = {}
+    for c in trunk:
+        if c["shape"] in ("forge", "applied", "direct"):
+            pid = patch_id("show", "--format=", c["sha"])
+            if pid:
+                trunk_pids[pid] = c["sha"]
+
+    outstanding, landed_kept = [], []
+    for name, sha, ts in heads:
+        if STRUCTURAL_RE.match(name):
+            continue
+        if is_ancestor(sha, trunk_tip):
+            landed_kept.append((name, "merged"))
+            continue
+        rc, mb = tg_try("merge-base", sha, trunk_tip)
+        if rc != 0 or not mb.strip():
+            outstanding.append({"name": name, "sha": sha, "tip": ts, "ahead": None,
+                                "begun": ts, "unrelated": True})
+            continue
+        mb = mb.strip()
+        ahead = int(tg("rev-list", "--count", f"{mb}..{sha}").strip())
+        if ahead == 0:
+            landed_kept.append((name, "identical"))
+            continue
+        pid = patch_id("diff", mb, sha)
+        if pid and pid in trunk_pids:
+            landed_kept.append((name, "squash"))
+            continue
+        begun = int(tg("log", "--reverse", "--format=%ct", f"{mb}..{sha}").split()[0])
+        outstanding.append({"name": name, "sha": sha, "tip": ts, "ahead": ahead,
+                            "begun": begun, "unrelated": False})
+
+    # Every landing on the trunk in the span is a branch that landed, whether or
+    # not its ref survived. The first version counted only merges whose second
+    # parent still had a ref — a sample of one on a squash repository, and the
+    # wrong answer from it: the 147 squash landings with no surviving ref WERE
+    # the evidence that refs are removed on landing.
+    landed_total = sum(1 for c in trunk if c["shape"] != "direct")
+    kept_total = merged_kept + len([h for h in landed_kept if h[1] == "squash"])
+    retention = (kept_total / landed_total) if landed_total >= DEFAULT_MIN_LANDED else None
+
+    # ---- report ---------------------------------------------------------------
+    print(f"S-9: {len(heads)} branch ref(s) besides {ref}; "
+          f"{len(outstanding)} outstanding, {len(landed_kept)} landed-and-kept, "
+          f"{len(heads) - len(outstanding) - len(landed_kept)} structural (release/integration/bot).")
+    shapes = {}
+    for c in trunk:
+        shapes[c["shape"]] = shapes.get(c["shape"], 0) + 1
+    print(f"  trunk over the last {span_days} days: " +
+          ", ".join(f"{k} {v}" for k, v in sorted(shapes.items())) +
+          f"  ({sum(landed_per_window)} landings besides direct)")
+    print(f"  landings per {a.window}-day window, most recent first: "
+          + " ".join(str(n) for n in landed_per_window))
+    if retention is None:
+        print(f"  retention convention: cannot establish — fewer than {DEFAULT_MIN_LANDED} "
+              f"landings visible in the span.")
+    else:
+        print(f"  retention convention: {kept_total}/{landed_total} landed branches "
+              f"still hold a ref ({retention:.0%}) — "
+              + ("refs are removed on landing; survivors are outstanding work."
+                 if retention <= a.retention_bar else
+                 "refs are kept after landing; survivors mix done with abandoned."))
+
+    if outstanding:
+        outstanding.sort(key=lambda o: o["tip"])
+        stale = [o for o in outstanding if now - o["tip"] > a.window * day]
+        buckets = [(0, 30, "<30d"), (30, 180, "30-180d"), (180, 365, "180-365d"), (365, 10 ** 6, ">1y")]
+        print(f"  outstanding by age of last commit: " + "  ".join(
+            f"{lbl} {sum(1 for o in outstanding if lo <= (now - o['tip']) / day < hi)}"
+            for lo, hi, lbl in buckets))
+        # Counted over STALE refs only. The most recent window is full of open
+        # pull requests awaiting review, which look identical from git; a ref
+        # whose tip is older than a window is past that explanation.
+        begun_per_window = [0] * a.windows
+        for o in stale:
+            age = (now - o["begun"]) // (a.window * day)
+            if age < a.windows:
+                begun_per_window[age] += 1
+        print(f"  stale outstanding work BEGUN per window, most recent first: "
+              + " ".join(str(n) for n in begun_per_window)
+              + "  (surviving refs only — deleted abandonments are invisible)")
+        ahead_total = sum(o["ahead"] or 0 for o in outstanding)
+        print(f"  commits held outstanding: {ahead_total}; stale (older than one window): {len(stale)}")
+        print(f"  (a surviving ref did not land here; that is not the same as unfinished)")
+        for o in outstanding[:12]:
+            print(f"    {(now - o['tip']) // day:>5}d  ahead={o['ahead'] if o['ahead'] is not None else '?':>4}  {o['name']}")
+        if len(outstanding) > 12:
+            print(f"    … {len(outstanding) - 12} more")
+    else:
+        stale, begun_per_window = [], [0] * a.windows
+
+    # ---- across readings: the delta one reading cannot see ------------------
+    cdir = case_dir()
+    prev, prev_path = previous_sidecar(cdir)
+    now_set = {fingerprint(o["sha"]): {"begun": o["begun"], "tip": o["tip"],
+                                       "stale": now - o["tip"] > a.window * day}
+               for o in outstanding}
+    delta = None
+    if prev and isinstance(prev.get("outstanding"), dict):
+        before = prev["outstanding"]
+        begun_since = [h for h in now_set if h not in before]
+        resolved_since = [h for h in before if h not in now_set]
+        still = [h for h in now_set if h in before]
+        stale_before = sum(1 for v in before.values() if v.get("stale"))
+        delta = {"reading": prev.get("reading", "?"), "begun": len(begun_since),
+                 "resolved": len(resolved_since), "still": len(still),
+                 "stale_before": stale_before, "stale_now": len(stale)}
+        print(f"  since the previous reading ({delta['reading'][:10]}): begun {delta['begun']}, "
+              f"resolved {delta['resolved']} (landed or deleted — git cannot say which), "
+              f"still outstanding {delta['still']}; stale stock {stale_before} → {len(stale)}")
+    elif cdir:
+        print("  no previous reading in this case; the delta needs two readings (run with --record)")
+    if a.record:
+        if not cdir:
+            print("  --record ignored: no case open, nowhere to leave the sidecar")
+        else:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            out = cdir / f"s9-{stamp}.json"
+            out.write_text(json.dumps({"reading": datetime.now(timezone.utc).isoformat(),
+                                       "window_days": a.window, "outstanding": now_set},
+                                      indent=1, sort_keys=True))
+            print(f"  recorded this reading's outstanding set (hashed tips, no names): {out.name}")
+
+    # ---- R-014 --------------------------------------------------------------
+    print()
+    if retention is None or retention > a.retention_bar:
+        print("R-014: NOT APPLICABLE — the repository keeps refs after landing, or")
+        print("  no landing is visible to establish either way. Surviving refs cannot")
+        print("  be read as outstanding work here. Report the stock as an observation.")
+        return 0
+    if len(stale) < a.min_stale:
+        print(f"R-014: no finding — {len(stale)} stale outstanding branch(es), "
+              f"below the floor of {a.min_stale}.")
+        return 0
+    # Longest run of consecutive windows in which stale work was begun.
+    run = best = 0
+    for n in begun_per_window:
+        run = run + 1 if n > 0 else 0
+        best = max(best, run)
+    rate = sum(landed_per_window) / max(a.windows, 1)
+    print(f"  stale outstanding: {len(stale)}; landings per window: {rate:.1f}; "
+          f"stale stock is {len(stale) / rate if rate else float('inf'):.1f} window(s) of throughput")
+    print(f"  longest run of consecutive windows in which stale work was begun: {best}")
+    if delta is not None:
+        grew = delta["stale_now"] > delta["stale_before"]
+        print(f"  across readings: stale stock {delta['stale_before']} → {delta['stale_now']} "
+              f"(begun {delta['begun']}, resolved {delta['resolved']}): "
+              + ("growing." if grew else "not growing."))
+    else:
+        grew = None
+        print("  one reading: inflow only — survivors by start date, nothing about growth.")
+    if best >= DEFAULT_RUN and grew is not False:
+        print("R-014: CANDIDATE FINDING — outstanding work accumulates across consecutive windows.")
+        print("  Work was begun and left in nearly every window, on a repository that")
+        print("  removes refs when work lands — so what survives did not land here.")
+        print("  That is not the same as unfinished: work continues on forks, in")
+        print("  successor branches and in places git does not see. Open pull requests")
+        print("  awaiting review look identical from git; check the youngest before")
+        print("  believing the count. R-014's Not a violation section applies.")
+        if grew is None:
+            print("  Held to an observation until a second reading shows the stock growing.")
+    elif best >= DEFAULT_RUN:
+        print("R-014: no finding — stale work was begun in consecutive windows, but the")
+        print("  stock did not grow between readings: what is begun is also resolved.")
+    else:
+        print("R-014: no finding — the stale stock is old, not growing.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

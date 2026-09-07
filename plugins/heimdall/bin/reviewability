@@ -1,0 +1,464 @@
+#!/usr/bin/env python3
+"""
+Which increments could not have been read before they landed?
+
+This is the mechanical check behind rule R-001. It tests a necessary condition,
+not a sufficient one: it finds work where no one *could* have read the change,
+because the time did not exist. It never claims a change was not read — only
+that reading it was impossible.
+
+Two kinds of increment, and the claim differs between them.
+
+**Merged branches.** The test is the branch's whole lifetime against its size.
+Not the gap between the last commit and the merge — that accuses a healthy
+workflow, where a branch sits open and reviewed for hours, takes one final fixup
+commit, and merges seconds later. Lifetime asks whether an interval long enough
+to read the change existed anywhere, wherever the reader spent it.
+
+**Forge-mediated landings.** A pull request accepted by squash or rebase leaves
+a single ordinary-looking commit on the trunk. Topologically it is
+indistinguishable from a direct push, but a review window existed — on the
+hosting platform, where this instrument cannot see it, and the branch that
+carried it is gone. Neither test applies. These are counted and reported as
+**not measurable**, never as findings, because calling them direct-to-trunk
+inverts the reading on any repository that squash-merges. It cost a case file
+to learn that: a repository landing 96% of its work through reviewed pull
+requests was reported as 100% direct, with 119 findings, every one false.
+
+**Applied patches.** A commit whose committer is a different *person* from its
+author was put on the trunk by somebody other than whoever wrote it — the
+patch-and-apply workflow of much of the kernel-adjacent world, and what a
+rebase-merge leaves behind. A second party handled it by construction, which is
+the very thing R-004 assumes did not happen, so these are counted and not
+judged. Unlike a squash, an applied patch *preserves* its author date, so the
+pace rules that read author time remain valid over them and do not exclude
+them: measured on one workspace, 16 of 16 applied patches kept an author date
+distinct from their commit date, against 311 of 312 squash landings where the
+two were identical.
+
+**Work landing directly on the trunk.** Here there is no review interval at all,
+by construction: the commit is the landing. So the test is weaker and means
+something different — whether the work accumulated over enough elapsed time that
+a person could plausibly have been following along. A large change arriving as
+one commit had no such moment; the same change built up over hours across
+several commits did. Read a direct-to-trunk finding as "nobody could have kept
+up", never as "this should have been a pull request".
+
+Covering both matters. On a trunk-based repository most code never passes
+through a branch, and a merge-only check reports a clean result while never
+having looked at the majority of the work.
+
+Usage:
+  bin/reviewability --since "last week"
+  bin/reviewability --since "2026-06-01" --until "2026-07-01" --rate 500
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import FORGE_COMMITTERS  # noqa: E402
+
+# Files whose size says nothing about how long they take to read.
+GENERATED = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
+             "go.sum", "Cargo.lock", "composer.lock", "Gemfile.lock", ".snap")
+
+
+DEFAULT_RATE = 1000.0
+DEFAULT_FLOOR = 50      # changes smaller than this need no measurable reading time
+# Consecutive trunk commits closer together than this count as one increment.
+# Kept identical to bin/reasoning-with-code --act-gap on purpose: two rules that
+# both speak of "an increment" must not disagree about where one ends.
+DEFAULT_ACT_GAP = 60
+# Note: act-grouping is cut at the window edges. A run of commits straddling
+# --since or --until splits into two increments, so a windowed reading and a
+# full-history reading can differ by an increment or two at the margins.
+
+
+def tg(*args):
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(proc.returncode)
+    return proc.stdout
+
+
+def tg_try(*args):
+    """Run target-git, returning (returncode, stdout) rather than exiting.
+
+    For commands whose non-zero exit is an ANSWER, not an error. `git merge-base
+    A B` exits 1 with empty stderr when two commits share no ancestor — a fact
+    about the history. tg() turned that into sys.exit(1) printing nothing, so
+    this entire check died silently on any repository that has absorbed an
+    independent history: a vendored crate, a subtree import, a project merged in
+    wholesale. Observed on a workspace where 7 of 16 recent merges were exactly
+    that, and the failure was invisible — no message, no partial result, just
+    an empty exit 1 and two rules quietly unavailable.
+
+    Anything above 1 is still fatal: a bad object or a broken repository must
+    not be swallowed as "no common ancestor".
+    """
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True)
+    if proc.returncode > 1:
+        sys.stderr.write(proc.stderr)
+        sys.exit(proc.returncode)
+    return proc.returncode, proc.stdout
+
+
+def resolve(expr):
+    """Turn a date expression into epoch seconds, so a window has a length.
+
+    Pure Python on purpose. This used to shell out to `date -d`, which is a GNU
+    extension: BSD date, which is what macOS ships, rejects it outright. Every
+    window-based extractor carried the same call, so on macOS every --since
+    failed — ISO dates included — and the whole frame was unusable. Reported
+    from a plugin run there.
+
+    Accepts what the skills and rules actually pass: ISO dates and datetimes,
+    `N unit ago`, `now`, `today`, `yesterday`, and a bare epoch.
+    """
+    import re as _re
+    from datetime import datetime, timedelta, timezone
+    s = str(expr).strip().lower()
+    now = datetime.now(timezone.utc)
+
+    if s in ("now", "today"):
+        return int(now.timestamp())
+    if s == "yesterday":
+        return int((now - timedelta(days=1)).timestamp())
+    if _re.fullmatch(r"@?\d{9,}", s):
+        return int(s.lstrip("@"))
+
+    m = _re.fullmatch(r"(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago", s)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        days = {"day": 1, "week": 7, "month": 30, "year": 365}
+        if unit in days:
+            return int((now - timedelta(days=n * days[unit])).timestamp())
+        secs = {"second": 1, "minute": 60, "hour": 3600}
+        return int((now - timedelta(seconds=n * secs[unit])).timestamp())
+
+    iso = str(expr).strip().replace("Z", "+00:00")
+    for fmt in (None, "%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d"):
+        try:
+            dt = datetime.fromisoformat(iso) if fmt is None else datetime.strptime(iso, fmt)
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+
+    sys.exit(f"reviewability: could not resolve date {expr!r}. Accepted: an ISO date, "
+             f"'N days|weeks|months|years ago', 'now', 'today', 'yesterday'.")
+
+
+def iso(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def tally(lines):
+    churn = generated = 0
+    for l in lines:
+        b = l.split("\t")
+        if len(b) != 3:
+            continue
+        n = (int(b[0]) if b[0].isdigit() else 0) + (int(b[1]) if b[1].isdigit() else 0)
+        if b[2].endswith(GENERATED):
+            generated += n
+        else:
+            churn += n
+    return churn, generated
+
+
+def examine(since, until, ref, rate, floor, act_gap):
+    out, on_branch = [], set()
+
+    # --- merged branches ---
+    for line in tg("log", "--merges", "--format=%H|%at|%P|%s",
+                   f"--since={since}", f"--until={until}", ref).splitlines():
+        sha, at, parents, subject = line.split("|", 3)
+        p = parents.split()
+        if len(p) != 2:
+            continue                      # octopus merges have no single branch
+        rc, base_out = tg_try("merge-base", p[0], p[1])
+        base = base_out.strip()
+        if rc != 0 or not base:
+            # No common ancestor. This merge absorbed an independent history —
+            # an imported crate, a subtree, a whole project moved in. Its
+            # "branch lifetime" spans that history's entire existence and its
+            # commit count is that project's, not this branch's work, so a
+            # reading window computed from it is meaningless. Counted and named,
+            # never judged: the same posture as a forge-mediated landing.
+            #
+            # The imported commits are still recorded as on-branch so they do
+            # not reappear as direct-to-trunk work.
+            _, brought = tg_try("rev-list", p[1], f"^{p[0]}")
+            on_branch.update(x for x in brought.split() if x)
+            churn, generated = tally(
+                tg("diff", "--numstat", p[0], sha).splitlines())
+            out.append({
+                "rule": None,
+                "kind": "absorbed history", "ref": sha, "subject": subject,
+                "landed_at": iso(int(at)),
+                "reviewable_churn": churn, "generated_churn": generated,
+                "commits": len([x for x in brought.split() if x]),
+                "elapsed_min": None,
+                "lag_after_tip_min": None,
+                "reading_time_needed_min": round(churn / rate * 60, 1),
+                "could_have_been_read": None,
+            })
+            continue
+
+        churn, generated = tally(tg("diff", "--numstat", f"{base}..{p[1]}").splitlines())
+        entries = [l.split("|") for l in
+                   tg("log", "--format=%H|%at", f"{base}..{p[1]}").splitlines() if "|" in l]
+        if not entries:
+            continue
+        on_branch.update(e[0] for e in entries)
+        times = [int(e[1]) for e in entries if e[1].isdigit()]
+        if not times:
+            continue
+
+        at = int(at)
+        # Author dates, so a rebase that rewrites committer dates does not
+        # shorten the apparent lifetime and manufacture a finding.
+        lifetime_min = (at - min(times)) / 60
+        needed_min = churn / rate * 60
+
+        out.append({
+            "rule": "R-001",
+            "kind": "merged branch", "ref": sha, "subject": subject, "landed_at": iso(at),
+            "reviewable_churn": churn, "generated_churn": generated,
+            "commits": len(times),
+            "elapsed_min": round(lifetime_min, 1),
+            "lag_after_tip_min": round((at - max(times)) / 60, 1),
+            "reading_time_needed_min": round(needed_min, 1),
+            "could_have_been_read": churn < floor or lifetime_min >= needed_min,
+        })
+
+    # --- everything else on the trunk, split by who committed it ---
+    #
+    # Two different things look identical in the graph here, and separating them
+    # is the whole point: a commit a person pushed, and a commit a forge created
+    # when it accepted a reviewed pull request. Only the first is direct-to-trunk.
+    direct, forge, applied = [], [], []
+    # Who committed the landings we are about to call direct. A forge this list
+    # does not know degrades silently to "direct" — the old wrong answer — so
+    # the identities are reported and an assessor can spot a non-human committer
+    # dominating them. Not automated: a name is not proof, and guessing would
+    # trade a known blind spot for an invented one.
+    direct_committers = {}
+    for line in tg("log", "--no-merges", "--format=%H|%at|%ae|%ce|%s",
+                   f"--since={since}", f"--until={until}", ref).splitlines():
+        sha, at, aemail, cemail, subject = line.split("|", 4)
+        if sha in on_branch:
+            continue
+        if cemail.strip().lower() in FORGE_COMMITTERS:
+            forge.append((sha, int(at), subject, cemail.strip()))
+        elif aemail.strip().lower() != cemail.strip().lower():
+            applied.append((sha, int(at), subject, cemail.strip()))
+        else:
+            direct.append((sha, int(at), subject))
+            direct_committers[cemail.strip()] = direct_committers.get(cemail.strip(), 0) + 1
+    direct.sort(key=lambda d: d[1])
+
+    # Reported, never judged. The review window for these is real and is not in
+    # git, so neither R-001's test nor R-004's can be run over them. Saying so is
+    # the honest outcome; the alternative is a confident wrong answer.
+    for sha, at, subject, cemail in sorted(applied, key=lambda f: f[1]):
+        churn, generated = tally(tg("show", "--numstat", "--format=", sha).splitlines())
+        out.append({
+            "rule": None,
+            "kind": "applied patch", "ref": sha, "subject": subject,
+            "landed_at": iso(at), "committer": cemail,
+            "reviewable_churn": churn, "generated_churn": generated,
+            "commits": 1,
+            "elapsed_min": None,
+            "lag_after_tip_min": None,
+            "reading_time_needed_min": round(churn / rate * 60, 1),
+            "could_have_been_read": None,
+        })
+
+    for sha, at, subject, cemail in sorted(forge, key=lambda f: f[1]):
+        churn, generated = tally(tg("show", "--numstat", "--format=", sha).splitlines())
+        out.append({
+            "rule": None,
+            "kind": "forge-mediated landing", "ref": sha, "subject": subject,
+            "landed_at": iso(at), "committer": cemail,
+            "reviewable_churn": churn, "generated_churn": generated,
+            "commits": 1,
+            "elapsed_min": None,
+            "lag_after_tip_min": None,
+            "reading_time_needed_min": round(churn / rate * 60, 1),
+            # Not True and not False. A window existed and its length is unknown.
+            "could_have_been_read": None,
+        })
+
+    def flush(run):
+        if not run:
+            return
+        churn = generated = 0
+        for sha, _, _ in run:
+            # `show`, not `diff <sha>^!`: a root commit has no parent to diff
+            # against and a bare repository has no work tree to fall back on.
+            c, g = tally(tg("show", "--numstat", "--format=", sha).splitlines())
+            churn += c
+            generated += g
+        elapsed_min = (run[-1][1] - run[0][1]) / 60
+        needed_min = churn / rate * 60
+        out.append({
+            "rule": "R-004",
+            "kind": "direct to trunk", "ref": run[0][0], "subject": run[0][2],
+            "landed_at": iso(run[-1][1]),
+            "reviewable_churn": churn, "generated_churn": generated,
+            "commits": len(run),
+            "elapsed_min": round(elapsed_min, 1),
+            "lag_after_tip_min": None,     # no landing event distinct from authoring
+            "reading_time_needed_min": round(needed_min, 1),
+            "could_have_been_read": churn < floor or elapsed_min >= needed_min,
+        })
+
+    run = []
+    for entry in direct:
+        if run and (entry[1] - run[-1][1]) / 60 > act_gap:
+            flush(run)
+            run = []
+        run.append(entry)
+    flush(run)
+    return out, direct_committers
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--since", required=True)
+    p.add_argument("--until", default="now")
+    p.add_argument("--ref", default=None)
+    p.add_argument("--rate", type=float, default=DEFAULT_RATE,
+                   help=f"lines an hour a reader could plausibly cover (default {DEFAULT_RATE:.0f})")
+    p.add_argument("--floor", type=int, default=DEFAULT_FLOOR,
+                   help=f"changes smaller than this are exempt (default {DEFAULT_FLOOR})")
+    p.add_argument("--act-gap", type=int, default=DEFAULT_ACT_GAP,
+                   help="minutes; consecutive trunk commits closer than this are "
+                        f"one increment (default {DEFAULT_ACT_GAP})")
+    a = p.parse_args()
+
+    ref = a.ref
+    if not ref:
+        meta = ROOT / ".heimdall" / "target.json"
+        ref = json.loads(meta.read_text())["defaultBranch"] if meta.exists() else "HEAD"
+
+    since, until = iso(resolve(a.since)), iso(resolve(a.until))
+    incs, direct_committers = examine(since, until, ref, a.rate, a.floor, a.act_gap)
+    # `is False`, not `not`: a forge-mediated landing carries None, meaning the
+    # window is unknown. Falsy-testing it would file every squash-merged pull
+    # request as a finding, which is the exact defect this classification fixes.
+    failing = [m for m in incs if m["could_have_been_read"] is False]
+
+    def split(rows):
+        return ([r for r in rows if r["kind"] == "merged branch"],
+                [r for r in rows if r["kind"] == "direct to trunk"],
+                [r for r in rows if r["kind"] == "forge-mediated landing"],
+                [r for r in rows if r["kind"] == "absorbed history"],
+                [r for r in rows if r["kind"] == "applied patch"])
+    br, dr, fg, ab, ap_ = split(incs)
+    fbr, fdr, _, _, _ = split(failing)
+
+    result = {
+        "window": {"since": since, "until": until, "ref": ref},
+        "parameters": {"lines_per_hour": a.rate, "floor_lines": a.floor,
+                       "act_gap_min": a.act_gap},
+        "coverage": {
+            "merged_branches": len(br), "direct_to_trunk_increments": len(dr),
+            "forge_mediated_landings": len(fg),
+            "absorbed_histories": len(ab),
+            "applied_patches": len(ap_),
+            "churn_via_branch": sum(r["reviewable_churn"] for r in br),
+            "churn_direct_to_trunk": sum(r["reviewable_churn"] for r in dr),
+            "churn_forge_mediated": sum(r["reviewable_churn"] for r in fg),
+            "churn_absorbed": sum(r["reviewable_churn"] for r in ab),
+            "churn_applied_patches": sum(r["reviewable_churn"] for r in ap_),
+        },
+        "increments_examined": len(br) + len(dr),
+        "increments_not_measurable": len(fg),
+        "direct_to_trunk_committers": dict(sorted(direct_committers.items(),
+                                                  key=lambda kv: -kv[1])),
+        "increments_without_time_to_be_read": len(failing),
+        "by_rule": {
+            "R-001": {"examined": len(br), "findings": len(fbr),
+                      "claim": "a review window existed in which the change could be read"},
+            "R-004": {"examined": len(dr), "findings": len(fdr),
+                      "claim": "work accumulated slowly enough that someone could keep up"},
+            "not-measurable": {
+                "landings": len(fg) + len(ab) + len(ap_),
+                "claim": "a pull request was accepted by the forge; its review "
+                         "window is not in git and neither rule can be run"},
+        },
+        "findings": sorted(failing, key=lambda m: -m["reviewable_churn"]),
+    }
+    print(json.dumps(result, indent=2))
+
+    c = result["coverage"]
+    total = (c["churn_via_branch"] + c["churn_direct_to_trunk"]
+             + c["churn_forge_mediated"] + c["churn_absorbed"]
+             + c["churn_applied_patches"])
+    w = [f"{since[:10]} .. {until[:10]} on {ref}   "
+         f"({a.rate:.0f} lines/h, floor {a.floor}, act gap {a.act_gap}m)"]
+    if not incs:
+        w.append("no increments in this window.")
+    else:
+        w.append(f"coverage: {len(br)} merged branch(es) carrying {c['churn_via_branch']} lines, "
+                 f"{len(fg)} forge-mediated landing(s) carrying {c['churn_forge_mediated']} lines, "
+                 f"{len(dr)} direct-to-trunk increment(s) carrying {c['churn_direct_to_trunk']} "
+                 f"lines" + (f" ({c['churn_direct_to_trunk']/total:.0%} direct)" if total else ""))
+        w.append(f"R-001 merged branches   {len(fbr)}/{len(br)} had no window to be read in")
+        w.append(f"R-004 direct to trunk    {len(fdr)}/{len(dr)} outran any reader")
+        if ap_:
+            w.append(f"applied patches         {len(ap_)} landing(s) carrying "
+                     f"{c['churn_applied_patches']} lines — committed by someone other "
+                     "than the author, so a second party handled them; the interval "
+                     "in which they did is not in git.")
+        if ab:
+            w.append(f"absorbed history        {len(ab)} merge(s) carrying "
+                     f"{c['churn_absorbed']} lines — an independent history moved in "
+                     "wholesale; its lifetime and commit count are that project's, "
+                     "not this branch's work, so no reading window is computable.")
+        if fg:
+            share = c["churn_forge_mediated"] / total if total else 0
+            w.append(f"not measurable          {len(fg)} landing(s), {share:.0%} of churn — "
+                     "accepted by the forge; the review window is not in git")
+            if share >= 0.5:
+                w.append("  This repository lands most work through the forge. R-001 sees "
+                         "almost none of it and R-004 must not be read as coverage: "
+                         "say so in the case file rather than reporting a clean sweep.")
+        if failing:
+            w.append(f"  {'ref':<10}{'rule':<7}{'kind':<17}{'churn':>7}{'elapsed':>9}{'needed':>8}  subject")
+            for m in result["findings"][:12]:
+                w.append(f"  {m['ref'][:8]:<10}{m['rule']:<7}{m['kind']:<17}"
+                         f"{m['reviewable_churn']:>7}"
+                         f"{m['elapsed_min']:>8.0f}m{m['reading_time_needed_min']:>7.0f}m"
+                         f"  {m['subject'][:34]}")
+        if direct_committers:
+            top = sorted(direct_committers.items(), key=lambda kv: -kv[1])[:3]
+            w.append("  committers of the direct landings: "
+                     + ", ".join(f"{e} ({n})" for e, n in top))
+            w.append("  if one of those is a hosting platform this build does not know, it is "
+                     "a forge landing misfiled as direct — add it to FORGE_COMMITTERS.")
+        w.append("both are necessary-condition tests: reading was impossible, not merely absent.")
+        w.append("a forge-mediated landing is neither: it was reviewed somewhere this "
+                 "instrument cannot see, so it is counted and never judged.")
+        w.append("R-004 is not about the route. Landing on the trunk is a legitimate practice; "
+                 "the finding is the volume that arrived, never the absence of a pull request.")
+    sys.stderr.write("\n".join(w) + "\n")
+
+
+if __name__ == "__main__":
+    main()

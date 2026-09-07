@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""
+Did substantial work land without any executable check, where this repository
+normally ships one?
+
+The mechanical check behind rule R-011. Like R-003, it is **conditional**: it
+establishes the repository's own convention from measured practice before
+applying anything, and disables itself where the practice does not hold. A
+repository that keeps its suite elsewhere, verifies by construction, or has
+decided tests are not how it works is not failing P-8, and this check says so
+rather than reporting against a standard the target never adopted.
+
+It measures accompaniment and nothing else. Whether a test is any good, whether
+coverage is adequate, whether the right things are covered — none of that is
+visible here and none of it is this instrument's business. The only claim
+available is that a substantial code change landed with no test change beside
+it, in a repository whose other substantial changes carry one.
+
+The unit is a landing, as in R-009: a merge counts once by what it brought to
+the trunk, and runs of consecutive direct commits group by the act gap. A branch
+that puts code in one commit and its tests in the next arrived with tests.
+
+Usage:
+  bin/tests-with-code --since "2 weeks ago"
+  bin/tests-with-code --since 2026-01-01 --until 2026-02-01
+"""
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE, TEST_RE, DOC_RE, INLINE_TEST_RE, FORGE_COMMITTERS  # noqa: E402
+
+# Bands, not one threshold. A flat code-min asked the same thing of a 100-line
+# landing and a 10,000-line one, and nothing of a 99-line one. Measured across
+# three repositories and 304 landings, the rate at which tests arrive rises with
+# size in every one — 33%→97%, 7%→78%, 7%→100% — so a single bar is answering a
+# question no repository is actually asking. See bin/care-by-size.
+#
+# The consequence is what makes this worth the complexity: in the 100-299 band
+# one repository carried tests on 95% of landings and another on 46%. An
+# untested 150-line landing is a real anomaly in the first and unremarkable in
+# the second, and a flat threshold reports them identically.
+BANDS = [(1, 24), (25, 99), (100, 299), (300, 999), (1000, 10 ** 9)]
+
+# The smallest band never yields a finding. A change this size is a typo fix, a
+# version bump, a URI correction — the class of work whose whole value is that
+# it is cheap, and demanding ceremony of it is the over-spending P-5 warns about
+# as loudly as it warns about under-spending. A chosen threshold, not a measured
+# one, and the reason this rule is still draft.
+NO_FINDING_BAND = "1-24"
+
+# Above this many lines the bands are one regime and are judged together.
+# Re-swept on the corrected landing unit across five histories and ~2,180
+# landings: the test rate climbs steeply from 1-24 through 25-99 to 100-299,
+# then sits at 74-80% on every history tried, with 300-999 and 1000+ moving in
+# no consistent direction from 100-299. Splitting the plateau buys nothing and
+# costs samples where they matter most — on a single-package repository the
+# top two bands held six and two landings, so its largest changes could not be
+# judged at all. The bands are still reported one by one; the CONVENTION for
+# the plateau is pooled.
+PLATEAU_FROM = 100
+
+DEFAULT_MIN_BAND = 5      # below this a band's rate is an accident, not a norm
+DEFAULT_CODE_MIN = 100    # retained for --code-min compatibility; see BANDS
+DEFAULT_ACT_GAP = 60      # minutes; direct commits closer than this are one landing
+CONVENTION_MIN = 0.50     # the rule applies only above this share
+
+
+
+
+
+def git(*args):
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True, errors="replace")
+    if proc.returncode != 0:
+        sys.exit(f"tests-with-code: git failed: {' '.join(args)}\n{proc.stderr}")
+    return proc.stdout
+
+
+def numstat(*args):
+    rows = []
+    for row in git(*args).splitlines():
+        cols = row.split("\t")
+        if len(cols) == 3:
+            add, dele, path = cols
+            rows.append((path,
+                         (int(add) if add.isdigit() else 0)
+                         + (int(dele) if dele.isdigit() else 0)))
+    return rows
+
+
+def landings(since, until, ref, act_gap_min):
+    out = git("log", "--first-parent", ref, "--reverse",
+              f"--since={since}", f"--until={until}",
+              "--format=%H%x01%P%x01%ct%x01%ce%x01%s")
+    gap, units, act = act_gap_min * 60, [], []
+
+    def flush():
+        if not act:
+            return
+        rows = []
+        for sha, _, _ in act:
+            rows += numstat("show", "--numstat", "--format=", sha)
+        if rows:
+            units.append({"sha": act[0][0], "subject": act[0][2], "rows": rows,
+                          "kind": "act", "commits": len(act),
+                          "diffargs": [("show", "--unified=0", "--format=", sh)
+                                       for sh, _, _ in act]})
+        act.clear()
+
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        sha, parents, ts, ce, subject = line.split("\x01", 4)
+        plist, ts = parents.split(), int(ts)
+        if len(plist) >= 2:
+            flush()
+            rows = numstat("diff", "--numstat", f"{plist[0]}..{sha}")
+            if rows:
+                units.append({"sha": sha, "subject": subject, "rows": rows,
+                              "kind": "merge", "commits": 1,
+                              "diffargs": [("diff", "--unified=0",
+                                            f"{plist[0]}..{sha}")]})
+        elif ce.strip().lower() in FORGE_COMMITTERS:
+            flush()
+            act.append((sha, ts, subject))
+            flush()
+        else:
+            if act and ts - act[-1][1] > gap:
+                flush()
+            act.append((sha, ts, subject))
+    flush()
+    return units
+
+
+def split(rows):
+    code = test = 0
+    for path, churn in rows:
+        if NOISE_RE.search(path):
+            continue
+        if TEST_RE.search(path):
+            test += churn
+        elif DOC_RE.search(path):
+            continue
+        else:
+            code += churn
+    return code, test
+
+
+def band_of(n):
+    for lo, hi in BANDS:
+        if lo <= n <= hi:
+            return f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+"
+    return None
+
+
+def band_labels():
+    return [f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+" for lo, hi in BANDS]
+
+
+def inline_tests(unit):
+    """Test markers added inside files that are not test files.
+
+    Only called when the path-based split found no test file, so it costs a
+    second diff on exactly the landings that would otherwise be reported as
+    carrying no verification at all.
+    """
+    for args in unit.get("diffargs", []):
+        for line in git(*args).splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                if INLINE_TEST_RE.search(line):
+                    return True
+    return False
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--code-min", type=int, default=DEFAULT_CODE_MIN)
+    ap.add_argument("--min-band", type=int, default=DEFAULT_MIN_BAND,
+                    help="landings a band needs before its rate counts as a norm")
+    ap.add_argument("--act-gap", type=int, default=DEFAULT_ACT_GAP)
+    ap.add_argument("--convention-min", type=float, default=CONVENTION_MIN,
+                    help="share of substantial landings that must carry a test "
+                         "before the rule applies at all")
+    a = ap.parse_args()
+
+    ref = a.ref or git("symbolic-ref", "--short", "HEAD").strip()
+    units = landings(a.since, a.until, ref, a.act_gap)
+
+    banded = {b: [] for b in band_labels()}
+    for u in units:
+        code, test = split(u["rows"])
+        u["code"], u["test"] = code, test
+        b = band_of(code)
+        if not b:
+            continue
+        u["band"] = b
+        u["inline"] = False
+        if test == 0:
+            u["inline"] = inline_tests(u)
+        u["verified"] = test > 0 or u["inline"]
+        banded[b].append(u)
+
+    total = sum(len(v) for v in banded.values())
+    print(f"{len(units)} landing(s) in window, {total} placed in a size band")
+    if not total:
+        print("R-011: NOT APPLICABLE — no landing carries measurable code.")
+        return 0
+
+    plateau = [u for b in band_labels() if int(b.split("-")[0].rstrip("+")) >= PLATEAU_FROM
+               for u in banded[b]]
+    plateau_n = len(plateau)
+    plateau_rate = (sum(1 for u in plateau if u["verified"]) / plateau_n) if plateau_n else 0.0
+
+    print(f"{'code lines':<12}{'landings':>9}{'with test':>11}   status")
+    findings, inline_counted = [], 0
+    for b in band_labels():
+        rows = banded[b]
+        if not rows:
+            continue
+        n = len(rows)
+        verified = [u for u in rows if u["verified"]]
+        inline_counted += sum(1 for u in rows if u["inline"])
+        rate = len(verified) / n
+        pooled = int(b.split("-")[0].rstrip("+")) >= PLATEAU_FROM
+        jn, jrate = (plateau_n, plateau_rate) if pooled else (n, rate)
+        tag = f" ({PLATEAU_FROM}+ pooled: {plateau_n} @ {plateau_rate:.0%})" if pooled else ""
+        if b == NO_FINDING_BAND:
+            status = "not judged — too small to owe a check"
+        elif jn < a.min_band:
+            status = f"thin ({jn} < {a.min_band}) — rate is an accident{tag}"
+        elif jrate < a.convention_min:
+            status = (f"below the bar ({a.convention_min:.0%}) — not this "
+                      f"repository's habit at this size{tag}")
+        else:
+            status = f"judged{tag}"
+            findings += [u for u in rows if not u["verified"]]
+        print(f"{b:<12}{n:>9}{rate:>10.0%}   {status}")
+
+    if inline_counted:
+        print(f"  {inline_counted} landing(s) carry tests inside the source file "
+              "rather than in a test file")
+        print("  (Rust #[cfg(test)] and kin); counted as carrying verification.")
+
+    print()
+    print("Each band is judged against this repository's own rate at that size, "
+          "never against")
+    print(f"a fixed threshold; from {PLATEAU_FROM} lines up the bands are one regime "
+          "and share a rate.")
+    print("A band below the bar is not a pass: it says the repository does not test "
+          "at that size,")
+    print("which is a fact about the repository and not about any change.")
+
+    if not findings:
+        print()
+        print("R-011: no finding — in every band this repository tests at, every "
+              "landing carried")
+        print("  a test change. This says verification arrived, never that it "
+              "was adequate.")
+        return 0
+
+    print()
+    print(f"R-011: CANDIDATE FINDING — {len(findings)} landing(s) with no test "
+          "change, in bands")
+    print("  where this repository normally does test.")
+    for u in sorted(findings, key=lambda u: -u["code"]):
+        print(f"  {u['sha'][:12]}  {u['code']:>6} lines of code, 0 test  "
+              f"[{u['band']}]  {u['subject'][:44]}")
+    print()
+    print("  Every one needs adjudication: a pure refactor should leave tests")
+    print("  untouched, a rename or a generated-code pass needs none, and")
+    print("  verification that is not a test file is invisible here. See R-011's")
+    print("  Not a violation section before believing any of these.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

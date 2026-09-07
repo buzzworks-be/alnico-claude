@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# pulp-roll — the dice for the pulp easter egg.
+#
+# The skill that hatches the egg chooses a setting, an hour, two props, where
+# the fact sits and where the short sentence goes. Left to a language model,
+# that choice is the first item on every list, every time: the diner, the
+# coffee, the cruller. So the choice is made here, by $RANDOM, before a word of
+# prose exists, and the skill is told to use exactly what this prints.
+#
+# Nothing here reads the target or the case. The lists are the narrator's
+# furniture and nobody else's.
+set -u
+
+where=(
+  "the diner"
+  "the car on a stakeout"
+  "the office with one lamp"
+  "the bar"
+  "the all-night laundromat"
+  "the bus home"
+  "the roof"
+  "the bathtub with the radio on the floor"
+  "the pharmacy that never closes"
+  "the parking structure"
+  "the kitchen at four in the morning"
+  "the train platform"
+  "the bench outside the courthouse"
+  "the motel with the ice machine"
+  "the back booth of a bowling alley"
+  "the ferry, last crossing"
+  "the waiting room at the all-night vet"
+  "the fire escape"
+  "the archive basement, lights on a timer"
+  "the launderette's bench outside, because inside was full"
+)
+when=(
+  "just after midnight"
+  "the dead hour before dawn"
+  "the grey part where the streetlights click off"
+  "supper that turned into breakfast"
+  "a Sunday that felt like a Tuesday"
+  "the hour the buses stop and the taxis have not started"
+  "somewhere past two, the clock had given up"
+  "the half hour before the first shift"
+  "the tail end of a rain that had run all day"
+  "a Friday that nobody had told the neon about"
+)
+props=(
+  "coffee that had been on since the war"
+  "the cruller"
+  "noodles going cold on the dashboard"
+  "the honkball game with the home side down"
+  "a bar that was closed"
+  "the neck, left side"
+  "the ceiling"
+  "whoever did not call"
+  "a raincoat that never dries"
+  "the radiator that knocks"
+  "the cat that is not the narrator's"
+  "a crossword left at three across"
+  "the shoe with the sole going"
+  "the neon that buzzes one letter short"
+  "the pigeons"
+  "a sandwich from a machine"
+  "the elevator that stops between floors"
+  "the last cigarette that was supposed to be the last one last week"
+  "a library book eleven weeks overdue"
+  "the umbrella that opens on its own"
+  "a jukebox with one song left in it"
+  "the wristwatch that runs four minutes fast, on purpose"
+  "the dog two floors down that barks at the lift"
+  "a tin of soup with no label"
+  "the pay phone that still takes coins and nothing else"
+  "a bruise from a door that was not there yesterday"
+  "the mirror in the hall that needs a shave"
+  "a hat left on a train"
+)
+where_fact=(
+  "first sentence"
+  "second sentence"
+  "the middle"
+  "second to last sentence"
+  "last sentence"
+)
+where_short=(
+  "the first sentence"
+  "right after the fact"
+  "right before the fact"
+  "the last sentence"
+)
+
+pick() { echo $(( RANDOM % $1 )); }
+
+w=$(pick ${#where[@]})
+t=$(pick ${#when[@]})
+p1=$(pick ${#props[@]})
+p2=$(pick ${#props[@]})
+while [ "$p2" = "$p1" ]; do p2=$(pick ${#props[@]}); done
+f=$(pick ${#where_fact[@]})
+s=$(pick ${#where_short[@]})
+n=$(( 5 + RANDOM % 3 ))
+
+printf 'where:      %s\n' "${where[$w]}"
+printf 'when:       %s\n' "${when[$t]}"
+printf 'prop:       %s\n' "${props[$p1]}"
+printf 'prop:       %s\n' "${props[$p2]}"
+printf 'fact sits:  %s\n' "${where_fact[$f]}"
+printf 'short one:  %s\n' "${where_short[$s]}"
+printf 'sentences:  %s\n' "$n"

@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""
+Did production sustainedly outrun a reader — and did machine-paced work say so?
+
+This is the mechanical check behind rules R-006 and R-007. It groups non-merge
+commits into RUNS (consecutive commits separated by no more than --burst-gap
+minutes, at least --min-commits long) and measures each run's sustained pace:
+reviewable churn over elapsed time.
+
+Two rules read the same runs and ask different questions:
+
+  R-006  did the run's pace exceed what any human could READ while it was
+         produced? If nobody reading continuously for the whole interval could
+         have covered the output, absorption did not happen during production —
+         arithmetic, not judgement.
+  R-007  did the run's pace exceed what any human could WRITE — and carry no
+         machine attribution? Attribution is opt-in and trivially stripped, so
+         its absence proves nothing on its own (see S-3). Pace cannot be opted
+         out of: sustained output above human writing speed demonstrates
+         machine production, and machine production that declares nothing is
+         the finding.
+
+Single commits are not runs. A lone large commit is R-001/R-004's business;
+this check measures *sustained* production, which needs a sequence.
+
+Usage:
+  bin/digest-rate --since "last week"
+  bin/digest-rate --since "2026-06-01" --until "2026-07-01" --read-rate 1000
+"""
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import FORGE_COMMITTERS  # noqa: E402
+
+GENERATED = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
+             "go.sum", "Cargo.lock", "composer.lock", "Gemfile.lock", ".snap")
+
+# Markers of declared machine involvement, checked against Co-Authored-By
+# trailers, author identity, and the commit body. Deliberately broad and
+# case-insensitive; matching any of them counts the commit as attributed.
+AI_RE = re.compile(
+    r"claude|anthropic|copilot|openai|gpt|codex|gemini|devin|cursor|aider"
+    r"|\[bot\]|generated with|co-authored-by:.*\bai\b",
+    re.I,
+)
+
+DEFAULT_BURST_GAP = 15    # minutes between commits within one run
+DEFAULT_MIN_COMMITS = 3   # a run must be at least this long to measure pace
+DEFAULT_CHURN_FLOOR = 200 # runs smaller than this carry no measurable pace claim
+DEFAULT_READ_RATE = 1000.0  # lines/hour a reader could cover; matches R-001/R-002
+DEFAULT_WRITE_RATE = 600.0  # lines/hour of novel, hand-written work, sustained —
+                            # generous: it includes thinking, testing, correcting
+
+
+def tg(*args):
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(proc.returncode)
+    return proc.stdout
+
+
+def resolve(expr):
+    """Turn a date expression into epoch seconds, so a window has a length.
+
+    Pure Python on purpose. This used to shell out to `date -d`, which is a GNU
+    extension: BSD date, which is what macOS ships, rejects it outright. Every
+    window-based extractor carried the same call, so on macOS every --since
+    failed — ISO dates included — and the whole frame was unusable. Reported
+    from a plugin run there.
+
+    Accepts what the skills and rules actually pass: ISO dates and datetimes,
+    `N unit ago`, `now`, `today`, `yesterday`, and a bare epoch.
+    """
+    import re as _re
+    from datetime import datetime, timedelta, timezone
+    s = str(expr).strip().lower()
+    now = datetime.now(timezone.utc)
+
+    if s in ("now", "today"):
+        return int(now.timestamp())
+    if s == "yesterday":
+        return int((now - timedelta(days=1)).timestamp())
+    if _re.fullmatch(r"@?\d{9,}", s):
+        return int(s.lstrip("@"))
+
+    m = _re.fullmatch(r"(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago", s)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        days = {"day": 1, "week": 7, "month": 30, "year": 365}
+        if unit in days:
+            return int((now - timedelta(days=n * days[unit])).timestamp())
+        secs = {"second": 1, "minute": 60, "hour": 3600}
+        return int((now - timedelta(seconds=n * secs[unit])).timestamp())
+
+    iso = str(expr).strip().replace("Z", "+00:00")
+    for fmt in (None, "%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d"):
+        try:
+            dt = datetime.fromisoformat(iso) if fmt is None else datetime.strptime(iso, fmt)
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+
+    sys.exit(f"digest-rate: could not resolve date {expr!r}. Accepted: an ISO date, "
+             f"'N days|weeks|months|years ago', 'now', 'today', 'yesterday'.")
+
+
+def iso(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+
+def collect(since, until, ref):
+    commits, cur = [], None
+    skipped_forge = 0
+    fmt = ("\x1d%H|%at|%ce|%an <%ae>|"
+           "%(trailers:key=Co-Authored-By,valueonly,separator=; )|%s")
+    for chunk in tg("log", "--no-merges", "--numstat", f"--format={fmt}",
+                    f"--since={since}", f"--until={until}", ref).split("\x1d"):
+        if not chunk.strip():
+            continue
+        head, _, stats = chunk.partition("\n")
+        sha, at, cemail, author, trailers, subject = head.split("|", 5)
+        if cemail.strip().lower() in FORGE_COMMITTERS:
+            skipped_forge += 1
+            continue
+        churn = 0
+        for l in stats.splitlines():
+            b = l.split("\t")
+            if len(b) == 3 and not b[2].endswith(GENERATED):
+                churn += ((int(b[0]) if b[0].isdigit() else 0)
+                          + (int(b[1]) if b[1].isdigit() else 0))
+        body = tg("show", "-s", "--format=%b", sha)
+        commits.append({
+            "sha": sha, "at": int(at), "churn": churn, "subject": subject,
+            "attributed": bool(AI_RE.search(trailers) or AI_RE.search(author)
+                               or AI_RE.search(body)),
+        })
+    commits.sort(key=lambda c: c["at"])
+    return commits, skipped_forge
+
+
+def runs_of(commits, gap_min, min_commits):
+    runs, run = [], []
+    for c in commits:
+        if run and (c["at"] - run[-1]["at"]) / 60 > gap_min:
+            if len(run) >= min_commits:
+                runs.append(run)
+            run = []
+        run.append(c)
+    if len(run) >= min_commits:
+        runs.append(run)
+    return runs
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--since", required=True)
+    p.add_argument("--until", default="now")
+    p.add_argument("--ref", default=None)
+    p.add_argument("--burst-gap", type=int, default=DEFAULT_BURST_GAP)
+    p.add_argument("--min-commits", type=int, default=DEFAULT_MIN_COMMITS)
+    p.add_argument("--churn-floor", type=int, default=DEFAULT_CHURN_FLOOR)
+    p.add_argument("--read-rate", type=float, default=DEFAULT_READ_RATE)
+    p.add_argument("--write-rate", type=float, default=DEFAULT_WRITE_RATE)
+    a = p.parse_args()
+
+    ref = a.ref
+    if not ref:
+        meta = ROOT / ".heimdall" / "target.json"
+        ref = json.loads(meta.read_text())["defaultBranch"] if meta.exists() else "HEAD"
+
+    since, until = iso(resolve(a.since)), iso(resolve(a.until))
+    commits, skipped_forge = collect(since, until, ref)
+    total_churn = sum(c["churn"] for c in commits)
+    runs = runs_of(commits, a.burst_gap, a.min_commits)
+
+    rows = []
+    for run in runs:
+        churn = sum(c["churn"] for c in run)
+        if churn < a.churn_floor:
+            continue
+        elapsed_min = max((run[-1]["at"] - run[0]["at"]) / 60, 1.0)
+        rate = churn / elapsed_min * 60          # lines/hour
+        # Sensitivity: the first commit's churn was produced BEFORE the measured
+        # interval began, so at short run lengths it inflates the rate with work
+        # the window never saw. A run whose rate collapses under the ceiling
+        # without it is a boundary artefact of the metric, not a finding.
+        rate_excl_first = (churn - run[0]["churn"]) / elapsed_min * 60
+        attributed = sum(1 for c in run if c["attributed"])
+        rows.append({
+            "first_commit": run[0]["sha"], "started_at": iso(run[0]["at"]),
+            "commits": len(run), "churn": churn,
+            "elapsed_min": round(elapsed_min, 1),
+            "rate_lines_per_hour": round(rate, 0),
+            "rate_excluding_first_commit": round(rate_excl_first, 0),
+            "boundary_artefact": rate >= a.read_rate > rate_excl_first,
+            "attributed_commits": attributed,
+            "outran_a_reader": rate >= a.read_rate,            # R-006
+            "machine_paced_undeclared": rate >= a.write_rate and attributed == 0,  # R-007
+        })
+
+    r6 = [r for r in rows if r["outran_a_reader"]]
+    r7 = [r for r in rows if r["machine_paced_undeclared"]]
+    result = {
+        "window": {"since": since, "until": until, "ref": ref},
+        "parameters": {"burst_gap_min": a.burst_gap, "min_commits": a.min_commits,
+                       "churn_floor": a.churn_floor,
+                       "read_rate_lph": a.read_rate, "write_rate_lph": a.write_rate},
+        "commits": len(commits), "window_churn": total_churn,
+        "forge_mediated_skipped": skipped_forge,
+        "measurable_runs": len(rows),
+        "R-006": {"runs_outrunning_a_reader": len(r6),
+                  "their_churn": sum(r["churn"] for r in r6),
+                  "share_of_window_churn": (round(sum(r["churn"] for r in r6) / total_churn, 3)
+                                            if total_churn else 0.0)},
+        "R-007": {"machine_paced_undeclared_runs": len(r7),
+                  "their_churn": sum(r["churn"] for r in r7)},
+        "runs": sorted(rows, key=lambda r: -r["rate_lines_per_hour"]),
+    }
+    print(json.dumps(result, indent=2))
+
+    w = [f"{since[:10]} .. {until[:10]} on {ref}   (gap {a.burst_gap}m, >= {a.min_commits} "
+         f"commits, floor {a.churn_floor}; read {a.read_rate:.0f} l/h, write {a.write_rate:.0f} l/h)"]
+    w.append(f"{len(rows)} measurable run(s) in {len(commits)} commits / {total_churn} churn")
+    if skipped_forge:
+        total = len(commits) + skipped_forge
+        w.append(f"skipped {skipped_forge} of {total} commit(s): accepted by a forge, so the "
+                 "timestamp is when the work was let in, not when it was done.")
+        w.append("  A run measured across them reports merge cadence as production rate.")
+        if skipped_forge >= total / 2:
+            w.append("  Most of this window was skipped. R-006 and R-007 are NOT APPLICABLE "
+                     "here; a run count of zero is not a clean result.")
+    w.append(f"R-006: {len(r6)} run(s) outran a reader — "
+             f"{result['R-006']['share_of_window_churn']:.0%} of window churn")
+    w.append(f"R-007: {len(r7)} machine-paced run(s) with no declared machine involvement")
+    for r in result["runs"][:10]:
+        marks = ("R6" if r["outran_a_reader"] else "  ") + \
+                ("R7" if r["machine_paced_undeclared"] else "  ")
+        ba = " boundary-artefact" if r["boundary_artefact"] else ""
+        w.append(f"  {r['first_commit'][:8]} {r['started_at'][:16]}  "
+                 f"{r['commits']:>3}c {r['churn']:>6}ln /{r['elapsed_min']:>6.0f}m "
+                 f"= {r['rate_lines_per_hour']:>6.0f} l/h (excl 1st {r['rate_excluding_first_commit']:>5.0f})  "
+                 f"attr {r['attributed_commits']}/{r['commits']}  {marks}{ba}")
+    w.append("pace is a necessary-condition claim; attribution absence alone is never one.")
+    sys.stderr.write("\n".join(w) + "\n")
+
+
+if __name__ == "__main__":
+    main()

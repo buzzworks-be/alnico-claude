@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""What does this repository make mandatory by machinery, and did that move with the work?
+
+The measurement behind signal S-12, under P-6: discipline belongs to the
+system, not to whoever is currently in it. R-009 asks whether an observed
+practice has any carrier in the tree. This inventories the carriers themselves
+— pipelines, hooks, linters, formatters, test runners, ownership, templates,
+release and dependency automation — and reads two things about them: how much
+of the repository's discipline is written down as machinery, and whether that
+machinery moved during the window the work did.
+
+It is a signal with no rule, and it says so in every output. Config present is
+not config running: a workflow can be disabled at the platform and reads
+identically in git. Required checks, approvals and branch protection live on
+the forge and are invisible here. A repository may enforce from a shared
+external system and carry nothing in-tree. This closes the frame's
+verification-blindness gap only partly, and the residue is the same forge
+boundary R-001 lives with.
+
+Usage:
+  bin/enforcement-surface --since "3 months ago"
+"""
+
+import argparse
+import collections
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE  # noqa: E402
+
+# Kept in step with bin/unenforced-practice where the categories overlap.
+CATEGORIES = [
+    ("pipeline", [
+        r"^\.github/workflows/.*\.ya?ml$", r"^\.gitlab-ci\.yml$", r"^Jenkinsfile$",
+        r"^\.circleci/.*", r"^azure-pipelines\.ya?ml$", r"^\.drone\.yml$",
+        r"^\.travis\.yml$", r"^buildkite\.ya?ml$", r"^\.buildkite/.*", r"^\.woodpecker\.ya?ml$",
+    ]),
+    ("hooks", [
+        r"^\.pre-commit-config\.ya?ml$", r"^\.husky/.*", r"^lefthook\.ya?ml$",
+        r"^\.githooks/.*", r"^\.hooks/.*", r"^\.commitlintrc.*", r"^commitlint\.config\..*",
+    ]),
+    ("lint-format", [
+        r"^\.eslintrc.*", r"^eslint\.config\..*", r"^\.prettierrc.*", r"^prettier\.config\..*",
+        r"^biome\.jsonc?$", r"^\.oxfmtrc.*", r"^\.oxlintrc.*", r"^ruff\.toml$", r"^\.ruff\.toml$",
+        r"^\.flake8$", r"^\.pylintrc$", r"^mypy\.ini$", r"^\.golangci\.ya?ml$", r"^rustfmt\.toml$",
+        r"^clippy\.toml$", r"^\.rubocop\.yml$", r"^\.clang-format$", r"^\.clang-tidy$",
+        r"^\.editorconfig$", r"^\.stylelintrc.*", r"^\.markdownlint.*", r"^\.shellcheckrc$",
+        r"^\.hadolint\.ya?ml$",
+    ]),
+    ("test-runner", [
+        r"^vitest\.config\..*", r"^jest\.config\..*", r"^\.mocharc.*", r"^pytest\.ini$",
+        r"^tox\.ini$", r"^\.nycrc.*", r"^codecov\.ya?ml$", r"^\.codecov\.ya?ml$",
+        r"^karma\.conf\..*", r"^playwright\.config\..*", r"^cypress\.config\..*",
+    ]),
+    ("types-build", [
+        r"^tsconfig.*\.json$", r"^pyproject\.toml$", r"^setup\.cfg$", r"^Makefile$",
+        r"^justfile$", r"^Taskfile\.ya?ml$", r"^turbo\.json$", r"^nx\.json$",
+    ]),
+    ("ownership", [r"^(\.github/|docs/)?CODEOWNERS$"]),
+    ("templates", [
+        r"^\.github/pull_request_template\.md$", r"^\.github/PULL_REQUEST_TEMPLATE",
+        r"^PULL_REQUEST_TEMPLATE\.md$", r"^\.github/ISSUE_TEMPLATE",
+        r"^\.gitlab/merge_request_templates/.*",
+    ]),
+    ("release-deps", [
+        r"^\.releaserc.*", r"^release\.config\..*", r"^\.versionrc.*",
+        r"^\.github/dependabot\.ya?ml$", r"^renovate\.json5?$", r"^\.renovaterc.*",
+        r"^\.github/renovate\.json5?$", r"^\.github/settings\.ya?ml$",
+    ]),
+    ("conventions", [
+        r"^CONTRIBUTING\.md$", r"^\.github/CONTRIBUTING\.md$", r"^docs/CONTRIBUTING\.md$",
+        r"^CLAUDE\.md$", r"^AGENTS\.md$", r"^\.cursorrules$", r"^\.cursor/rules/.*",
+    ]),
+]
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        sys.exit(f"enforcement-surface: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref", default=None)
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+    tree = [f for f in tg("ls-tree", "-r", "--name-only", ref).splitlines() if f]
+
+    surface = {}
+    for cat, globs in CATEGORIES:
+        rxs = [re.compile(g) for g in globs]
+        surface[cat] = sorted(f for f in tree if any(rx.search(f) for rx in rxs))
+    all_files = sorted({f for fs in surface.values() for f in fs})
+
+    print(f"S-12: enforcement surface on {ref}: {len(all_files)} file(s) across "
+          f"{sum(1 for fs in surface.values() if fs)} of {len(CATEGORIES)} categories.")
+    for cat, _ in CATEGORIES:
+        fs = surface[cat]
+        print(f"  {cat:<13} {len(fs):>3}  " + (", ".join(fs[:4]) + (" …" if len(fs) > 4 else "") if fs else "—"))
+
+    # Movement: commits touching each category, in the window and ever.
+    print()
+    print(f"  {'category':<13}{'touched in window':>19}{'touched ever':>14}{'last touched':>16}")
+    touched_window = 0
+    for cat, _ in CATEGORIES:
+        fs = surface[cat]
+        if not fs:
+            continue
+        win = tg("log", "--first-parent", ref, f"--since={a.since}", f"--until={a.until}",
+                 "--format=%H", "--", *fs).split()
+        ever = tg("log", "--first-parent", ref, "--format=%H", "--", *fs).split()
+        last = tg("log", "-1", "--first-parent", ref, "--format=%cs", "--", *fs).strip()
+        touched_window += len(win)
+        print(f"  {cat:<13}{len(win):>19}{len(ever):>14}{last:>16}")
+
+    # Did the surface the work touches grow past what the machinery names?
+    # Extensions and top-level areas that first appear in the window.
+    before = set(tg("ls-tree", "-r", "--name-only",
+                    tg("rev-list", "-1", "--first-parent", f"--before={a.since}", ref).strip() or ref
+                    ).splitlines()) if tg("rev-list", "-1", "--first-parent", f"--before={a.since}", ref).strip() else set()
+    now_ext = collections.Counter(Path(f).suffix.lower() for f in tree if not NOISE_RE.search(f) and Path(f).suffix)
+    before_ext = {Path(f).suffix.lower() for f in before}
+    new_ext = {e for e in now_ext if e not in before_ext and now_ext[e] >= 3}
+    new_top = {f.split("/")[0] for f in tree if "/" in f} - {f.split("/")[0] for f in before if "/" in f}
+    machinery_text = "".join(
+        subprocess.run([str(ROOT / "bin" / "target-git"), "show", f"{ref}:{f}"],
+                       capture_output=True, text=True, errors="replace").stdout
+        for f in (surface["pipeline"] + surface["hooks"] + surface["lint-format"])[:30])
+    unnamed = sorted(e for e in new_ext if e.lstrip(".") not in machinery_text)
+    print()
+    total_window = len(tg("log", "--first-parent", ref, f"--since={a.since}",
+                          f"--until={a.until}", "--format=%H").split())
+    print(f"  landings in window: {total_window}; touching the enforcement surface: {touched_window}"
+          f" ({touched_window / total_window:.0%})" if total_window else "  no landings in window.")
+    if before:
+        print(f"  new since window start: {len(new_top)} top-level area(s), "
+              f"{len(new_ext)} file type(s) with 3+ files"
+              + (f"; not named anywhere in pipeline/hook/lint config: {', '.join(unnamed)}" if unnamed else ""))
+    print()
+    print("  S-12 is a signal with no rule. Presence is not execution: a workflow can be")
+    print("  disabled at the platform; required checks and branch protection live on the")
+    print("  forge; enforcement may run from a system this tree never names. Report shape.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

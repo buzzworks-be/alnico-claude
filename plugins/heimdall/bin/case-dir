@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""
+Print the directory holding the attached case's files, creating it if needed.
+
+One resolver, so no other script has to know how a case is laid out. A case is
+`cases/<codename>/`: the codename is drawn at attach time, recorded in the
+gitignored target metadata, and stable for the life of the case.
+
+The codename is a **pseudonym**, not a description. It is never derived from the
+target — a name computed from a URL could be reversed by anyone holding
+`bin/codenames.txt`, which would make the directory name a statement about the
+repository under investigation. It is drawn at random for exactly that reason.
+
+Usage:
+  bin/case-dir            print the case directory (creates it)
+  bin/case-dir --check    print it if it exists; exit 3 if no case is open
+"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+STATE = Path(subprocess.run([str(ROOT / "bin" / "heimdall-state")],
+                            capture_output=True, text=True,
+                            check=True).stdout.strip())
+META = STATE / ".heimdall" / "target.json"
+CASES = STATE / "cases"
+
+
+def main():
+    check = "--check" in sys.argv[1:]
+    if not META.is_file():
+        print("heimdall: no case open — nothing attached.", file=sys.stderr)
+        return 3
+    meta = json.loads(META.read_text())
+    codename = meta.get("codename")
+    if not codename:
+        print("heimdall: attached target has no codename; re-run "
+              "bin/attach-target.sh to assign one.", file=sys.stderr)
+        return 3
+    d = CASES / codename
+    if check and not d.is_dir():
+        print(f"heimdall: case {codename} has no directory yet.", file=sys.stderr)
+        return 3
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        print(d.relative_to(Path.cwd()))
+    except ValueError:
+        print(d)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

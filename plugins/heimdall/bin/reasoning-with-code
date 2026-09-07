@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""
+Did substantial implementation arrive with the reasoning behind it?
+
+This is the mechanical check behind rule R-003, and it is conditional: P-2 only
+applies where a repository keeps its reasoning alongside its code. Many
+repositories legitimately keep specifications, decisions and requirements
+somewhere else, and flagging those would be flagging a preference.
+
+So the check establishes the convention before applying it, and establishes it
+from practice rather than from directory names. A `docs/` folder proves nothing;
+what proves the convention is that substantial work in this repository usually
+does arrive with reasoning attached. If it usually does not, the rule disables
+itself and reports why.
+
+The unit is an *increment*, which is either a merged branch or a run of
+consecutive commits landing directly on the trunk. Both are needed: work that
+never goes through a branch is still work, and on some repositories it is most
+of it.
+
+Usage:
+  bin/reasoning-with-code --since "last month"
+  bin/reasoning-with-code --since "2026-06-01" --until "2026-08-01" --code-min 200
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# One classifier for every script that bins by lines of code. See bin/classify.py.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import FORGE_COMMITTERS, kind  # noqa: E402
+
+
+# Bands, not one threshold — see bin/care-by-size for the measurement. The rate
+# at which reasoning arrives rises with size in every repository measured
+# (11%→28%→50%→88%→92% on one), so a single bar answers a question nobody asks.
+BANDS = [(1, 24), (25, 99), (100, 299), (300, 999), (1000, 10 ** 9)]
+
+# The smallest band never yields a finding: a typo fix, a version bump, a URI
+# correction. Demanding an explanation of those is the over-spending P-5 warns
+# about as loudly as under-spending. Chosen, not measured — hence still draft.
+NO_FINDING_BAND = "1-24"
+
+# R-011 pools the bands from 100 lines up, because the TEST rate plateaus
+# there on every history swept. This rule does not: the REASONING rate keeps a
+# gradient at the top — rising into 1000+ on two of five histories, falling on
+# one — and pooling it hid the one band where a repository did explain itself
+# (62% at 1000+ against 29% pooled). Each band judged on its own rate.
+
+# A landing that is mostly documentation IS the documentation change; counting
+# it as "carried reasoning" measures nothing about how code is produced, and it
+# inflated the small bands with README edits — 67% before this exclusion
+# against 11% after, on the same history.
+DOC_DOMINANT = 0.5
+
+DEFAULT_MIN_BAND = 5      # below this a band's rate is an accident, not a norm
+DEFAULT_CODE_MIN = 100    # retained for --code-min compatibility; see BANDS
+DEFAULT_ACT_GAP = 60      # minutes; direct commits closer than this are one act
+# Act-grouping is cut at window edges: a run straddling --since/--until splits,
+# so windowed and full-history readings can differ slightly at the margins.
+CONVENTION_MIN = 0.50     # the rule applies only above this share
+
+
+
+def tg(*args):
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(proc.returncode)
+    return proc.stdout
+
+
+def tg_try(*args):
+    """Run target-git, returning (returncode, stdout) rather than exiting.
+
+    `git merge-base A B` exits 1 with empty stderr when two commits share no
+    ancestor. That is an answer, not an error — the merge absorbed an
+    independent history. tg() turned it into sys.exit(1) printing nothing, so
+    this check died silently on any repository containing a vendored crate,
+    subtree import or wholesale project merge. See bin/reviewability, which had
+    the identical defect and where it was first diagnosed.
+
+    Above 1 is still fatal; a bad object must not read as "no common ancestor".
+    """
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True)
+    if proc.returncode > 1:
+        sys.stderr.write(proc.stderr)
+        sys.exit(proc.returncode)
+    return proc.returncode, proc.stdout
+
+
+def band_of(n):
+    for lo, hi in BANDS:
+        if lo <= n <= hi:
+            return f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+"
+    return None
+
+
+def band_labels():
+    return [f"{lo}-{hi}" if hi < 10 ** 9 else f"{lo}+" for lo, hi in BANDS]
+
+
+def resolve(expr):
+    """Turn a date expression into epoch seconds, so a window has a length.
+
+    Pure Python on purpose. This used to shell out to `date -d`, which is a GNU
+    extension: BSD date, which is what macOS ships, rejects it outright. Every
+    window-based extractor carried the same call, so on macOS every --since
+    failed — ISO dates included — and the whole frame was unusable. Reported
+    from a plugin run there.
+
+    Accepts what the skills and rules actually pass: ISO dates and datetimes,
+    `N unit ago`, `now`, `today`, `yesterday`, and a bare epoch.
+    """
+    import re as _re
+    from datetime import datetime, timedelta, timezone
+    s = str(expr).strip().lower()
+    now = datetime.now(timezone.utc)
+
+    if s in ("now", "today"):
+        return int(now.timestamp())
+    if s == "yesterday":
+        return int((now - timedelta(days=1)).timestamp())
+    if _re.fullmatch(r"@?\d{9,}", s):
+        return int(s.lstrip("@"))
+
+    m = _re.fullmatch(r"(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago", s)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        days = {"day": 1, "week": 7, "month": 30, "year": 365}
+        if unit in days:
+            return int((now - timedelta(days=n * days[unit])).timestamp())
+        secs = {"second": 1, "minute": 60, "hour": 3600}
+        return int((now - timedelta(seconds=n * secs[unit])).timestamp())
+
+    iso = str(expr).strip().replace("Z", "+00:00")
+    for fmt in (None, "%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d"):
+        try:
+            dt = datetime.fromisoformat(iso) if fmt is None else datetime.strptime(iso, fmt)
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+
+    sys.exit(f"reasoning-with-code: could not resolve date {expr!r}. Accepted: an ISO date, "
+             f"'N days|weeks|months|years ago', 'now', 'today', 'yesterday'.")
+
+
+def iso(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _tally(lines):
+    doc = code = 0
+    for line in lines:
+        b = line.split("\t")
+        if len(b) != 3:
+            continue
+        k = kind(b[2])
+        n = (int(b[0]) if b[0].isdigit() else 0) + (int(b[1]) if b[1].isdigit() else 0)
+        if k == "doc":
+            doc += n
+        elif k == "code":
+            code += n
+    return doc, code
+
+
+def churn(rng):
+    """Churn across a range A..B."""
+    return _tally(tg("diff", "--numstat", rng).splitlines())
+
+
+def commit_churn(sha):
+    """Churn of one commit. `show` rather than `diff <sha>^!` so that a root
+    commit — which has no parent to diff against — is counted rather than
+    erroring out in a bare repository with no work tree to fall back on."""
+    return _tally(tg("show", "--numstat", "--format=", sha).splitlines())
+
+
+def increments(since, until, ref, act_gap):
+    """Merged branches, plus runs of consecutive commits landing straight on the trunk."""
+    merges, on_branch = [], set()
+    for line in tg("log", "--format=%H|%at|%P|%s", f"--since={since}",
+                   f"--until={until}", ref).splitlines():
+        sha, at, parents, subject = line.split("|", 3)
+        p = parents.split()
+        if len(p) == 2:
+            merges.append((sha, int(at), subject, p))
+
+    out = []
+    absorbed = 0
+    for sha, at, subject, p in merges:
+        rc, base_out = tg_try("merge-base", p[0], p[1])
+        base = base_out.strip()
+        if rc != 0 or not base:
+            # An independent history absorbed wholesale. Whether *that* project
+            # kept reasoning with its code is not a fact about this repository's
+            # practice, so it is excluded from the convention rate rather than
+            # diluting it. Its commits are still marked on-branch so they do not
+            # resurface as direct-to-trunk increments.
+            _, brought = tg_try("rev-list", p[1], f"^{p[0]}")
+            on_branch.update(x for x in brought.split() if x)
+            absorbed += 1
+            continue
+        on_branch.update(tg("log", "--format=%H", f"{base}..{p[1]}").split())
+        doc, code = churn(f"{base}..{p[1]}")
+        out.append({"kind": "merged branch", "ref": sha, "at": iso(at),
+                    "subject": subject, "doc_churn": doc, "code_churn": code,
+                    "commits": len(tg("log", "--format=%H", f"{base}..{p[1]}").split())})
+
+    direct = []
+    for line in tg("log", "--no-merges", "--format=%H|%at|%ce|%s",
+                   f"--since={since}", f"--until={until}", ref).splitlines():
+        sha, at, ce, subject = line.split("|", 3)
+        if sha not in on_branch:
+            direct.append((sha, int(at), subject, ce.strip().lower() in FORGE_COMMITTERS))
+    direct.sort(key=lambda d: d[1])
+
+    run = []
+    def flush(run):
+        if not run:
+            return
+        doc = code = 0
+        for sha, _, _, _ in run:
+            d, c = commit_churn(sha)
+            doc += d
+            code += c
+        out.append({"kind": "direct to trunk", "ref": run[0][0], "at": iso(run[0][1]),
+                    "subject": run[0][2], "doc_churn": doc, "code_churn": code,
+                    "commits": len(run)})
+
+    for entry in direct:
+        if entry[3]:
+            # A forge-committed commit is one squashed or rebased branch: its own
+            # increment, never grouped with its neighbours by time. See
+            # FORGE_COMMITTERS.
+            flush(run)
+            run = []
+            flush([entry])
+            continue
+        if run and (entry[1] - run[-1][1]) / 60 > act_gap:
+            flush(run)
+            run = []
+        run.append(entry)
+    flush(run)
+    return out, absorbed
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--since", required=True)
+    p.add_argument("--until", default="now")
+    p.add_argument("--ref", default=None)
+    p.add_argument("--code-min", type=int, default=DEFAULT_CODE_MIN)
+    p.add_argument("--min-band", type=int, default=DEFAULT_MIN_BAND,
+                   help="increments a band needs before its rate counts as a norm")
+    p.add_argument("--act-gap", type=int, default=DEFAULT_ACT_GAP,
+                   help="minutes; direct commits closer together count as one increment")
+    p.add_argument("--convention-min", type=float, default=CONVENTION_MIN,
+                   help="share of substantial increments that must carry reasoning "
+                        "before this rule applies at all")
+    a = p.parse_args()
+
+    ref = a.ref
+    if not ref:
+        meta = ROOT / ".heimdall" / "target.json"
+        ref = json.loads(meta.read_text())["defaultBranch"] if meta.exists() else "HEAD"
+
+    since, until = iso(resolve(a.since)), iso(resolve(a.until))
+    incs, absorbed = increments(since, until, ref, a.act_gap)
+    banded = {b: [] for b in band_labels()}
+    doc_dominant = 0
+    for i in incs:
+        code, doc = i["code_churn"], i["doc_churn"]
+        b = band_of(code)
+        if not b:
+            continue
+        # Asking whether a documentation change carried reasoning about code is
+        # not a question about code. Excluded from the rate and from findings.
+        if doc + code > 0 and doc / (doc + code) >= DOC_DOMINANT:
+            doc_dominant += 1
+            continue
+        i["band"] = b
+        banded[b].append(i)
+
+    bands_out, findings = {}, []
+    for b in band_labels():
+        rows = banded[b]
+        if not rows:
+            continue
+        n = len(rows)
+        carrying = [i for i in rows if i["doc_churn"] > 0]
+        rate = len(carrying) / n
+        if b == NO_FINDING_BAND:
+            status = "not judged"
+        elif n < a.min_band:
+            status = "thin"
+        elif rate < a.convention_min:
+            status = "below the bar"
+        else:
+            status = "judged"
+            findings += [i for i in rows if i["doc_churn"] == 0]
+        bands_out[b] = {"increments": n, "carrying_reasoning": len(carrying),
+                        "share": round(rate, 3), "status": status}
+
+    result = {
+        "window": {"since": since, "until": until, "ref": ref},
+        "parameters": {"bands": band_labels(), "act_gap_min": a.act_gap,
+                       "convention_min_share": a.convention_min,
+                       "min_band": a.min_band, "no_finding_band": NO_FINDING_BAND},
+        "absorbed_histories_excluded": absorbed,
+        "doc_dominant_excluded": doc_dominant,
+        "bands": bands_out,
+        "increments_without_reasoning": len(findings),
+        "findings": sorted(findings, key=lambda i: -i["code_churn"]),
+    }
+    print(json.dumps(result, indent=2))
+
+    w = [f"{since[:10]} .. {until[:10]} on {ref}   (act gap {a.act_gap}m)"]
+    if absorbed:
+        w.append(f"excluded {absorbed} merge(s) that absorbed an independent history: "
+                 "whether that project kept reasoning with its code is not a fact")
+        w.append("  about this repository's practice, so it does not dilute the rate.")
+    if doc_dominant:
+        w.append(f"excluded {doc_dominant} landing(s) that were mostly documentation: "
+                 "a change that IS a document carries no reasoning about code.")
+    if not bands_out:
+        w.append("no increment carries measurable code; nothing to judge.")
+    else:
+        w.append(f"{'code lines':<12}{'increments':>11}{'w/ reasoning':>14}   status")
+        for b, v in bands_out.items():
+            note = {"not judged": "not judged — too small to owe an explanation",
+                    "thin": f"thin (< {a.min_band}) — rate is an accident",
+                    "below the bar": (f"below the bar ({a.convention_min:.0%}) — not this "
+                                      "repository's habit at this size"),
+                    "judged": "judged"}[v["status"]]
+            w.append(f"{b:<12}{v['increments']:>11}{v['share']:>13.0%}   {note}")
+        w.append("")
+        w.append("Each band is judged against this repository's own rate at that size. "
+                 "A band below")
+        w.append("the bar is not a pass — it says the repository does not explain at that "
+                 "size, which")
+        w.append("is a fact about the repository, not about any change in it.")
+        if findings:
+            w.append("")
+            w.append(f"{len(findings)} increment(s) carried no reasoning, in bands where "
+                     "this repository normally does")
+            for i in result["findings"][:10]:
+                w.append(f"  {i['ref'][:8]}  {i['kind']:<16} code {i['code_churn']:>5} "
+                         f"({i['commits']} commit(s)) [{i['band']}]  {i['subject'][:34]}")
+        else:
+            w.append("")
+            w.append("R-003: no finding in any band this repository explains at.")
+    sys.stderr.write("\n".join(w) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""When this repository marks something deprecated, how long does it wait before removing it?
+
+The measurement behind signal S-14 and the check behind R-018, under P-13:
+removal must give a reader time to leave. P-3 measures the interval between
+deciding and building. This measures the symmetric one — between announcing
+that something will go and its going — because a consumer downstream lives
+in that interval, and a removal the same week as its notice gave nobody one.
+
+Read from the diffs alone. A deprecation marker added at one commit and
+deleted at a later one is a notice with a measurable length; a marker still
+present at the tip is a notice still open. Markers are recognised by the
+conventions of the common languages — `@deprecated`, `#[deprecated`,
+`DeprecationWarning`, `[Obsolete`, Go's `Deprecated:` — and the set is
+configurable to whatever the repository writes.
+
+Conditional, in the R-003 shape: where the repository does not evidently use
+deprecation markers, there is no interval to read and the rule stands down.
+What this cannot see: a removal that was never announced with a marker. That
+is the bigger half of the concern and it stays in the case file as an
+observation, because "public" is a claim about consumers git does not show.
+
+Usage:
+  bin/removal-notice --since "24 months ago"
+  bin/removal-notice --since 2025-01-01 --bar 30
+"""
+
+import argparse
+import json
+import re
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE, TEST_RE, kind  # noqa: E402
+
+# A marker in configuration is a mention, not a notice: a test runner's
+# filterwarnings line naming DeprecationWarning was the first run's only
+# candidate, closed in twenty days, and it deprecated nothing. A marker in
+# documentation is a note about a notice, and pruning the changelog is not
+# removing the thing. Only code gives notice.
+CONFIG_RE = re.compile(r"\.(toml|cfg|ini|ya?ml|json|txt)$|(^|/)\.[^/]+$", re.I)
+
+DEFAULT_MARKERS = (r"@deprecated\b|#\[deprecated|DeprecationWarning|PendingDeprecationWarning"
+                   r"|\[Obsolete\b|^\s*//\s*Deprecated:|^\s*#\s*Deprecated:|\bDEPRECATED\b")
+DEFAULT_BAR_DAYS = 30        # a notice shorter than this gave nobody time; chosen, not swept
+DEFAULT_MIN_MARKERS = 5      # below this the repository does not evidently give notice
+
+
+def tg(*args):
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                       capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        sys.exit(f"removal-notice: git failed: {' '.join(args)}\n{p.stderr}")
+    return p.stdout
+
+
+def default_ref():
+    meta = ROOT / ".heimdall" / "target.json"
+    if meta.exists():
+        return json.loads(meta.read_text()).get("defaultBranch") or "HEAD"
+    return tg("symbolic-ref", "--short", "HEAD").strip()
+
+
+def norm(line):
+    return re.sub(r"\s+", " ", line.strip())
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--markers", default=DEFAULT_MARKERS)
+    ap.add_argument("--bar", type=int, default=DEFAULT_BAR_DAYS, help="days")
+    ap.add_argument("--min-markers", type=int, default=DEFAULT_MIN_MARKERS)
+    a = ap.parse_args()
+    ref = a.ref or default_ref()
+    rx = re.compile(a.markers, re.M)
+    day = 86400
+
+    # One pass over the first-parent diffs, oldest first. A marker is keyed by
+    # (file, normalised line): added at one commit, removed at a later one.
+    added, closed, withdrawn = {}, [], []   # key -> (ts, sha) ; (key, t0, t1, s0, s1) ; same
+    sha = ts = None; subj = ""; path = None
+    c_add, c_rm = {}, {}        # this commit's additions and removals, settled at its end
+    REVERT_RE = re.compile(r"^\s*revert\b", re.I)
+
+    def settle():
+        # A marker removed and added again in the same commit MOVED — it was
+        # re-indented, reworded around, or its file was rewritten — and moving
+        # a notice does not close it. Nor does REWORDING it: a notice whose
+        # text changed ("will be removed in 0.85" → a later version) is the
+        # same notice, so a removal in a file that gained a marker line in the
+        # same commit is a rewording, not a closure. Seen as the top of the
+        # first list on a workspace: three "closures" in two days that were
+        # one help string edited. Only a removal with nothing added in its
+        # file closes a notice.
+        files_with_adds = {k[0] for k in c_add}
+        for key in c_rm:
+            if key in c_add or key[0] in files_with_adds:
+                continue
+            if key in added:
+                t0, s0 = added.pop(key)
+                # A closing commit that is a revert withdrew the NOTICE, not the
+                # thing: the deprecation was undone. Seen three times in two
+                # days on one workspace, all one reverted pull request.
+                (withdrawn if REVERT_RE.search(subj) else closed).append(
+                    (key, t0, c_rm[key][0], s0, c_rm[key][1]))
+        for key, v in c_add.items():
+            if key not in added:
+                # A notice added to a file that already carries open notices is
+                # most often a rewording of one of them in a separate commit —
+                # the file had been giving notice all along. It inherits the
+                # earliest open start in that file. This over-credits a second,
+                # distinct deprecation in the same file, which is the lenient
+                # direction to be wrong in.
+                earlier = [t for (f, _), (t, _) in added.items() if f == key[0]]
+                added[key] = (min(earlier + [v[0]]), v[1])
+        c_add.clear(); c_rm.clear()
+
+    def eligible(p):
+        # Only code gives notice, and only code somebody outside can depend on:
+        # a symbol under internal/ (a language-level convention) has no
+        # downstream reader to give notice to.
+        return p and kind(p) == "code" and not CONFIG_RE.search(p) and not re.search(r"(^|/)internal/", p)
+
+    out = tg("log", "--first-parent", "--reverse", ref, f"--since={a.since}", f"--until={a.until}",
+             "-p", "--unified=0", "-M", "--format=%x01%H%x01%ct%x01%s")
+    old_path = None
+    for line in out.splitlines():
+        if line.startswith("\x01"):
+            settle()
+            _, sha, t, subj = line.split("\x01", 3); ts = int(t); path = old_path = None
+            continue
+        if line.startswith("--- "):
+            p = line[4:]; old_path = None if p == "/dev/null" else (p[2:] if p.startswith("a/") else p)
+            continue
+        if line.startswith("+++ "):
+            p = line[4:]; path = None if p == "/dev/null" else (p[2:] if p.startswith("b/") else p)
+            continue
+        if line.startswith("+") and eligible(path) and rx.search(line[1:]):
+            c_add.setdefault((path, norm(line[1:])), (ts, sha))
+        elif line.startswith("-") and rx.search(line[1:]):
+            # Removals are keyed by the OLD path; a rename carries the marker
+            # over under the new key and reads as moved, not closed.
+            p_old = old_path or path
+            if eligible(p_old):
+                key = (p_old, norm(line[1:]))
+                c_rm.setdefault(key, (ts, sha))
+                if path and path != p_old:
+                    c_add.setdefault((path, norm(line[1:])), added.get(key, (ts, sha)))
+    settle()
+
+    n_total = len(added) + len(closed) + len(withdrawn)
+    print(f"S-14: markers /{a.markers[:40]}…/ on {ref}: {n_total} notice(s) opened in window, "
+          f"{len(closed)} closed (the thing removed), {len(withdrawn)} withdrawn (the deprecation "
+          f"reverted), {len(added)} still open.")
+    if n_total < a.min_markers:
+        print()
+        print(f"R-018: NOT APPLICABLE — {n_total} deprecation notice(s) in the window, below "
+              f"{a.min_markers}. The repository does not evidently give notice this way; a")
+        print("  removal without a marker is invisible here and stays an observation.")
+        return 0
+    if closed:
+        ivs = sorted((t1 - t0) / day for _, t0, t1, _, _ in closed)
+        print(f"  notice length when closed (days): median {statistics.median(ivs):.0f}, "
+              f"min {ivs[0]:.0f}, max {ivs[-1]:.0f}; under {a.bar}d: {sum(1 for x in ivs if x < a.bar)}")
+    if added:
+        now = int(subprocess.run(["date", "+%s"], capture_output=True, text=True).stdout or 0)
+        ages = sorted((now - t0) / day for t0, _ in added.values())
+        print(f"  open notices: median age {statistics.median(ages):.0f}d, oldest {ages[-1]:.0f}d")
+    short = [(k, t0, t1, s0, s1) for k, t0, t1, s0, s1 in closed if (t1 - t0) < a.bar * day]
+    print()
+    if not short:
+        print(f"R-018: no finding — every notice closed in the window stood at least {a.bar} days.")
+        return 0
+    print(f"R-018: CANDIDATE FINDING — {len(short)} notice(s) closed in under {a.bar} days.")
+    for (p, text), t0, t1, s0, s1 in sorted(short, key=lambda x: x[2] - x[1])[:15]:
+        print(f"    {(t1 - t0) / day:>5.1f}d  {s0[:10]} → {s1[:10]}  {p}")
+        print(f"           {text[:70]}")
+    print("  A marker removed because the deprecation was reverted, moved, reworded,")
+    print("  or because the whole file was rewritten — R-018's Not a violation section")
+    print("  applies. Read both commits before believing the interval.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

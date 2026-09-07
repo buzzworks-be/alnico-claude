@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""
+Did the care scale with what the repository itself says is at stake?
+
+The mechanical check behind rule S-7. It compares the review window given to
+merges that touch paths the repository has *declared* as owned against the
+window given to merges that touch none, in the same repository over the same
+period.
+
+The comparison is entirely self-referential, and that is the point. There is no
+absolute threshold for "enough care": a repository that reviews everything for
+three days and one that reviews everything for three minutes are each internally
+consistent, and neither is this rule's business. What this asks is narrower —
+where the repository has taken the trouble to say *these paths need a named
+owner*, did work touching them get at least the reading time that everything
+else got?
+
+Stakes are read only from what the repository declares. CODEOWNERS is the one
+path-scoped declaration that is both machine-readable and in-tree; branch
+protection and release policy are not visible from git (forge blindness). Where
+there is no CODEOWNERS, or where it covers everything or nothing, this check
+reports NOT APPLICABLE rather than guessing what matters — inferring stakes from
+the code would be an opinion about someone else's architecture.
+
+Merges only. CODEOWNERS is a review-routing declaration and bears on the review
+window; work landing directly on the trunk has no such window by construction,
+which is R-004's business and a different claim.
+
+Usage:
+  bin/stakes-proportionality --since "2 weeks ago"
+  bin/stakes-proportionality --since 2026-01-01 --until 2026-02-01
+"""
+
+import argparse
+import re
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]
+
+# Below these the comparison is noise, not a reading.
+DEFAULT_MIN_SIDE = 3
+# Declared-path merges must have this much less window per line before the
+# check reports anything. Equal treatment is not a finding: a uniformly careful
+# repository is not failing P-5, it is simply not differentiating.
+DEFAULT_MARGIN = 0.8
+# A declaration covering nearly everything, or nearly nothing, cannot
+# discriminate and the comparison would be meaningless.
+COVER_HIGH = 0.90
+COVER_LOW = 0.02
+
+
+def git(*args, check=True):
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True)
+    if check and proc.returncode != 0:
+        sys.exit(f"stakes-proportionality: git failed: {' '.join(args)}\n{proc.stderr}")
+    return proc.stdout
+
+
+def find_codeowners(ref):
+    for path in CODEOWNERS_PATHS:
+        out = subprocess.run([str(ROOT / "bin" / "target-git"), "show", f"{ref}:{path}"],
+                             capture_output=True, text=True)
+        if out.returncode == 0:
+            return path, out.stdout
+    return None, None
+
+
+def parse_codeowners(text):
+    """(pattern, owner count) per rule.
+
+    The owner count is the whole point of the revision. The first design
+    compared declared paths against undeclared ones, which needs an undeclared
+    remainder — and a declaration worth comparing against tends to cover
+    everything worth owning. On the one repository found with a real
+    declaration, that partition was 6 merges against 0 and the rule could not
+    run at any range.
+
+    The declaration carries its own gradient: a repository that asks for two
+    named owners on one path and eight on another has stated an ordering, in
+    tree, path-scoped, without Heimdall inferring anything. That gradient exists
+    even where coverage is total, which is exactly the case that defeated the
+    first design.
+    """
+    rules = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:      # a pattern with no owner declares nothing
+            continue
+        rules.append((parts[0], len(parts) - 1))
+    return rules
+
+
+def pattern_to_regex(pattern):
+    """A practical subset of CODEOWNERS matching, which is gitignore-shaped.
+
+    Documented as a subset in the rule: negation and some corner cases of
+    gitignore semantics are not implemented, so a pattern this cannot express
+    is better reported as unmatched than silently mis-matched.
+    """
+    p = pattern.strip()
+    anchored = p.startswith("/")
+    p = p.lstrip("/")
+    directory = p.endswith("/")
+    p = p.rstrip("/")
+
+    out, i = [], 0
+    while i < len(p):
+        c = p[i]
+        if c == "*":
+            if p[i:i + 2] == "**":
+                out.append(".*")
+                i += 2
+                continue
+            out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        else:
+            out.append(re.escape(c))
+        i += 1
+    body = "".join(out)
+
+    # A pattern with no slash matches at any depth, as gitignore does.
+    prefix = "" if (anchored or "/" in p) else "(?:.*/)?"
+    # A directory pattern, or a bare name, also covers everything beneath it.
+    suffix = "(?:/.*)?$" if (directory or not any(ch in p for ch in "*?")) else "$"
+    return re.compile("^" + prefix + body + suffix)
+
+
+def merges(since, until, ref):
+    fmt = "%H%x01%P%x01%cI"
+    out = git("log", "--merges", "--first-parent", ref,
+              f"--since={since}", f"--until={until}", f"--format={fmt}")
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        sha, parents, merged_at = line.split("\x01")
+        plist = parents.split()
+        if len(plist) < 2:
+            continue
+        yield sha, plist[0], merged_at
+
+
+def iso_to_epoch(iso):
+    """Epoch seconds from an ISO timestamp, without shelling out.
+
+    Was `date -d`, a GNU extension that BSD date — macOS — rejects.
+    """
+    from datetime import datetime, timezone
+    dt = datetime.fromisoformat(str(iso).strip().replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
+
+
+
+def branch_facts(sha, first_parent):
+    """Lifetime of the merged side, and the size of what it brought."""
+    revs = git("rev-list", f"{first_parent}..{sha}", "--not", first_parent).split()
+    revs = [r for r in revs if r != sha]
+    if not revs:
+        return None
+    dates = git("log", "--no-walk=unsorted", "--format=%aI", *revs).split()
+    if not dates:
+        return None
+    earliest = min(iso_to_epoch(d) for d in dates)
+
+    files, lines = [], 0
+    for row in git("diff", "--numstat", f"{first_parent}..{sha}").splitlines():
+        cols = row.split("\t")
+        if len(cols) != 3:
+            continue
+        add, dele, path = cols
+        lines += (int(add) if add.isdigit() else 0) + (int(dele) if dele.isdigit() else 0)
+        files.append(path)
+    return earliest, files, lines
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", required=True)
+    ap.add_argument("--until", default="now")
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--min-side", type=int, default=DEFAULT_MIN_SIDE,
+                    help="minimum merges on each side before comparing")
+    ap.add_argument("--margin", type=float, default=DEFAULT_MARGIN,
+                    help="declared window/line must fall below this fraction "
+                         "of the undeclared median to be reported")
+    args = ap.parse_args()
+
+    ref = args.ref or git("symbolic-ref", "--short", "HEAD").strip()
+
+    path, text = find_codeowners(ref)
+    if not path:
+        print("R-008 / S-7: NOT APPLICABLE — no CODEOWNERS at this ref.")
+        print("  The repository declares no path-scoped stakes, so P-5 has")
+        print("  nothing to say here. This is not a pass and not a gap:")
+        print("  inferring what matters would be an opinion about the target's")
+        print("  architecture, which this instrument does not hold.")
+        return 0
+
+    rules = parse_codeowners(text)
+    if not rules:
+        print(f"R-008: NOT APPLICABLE — {path} declares no usable patterns.")
+        return 0
+    patterns = [r[0] for r in rules]
+    weights = [r[1] for r in rules]
+    regexes = [(pattern_to_regex(pat), n) for pat, n in rules]
+
+    scored, all_files, covered_files = [], 0, 0
+    for sha, fp, merged_at in merges(args.since, args.until, ref):
+        facts = branch_facts(sha, fp)
+        if not facts:
+            continue
+        earliest, files, lines = facts
+        lifetime = max(iso_to_epoch(merged_at) - earliest, 0)
+        # A merge's declared weight is the HIGHEST owner count among the paths
+        # it touches. Highest, not average: a change reaching into the most
+        # heavily owned path in the repository is a change to that path,
+        # whatever else rode along with it, and averaging would let a large
+        # unowned diff dilute it away.
+        weight = 0
+        for f in files:
+            all_files += 1
+            for rx, n in regexes:
+                if rx.match(f):
+                    covered_files += 1
+                    weight = max(weight, n)
+                    break
+        rec = {"sha": sha[:12], "lifetime": lifetime, "lines": lines,
+               "per_line": lifetime / max(lines, 1), "merged_at": merged_at,
+               "weight": weight}
+        scored.append(rec)
+
+    if all_files == 0:
+        print("S-7: NOT APPLICABLE — no merges with changes in this window.")
+        return 0
+
+    coverage = covered_files / all_files
+    spread = sorted(set(weights))
+    print(f"R-008: declaration {path}, {len(patterns)} pattern(s), "
+          f"covering {coverage:.0%} of files changed in the window.")
+    print(f"  declared owner counts: {', '.join(str(w) for w in spread)}"
+          f"  (gradient of {len(spread)} level(s))")
+
+    # The discriminating property is the SPREAD of the gradient, not the share
+    # of files covered. High coverage used to disqualify a repository outright;
+    # under this design it is irrelevant, because the comparison is between
+    # levels of the declaration rather than between declared and undeclared.
+    if len(spread) < 2:
+        print("R-008: NOT APPLICABLE — the declaration states one level only.")
+        print("  Every declared path asks for the same number of owners, so the")
+        print("  repository has expressed no relative priority and there is no")
+        print("  proportionality to test. Report the declaration as an")
+        print("  observation; a flat declaration is a choice, not a defect.")
+        return 0
+
+    median_w = statistics.median(weights)
+    heavier = [r for r in scored if r["weight"] > median_w]
+    lighter = [r for r in scored if 0 < r["weight"] < median_w]
+    at_median = [r for r in scored if r["weight"] == median_w]
+    unowned = [r for r in scored if r["weight"] == 0]
+    print(f"  median declared owner count: {median_w:g}")
+    print(f"  merges above it: {len(heavier)}   below it: {len(lighter)}   "
+          f"at it: {len(at_median)}   touching no declared path: {len(unowned)}")
+
+    if len(heavier) < args.min_side or len(lighter) < args.min_side:
+        print(f"R-008: NOT APPLICABLE — fewer than {args.min_side} merges on a side")
+        print("  of the gradient. Too few to distinguish a pattern from an")
+        print("  accident. Report the declaration and its shape; score nothing.")
+        return 0
+
+    h_med = statistics.median(r["per_line"] for r in heavier)
+    l_med = statistics.median(r["per_line"] for r in lighter)
+    print(f"  median review window per line, more heavily owned: {h_med:8.1f}s")
+    print(f"  median review window per line, less heavily owned: {l_med:8.1f}s")
+
+    if l_med <= 0:
+        print("R-008: NOT APPLICABLE — no measurable window on the baseline side.")
+        return 0
+
+    ratio = h_med / l_med
+    print(f"  ratio: {ratio:.2f}  (reported below {args.margin})")
+
+    if ratio >= args.margin:
+        print("R-008: no finding. Work on the paths this repository marked most")
+        print("  heavily received at least as much review window per line as the")
+        print("  paths it marked least. This says nothing about whether that")
+        print("  window was sufficient — that is R-001's question, not this one.")
+        return 0
+
+    print()
+    print("R-008: CANDIDATE FINDING — care did not follow the declared gradient.")
+    print(f"  Paths this repository asked more owners for got {1 / ratio:.1f}x less")
+    print("  review window per line than paths it asked fewer owners for.")
+    print("  The standard applied is the repository's own; Heimdall supplies no")
+    print("  opinion about which paths ought to matter.")
+    print("  Least window per line among the heavily-owned merges:")
+    for r in sorted(heavier, key=lambda r: r["per_line"])[:5]:
+        print(f"    {r['sha']}  {r['per_line']:8.1f}s/line  "
+              f"{r['lines']:6d} lines  weight {r['weight']}  {r['merged_at']}")
+    print()
+    print("  Every listed merge needs adjudication before it is believed: see")
+    print("  R-008's Not a violation section. An owner count that tracks team")
+    print("  size or a crate's age rather than its risk is the main confound,")
+    print("  and it is not visible from the file.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        # Piped into head or less. Not an error worth a traceback.
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

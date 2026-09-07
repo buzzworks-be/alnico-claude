@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""
+Where does the reading weight sit in this repository, and what is out of line?
+
+The measurement behind P-7: documentation must be readable in the part a reader
+needs. It reports two distributions and the outliers in each, at a ref.
+
+**Code files** — lines split into code, comment and blank, and the comment share
+per file. This is not a quality score and must never be read as one. A high
+comment share is a fact about *where the reading cost sits*: a file that is 80%
+comment is mostly prose, and costs prose to read. It may be careful explanation,
+a licence header on a short file, commented-out code, or generated narration —
+the number does not distinguish them and neither does this script.
+
+**Documents** — total lines, and how the file is divided. The useful figure is
+not length but the **largest span a reader must traverse to reach one answer**:
+the biggest stretch between headings. A five-thousand-line document sectioned
+every eighty lines is workable; a six-hundred-line document with no headings is
+not, and length alone ranks them the wrong way round.
+
+Outliers are judged against this repository's own median, never an absolute.
+A file of a given size is unremarkable among files of that size.
+
+No dependencies beyond git and python3. Comment syntax is a vendored table for
+common languages, and the lexing is approximate — see *How it lies* under S-6 in
+principles/SIGNALS.md.
+
+Usage:
+  bin/reading-weight
+  bin/reading-weight --ref <sha> --top 10
+"""
+
+import argparse
+import re
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+# Noise is noise everywhere: the shared definition, so a fixture or a snapshot
+# is skipped here as it is skipped by every script that bins by size.
+sys.path.insert(0, str(ROOT / "bin"))
+from classify import NOISE_RE  # noqa: E402
+
+# (line-comment markers, [(block open, block close), ...])
+C_LIKE = (["//"], [("/*", "*/")])
+HASH = (["#"], [])
+SYNTAX = {
+    ".c": C_LIKE, ".h": C_LIKE, ".cpp": C_LIKE, ".hpp": C_LIKE, ".cc": C_LIKE,
+    ".cs": C_LIKE, ".java": C_LIKE, ".js": C_LIKE, ".jsx": C_LIKE,
+    ".ts": C_LIKE, ".tsx": C_LIKE, ".go": C_LIKE, ".rs": C_LIKE,
+    ".kt": C_LIKE, ".swift": C_LIKE, ".scala": C_LIKE, ".dart": C_LIKE,
+    ".php": (["//", "#"], [("/*", "*/")]), ".css": ([], [("/*", "*/")]),
+    ".scss": C_LIKE, ".less": C_LIKE,
+    ".py": (["#"], [('"""', '"""'), ("'''", "'''")]),
+    ".rb": (["#"], [("=begin", "=end")]),
+    ".sh": HASH, ".bash": HASH, ".zsh": HASH, ".yml": HASH, ".yaml": HASH,
+    ".toml": HASH, ".ini": ([";", "#"], []), ".cfg": HASH, ".r": HASH,
+    ".pl": HASH, ".pm": HASH, ".tf": HASH, ".dockerfile": HASH,
+    ".sql": (["--"], [("/*", "*/")]),
+    ".lua": (["--"], [("--[[", "]]")]),
+    ".hs": (["--"], [("{-", "-}")]),
+    ".ex": HASH, ".exs": HASH, ".erl": (["%"], []), ".clj": ([";"], []),
+    ".el": ([";"], []), ".lisp": ([";"], []), ".vim": (['"'], []),
+    ".html": ([], [("<!--", "-->")]), ".xml": ([], [("<!--", "-->")]),
+    ".svg": ([], [("<!--", "-->")]),
+}
+NO_COMMENT = {".json", ".lock", ".txt", ".csv", ".svg"}
+DOC_EXT = {".md", ".rst", ".adoc", ".mdx"}
+
+# Documents written for a model to read, not a person. The reading economics
+# invert: a model is handed the file whole, so headings save it nothing and
+# length is the entire cost — and for the always-loaded kind that cost is paid
+# on every turn, against a context budget shared with the actual work.
+MACHINE_ALWAYS = re.compile(
+    r"^(CLAUDE|AGENTS|GEMINI)\.md$|^\.cursorrules$"
+    r"|^\.github/copilot-instructions\.md$"
+    r"|^\.(claude|cursor|wolf|ai|agent)/(rules|memory)/", re.I)
+MACHINE_ONDEMAND = re.compile(
+    r"^\.(claude|cursor|wolf|ai|agent)/"
+    r"|(^|/)SKILL\.md$|(^|/)(skills|agents|commands)/[^/]+\.md$", re.I)
+CHARS_PER_TOKEN = 4          # the standard rough heuristic; see S-6
+HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+\S|^\s{0,3}(=+|-+)\s*$")
+
+
+def git(*args):
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), *args],
+                          capture_output=True, text=True, errors="replace")
+    if proc.returncode != 0:
+        sys.exit(f"reading-weight: git failed: {' '.join(args)}\n{proc.stderr}")
+    return proc.stdout
+
+
+def read_blob(ref, path):
+    """A repository holds bytes, not text. Anything that will not decode, or
+    carries a NUL, is not something a person reads — skip it rather than
+    counting noise into a distribution about reading."""
+    proc = subprocess.run([str(ROOT / "bin" / "target-git"), "show", f"{ref}:{path}"],
+                          capture_output=True)
+    if proc.returncode != 0 or b"\x00" in proc.stdout[:8192]:
+        return None
+    try:
+        return proc.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def syntax_for(path):
+    p = path.lower()
+    if p.endswith("dockerfile") or "/dockerfile" in p:
+        return HASH
+    if p.endswith("makefile") or "/makefile" in p:
+        return HASH
+    for ext, syn in SYNTAX.items():
+        if p.endswith(ext):
+            return syn
+    return None
+
+
+def split_lines(text, syntax):
+    """Approximate: markers inside string literals are skipped, nesting is not
+    modelled, and a language's own escapes are ignored. Good enough for a
+    distribution; never quote a single file's ratio as exact."""
+    line_marks, blocks = syntax
+    code = comment = blank = 0
+    in_block = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if in_block:
+            comment += 1
+            if in_block[1] in line:
+                in_block = None
+            continue
+        if not line:
+            blank += 1
+            continue
+        opened = None
+        for op, cl in blocks:
+            if line.startswith(op):
+                opened = (op, cl)
+                break
+        if opened:
+            comment += 1
+            rest = line[len(opened[0]):]
+            if opened[1] not in rest:
+                in_block = opened
+            continue
+        if any(line.startswith(m) for m in line_marks):
+            comment += 1
+            continue
+        # Trailing comment on a code line still counts as code; the line has
+        # to be read for its logic either way.
+        code += 1
+    return code, comment, blank
+
+
+TABLE_RE = re.compile(r"^\s*\|.*\|\s*$|^\s*[-:|\s]{6,}$")
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def doc_shape(text):
+    """Length, the longest span between headings, and how much of that span is
+    non-prose.
+
+    The last figure matters as much as the span. A two-hundred-line table under
+    one heading is not an unreadable span — nobody reads a table top to bottom,
+    they look a row up, and every row is its own entry point. The same is true
+    of a fenced code block. Reporting the span without it would put every
+    inventory and every reference table at the top of the list, which is where
+    the first run of this script put them.
+    """
+    lines = text.splitlines()
+    non_prose = [False] * len(lines)
+    in_fence = False
+    for i, l in enumerate(lines):
+        if FENCE_RE.match(l):
+            in_fence = not in_fence
+            non_prose[i] = True
+            continue
+        if in_fence or TABLE_RE.match(l):
+            non_prose[i] = True
+
+    heads = [i for i, l in enumerate(lines)
+             if HEADING_RE.match(l) and not non_prose[i]]
+    if not heads:
+        span_a, span_b = 0, len(lines)
+    else:
+        bounds = heads + [len(lines)]
+        span_a, span_b = max(zip(bounds, bounds[1:]), key=lambda ab: ab[1] - ab[0])
+    span = span_b - span_a
+    skippable = sum(1 for i in range(span_a, span_b) if non_prose[i])
+    frac = skippable / span if span else 0.0
+    return len(lines), span, len(heads), frac
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--ref", default=None)
+    ap.add_argument("--top", type=int, default=8, help="outliers to list")
+    ap.add_argument("--rate", type=int, default=1000,
+                    help="lines/hour reading rate, as used by R-001")
+    ap.add_argument("--floor", type=int, default=150,
+                    help="R-010: spans shorter than this are never reported")
+    ap.add_argument("--margin", type=float, default=3.0,
+                    help="R-010: multiple of the repository's median span")
+    ap.add_argument("--min-docs", type=int, default=8,
+                    help="R-010: documents needed before a median means anything")
+    ap.add_argument("--non-prose", type=float, default=0.5,
+                    help="R-010: spans at least this tabular are exempt as lookup")
+    args = ap.parse_args()
+
+    ref = args.ref or git("symbolic-ref", "--short", "HEAD").strip()
+    tree = [f for f in git("ls-tree", "-r", "--name-only", ref).splitlines() if f]
+
+    code_files, doc_files, machine_files, skipped = [], [], [], 0
+    for path in tree:
+        if NOISE_RE.search(path):
+            skipped += 1
+            continue
+        lower = path.lower()
+        text = read_blob(ref, path)
+        if text is None:
+            skipped += 1
+            continue
+        if any(lower.endswith(e) for e in DOC_EXT):
+            total, largest, heads, frac = doc_shape(text)
+            if not total:
+                continue
+            rec = {"path": path, "lines": total, "largest_span": largest,
+                   "headings": heads, "non_prose": frac,
+                   "tokens": len(text) // CHARS_PER_TOKEN}
+            if MACHINE_ALWAYS.search(path):
+                rec["load"] = "every turn"
+                machine_files.append(rec)
+            elif MACHINE_ONDEMAND.search(path):
+                rec["load"] = "on demand"
+                machine_files.append(rec)
+            else:
+                doc_files.append(rec)
+            continue
+        syn = syntax_for(path)
+        if syn is None:
+            skipped += 1
+            continue
+        c, cm, bl = split_lines(text, syn)
+        if c + cm == 0:
+            continue
+        code_files.append({"path": path, "code": c, "comment": cm, "blank": bl,
+                           "ratio": cm / (c + cm)})
+
+    print(f"reading weight at {ref[:12]}   "
+          f"({len(code_files)} code file(s), {len(doc_files)} document(s) for "
+          f"people, {len(machine_files)} for models, "
+          f"{skipped} skipped: generated, vendored or unknown syntax)")
+
+    if code_files:
+        tc = sum(f["code"] for f in code_files)
+        tm = sum(f["comment"] for f in code_files)
+        med = statistics.median(f["ratio"] for f in code_files)
+        print()
+        print(f"code    {tc + tm} lines: {tc} code / {tm} comment "
+              f"= {tm / (tc + tm):.0%} comment overall")
+        print(f"        per-file comment share: median {med:.0%}, "
+              f"reading cost {(tc + tm) / args.rate:.1f}h at {args.rate} l/h")
+        heavy = sorted((f for f in code_files if f["code"] + f["comment"] >= 40),
+                       key=lambda f: -f["ratio"])[:args.top]
+        if heavy:
+            print(f"        heaviest in prose (>=40 lines), against a median of {med:.0%}:")
+            for f in heavy:
+                print(f"          {f['ratio']:>4.0%} comment  "
+                      f"{f['comment']:>5}c/{f['code']:>5} code  {f['path']}")
+
+    if machine_files:
+        always = [f for f in machine_files if f["load"] == "every turn"]
+        ondemand = [f for f in machine_files if f["load"] == "on demand"]
+        tok_always = sum(f["tokens"] for f in always)
+        tok_all = sum(f["tokens"] for f in machine_files)
+        print()
+        print(f"agent   {len(machine_files)} file(s) written for a model, "
+              f"~{tok_all:,} tokens total")
+        print(f"        ~{tok_always:,} of those load every turn "
+              f"({len(always)} file(s)); ~{tok_all - tok_always:,} on demand "
+              f"({len(ondemand)} file(s))")
+        print("        headings do not reduce this: a model is handed the file whole.")
+        for f in sorted(machine_files, key=lambda f: -f["tokens"])[:args.top]:
+            print(f"          ~{f['tokens']:>6,} tok  {f['lines']:>5} lines  "
+                  f"{f['load']:>10}  {f['path']}")
+
+    if doc_files:
+        lines = [f["lines"] for f in doc_files]
+        med_len = statistics.median(lines)
+        total = sum(lines)
+        print()
+        print(f"docs    {total} lines across {len(doc_files)} file(s); "
+              f"median {med_len:.0f}, reading cost {total / args.rate:.1f}h "
+              f"at {args.rate} l/h")
+        worst = sorted(doc_files, key=lambda f: -f["largest_span"])[:args.top]
+        print("        longest unbroken span a reader must cross for one answer:")
+        for f in worst:
+            mins = f["largest_span"] / args.rate * 60
+            print(f"          {f['largest_span']:>5} lines "
+                  f"({mins:>5.0f}m)  {f['headings']:>3} heading(s)  "
+                  f"{f['non_prose']:>4.0%} table/code  {f['path']}")
+
+        # ---- R-010 (draft) -------------------------------------------------
+        med_span = statistics.median(f["largest_span"] for f in doc_files)
+        print()
+        if len(doc_files) < args.min_docs:
+            print(f"R-010: NOT APPLICABLE — fewer than {args.min_docs} documents "
+                  f"written for people; no median to judge an outlier against.")
+        else:
+            bar = max(args.floor, med_span * args.margin)
+            print(f"R-010: median span {med_span:.0f} lines; "
+                  f"reported above {bar:.0f} "
+                  f"(max of floor {args.floor} and {args.margin}x median), "
+                  f"unless mostly table or code.")
+            hits = [f for f in doc_files
+                    if f["largest_span"] >= bar and f["non_prose"] < args.non_prose]
+            skipped_tab = [f for f in doc_files
+                           if f["largest_span"] >= bar and f["non_prose"] >= args.non_prose]
+            for f in skipped_tab:
+                print(f"  exempt (lookup): {f['non_prose']:.0%} table/code across "
+                      f"{f['largest_span']} lines  {f['path']}")
+            if not hits:
+                print("R-010: no finding.")
+            else:
+                print("R-010: CANDIDATE FINDING — prose with no entry point.")
+                for f in sorted(hits, key=lambda f: -f["largest_span"]):
+                    mins = f["largest_span"] / args.rate * 60
+                    print(f"  {f['largest_span']:>5} lines of unbroken prose "
+                          f"({mins:.0f}m) in {f['lines']} total, "
+                          f"{f['headings']} heading(s)  {f['path']}")
+                print("  Adjudicate against R-010's Not a violation section. Note")
+                print("  that the cheapest way to clear this is to add headings —")
+                print("  which helps only if they name what is beneath them.")
+
+    print()
+    print()
+    print("(The code and agent halves are signal S-6 only — no rule derives from")
+    print(" either. A comment share is where reading cost sits, never a quality")
+    print(" score; agent-file tokens are a cost, not a defect.)")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)

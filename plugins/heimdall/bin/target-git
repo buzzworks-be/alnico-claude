@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# Read-only git against the attached target repository.
+#
+# This is the only sanctioned way to read the target. Mutating subcommands are
+# refused here so the read path stays auditable in one place. The real guarantee
+# is that the target is a bare clone with no push destination — this guard is
+# defence in depth, not the lock itself.
+
+set -euo pipefail
+# When something fails under set -e, say WHERE and under WHICH bash. Every
+# macOS field report so far carried the symptom and not the line, and each
+# took a guess to fix. bash 3.2 supports an ERR trap; $LINENO and
+# $BASH_VERSION are enough to turn the next report into a diagnosis.
+trap 'echo "heimdall: $(basename "$0") failed at line $LINENO under bash $BASH_VERSION" >&2' ERR
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Code root above; state root below. In a checkout they are the same directory;
+# installed as a plugin they must not be. See bin/heimdall-state.
+STATE="$("$ROOT/bin/heimdall-state")"
+TARGET="$STATE/.heimdall/target.git"
+
+if [ ! -d "$TARGET" ]; then
+  echo "heimdall: no target attached. Run bin/attach-target.sh <git-url>" >&2
+  exit 2
+fi
+
+case "${1:-}" in
+  push|remote|config|commit|merge|rebase|reset|checkout|switch|restore|am|apply\
+  |cherry-pick|revert|gc|prune|repack|worktree|filter-branch|update-ref|tag\
+  |branch|notes|stash|fetch|pull|clone|init|mv|rm|add)
+    echo "heimdall: '$1' is not permitted — the target is observed, never modified." >&2
+    echo "heimdall: to refresh it use bin/attach-target.sh; to list refs use for-each-ref." >&2
+    exit 3
+    ;;
+  "")
+    echo "usage: bin/target-git <read-only git args>   e.g. log, diff, show, ls-tree" >&2
+    exit 2
+    ;;
+esac
+
+exec git --git-dir="$TARGET" "$@"

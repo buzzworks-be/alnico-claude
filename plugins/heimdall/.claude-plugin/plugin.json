@@ -1,0 +1,16 @@
+{
+  "name": "heimdall",
+  "version": "0.12.11",
+  "description": "Read a repository you do not touch, and write a case file about how the work in it was produced.",
+  "author": {
+    "name": "Jan Van Coppenolle"
+  },
+  "homepage": "https://github.com/buzzworks-be/alnico-claude",
+  "keywords": [
+    "governance",
+    "process",
+    "audit"
+  ],
+  "repository": "https://github.com/buzzworks-be/alnico-claude",
+  "license": "Apache-2.0"
+}

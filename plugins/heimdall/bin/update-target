@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+#
+# Update the target: fetch what has landed in the observed repository since the
+# last look, and report the delta.
+#
+# The only fetch a case makes, and it is from an untrusted remote. Nothing of
+# Heimdall's moves here: the frame of reference must stay frozen for the length
+# of a case, while the target legitimately moves between increments. Bundling
+# the two would make an untrusted fetch fail together with something trusted
+# and report as one event.
+#
+# The fetch itself is delegated to attach-target.sh so there is exactly one
+# implementation of "refresh" — including the push-disable belt and the
+# metadata write. This script's own job is the before/after comparison, which
+# is the part a reader actually needs.
+#
+# Usage:
+#   bin/update-target
+
+set -euo pipefail
+# When something fails under set -e, say WHERE and under WHICH bash. Every
+# macOS field report so far carried the symptom and not the line, and each
+# took a guess to fix. bash 3.2 supports an ERR trap; $LINENO and
+# $BASH_VERSION are enough to turn the next report into a diagnosis.
+trap 'echo "heimdall: $(basename "$0") failed at line $LINENO under bash $BASH_VERSION" >&2' ERR
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Code root above; state root below. In a checkout they are the same directory;
+# installed as a plugin they must not be. See bin/heimdall-state.
+STATE="$("$ROOT/bin/heimdall-state")"
+cd "$STATE"
+
+DIR="$STATE/.heimdall"
+TARGET="$DIR/target.git"
+META="$DIR/target.json"
+
+if [ ! -f "$META" ] || [ ! -d "$TARGET" ]; then
+  echo "heimdall: nothing attached — there is no target to update." >&2
+  echo "Open a case first: bin/attach-target.sh <git-url>" >&2
+  exit 2
+fi
+
+BEFORE="$(mktemp)"
+trap 'rm -f "$BEFORE"' EXIT
+
+git --git-dir="$TARGET" for-each-ref \
+  --format='%(refname:short) %(objectname)' refs/heads/ > "$BEFORE"
+old_head="$(git --git-dir="$TARGET" rev-parse HEAD)"
+
+# One implementation of refresh, in attach-target.sh.
+"$ROOT/bin/attach-target.sh"
+
+python3 - "$TARGET" "$BEFORE" "$old_head" <<'REPORTPY'
+import subprocess, sys, pathlib
+
+target, before_path, old_head = sys.argv[1:4]
+
+def git(*args):
+    return subprocess.run(["git", "--git-dir", target, *args],
+                          capture_output=True, text=True, check=True).stdout
+
+def refs(text):
+    out = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        name, sha = line.rsplit(" ", 1)
+        out[name] = sha
+    return out
+
+before = refs(pathlib.Path(before_path).read_text())
+after = refs(git("for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"))
+new_head = git("rev-parse", "HEAD").strip()
+
+added   = sorted(set(after) - set(before))
+removed = sorted(set(before) - set(after))
+moved   = sorted(b for b in set(before) & set(after) if before[b] != after[b])
+
+# Commits reachable from the new tips but not from any old tip. Counting per
+# branch would double-count anything merged into more than one.
+new_tips = sorted(set(after.values()))
+old_tips = sorted(set(before.values()))
+commits = []
+if new_tips:
+    args = ["rev-list", *new_tips]
+    if old_tips:
+        args += ["--not", *old_tips]
+    commits = [c for c in git(*args).splitlines() if c]
+
+print()
+if not commits and not added and not removed and not moved:
+    print("heimdall: no new activity — the target has not moved since the last look.")
+    sys.exit(0)
+
+print(f"heimdall: {len(commits)} new commit(s) since the last look.")
+
+if commits:
+    log = git("log", "--no-walk=unsorted", "--format=%aI\t%an\t%s", *commits)
+    rows = [l.split("\t", 2) for l in log.splitlines() if l]
+    if rows:
+        dates = sorted(r[0] for r in rows)
+        authors = {}
+        for r in rows:
+            authors[r[1]] = authors.get(r[1], 0) + 1
+        print(f"  span:    {dates[0]} .. {dates[-1]}")
+        who = ", ".join(f"{a} ({n})" for a, n in
+                        sorted(authors.items(), key=lambda kv: -kv[1]))
+        print(f"  authors: {who}")
+        print("  most recent:")
+        for r in sorted(rows, key=lambda r: r[0], reverse=True)[:5]:
+            print(f"    {r[0][:10]}  {r[2][:64]}")
+
+for label, names in (("new branch", added), ("deleted branch", removed),
+                     ("moved branch", moved)):
+    for n in names:
+        print(f"  {label}: {n}")
+
+if new_head != old_head:
+    print()
+    print(f"heimdall: HEAD moved {old_head[:12]} -> {new_head[:12]}")
+    # Case files name the head they were taken at. Ones pinned to the old head
+    # are not invalidated — they are pinned, which is the point — but a reading
+    # still in progress was taken against a clone that has now moved.
+    inc = pathlib.Path("increments")
+    if inc.is_dir():
+        stale = sorted(p.name for p in inc.glob("*.md")
+                       if p.name not in ("README.md", "_TEMPLATE.md")
+                       and old_head[:7] in p.name)
+        if stale:
+            print("  case files pinned to the previous head:")
+            for n in stale:
+                print(f"    {n}")
+    print("  A case file finished before this update describes the target as it")
+    print("  was, correctly, and needs no change. A reading still IN PROGRESS was")
+    print("  taken against the previous head: finish it against that head and say")
+    print("  so, or re-take it. Do not silently mix the two.")
+REPORTPY
