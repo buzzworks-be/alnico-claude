@@ -141,8 +141,10 @@ Two limitations to state in any case file citing this rule:
   be worse than no rule.
 - **A rename, a formatter pass, or generated code.** Nothing to verify that the
   existing suite does not already cover.
-- **A dependency bump or configuration change** classed as code by path
-  heuristics.
+- **A dependency bump or configuration change** the classifier did not
+  recognise as one — the configuration class covers the common manifests,
+  pipeline and container definitions, dotfiles and dot directories, and a
+  repository's own format can still read as code.
 - **A revert**, which restores a state that was verified before.
 - **Verification that is not a test file.** Type checking, schema validation,
   contract tests, property assertions, a gate script, a compiler that will not
@@ -207,3 +209,13 @@ Two limitations to state in any case file citing this rule:
   engagements, survivors that read as the shape, and the conditional standing
   down where it should: **promoted to active.** The floors remain chosen, and
   that is now stated as a limitation rather than a reason to hold.
+
+- **Re-swept under the configuration class, 2026-09-07.** Configuration-only
+  landings — between a tenth and a half of what each history binned — left
+  the bands, the test rate above 100 lines rose on seven of ten histories,
+  held on two and fell on one by three points at most, and the candidate
+  lists shortened on eight of ten. On one they lengthened, from 40 to 74,
+  because the 25-99 band's convention rose from under the bar to over it and
+  the band was judged for the first time: configuration had hidden how
+  untested it was. Engaged on every history before and after; stays active.
+  The record is in principles/README.md.

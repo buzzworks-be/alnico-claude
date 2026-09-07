@@ -19,14 +19,20 @@ The order of tests is the definition, and it is deliberate:
          design/) whatever the extension.
   test   by directory (tests/, spec/, e2e/ …) or by name (test_x, x_test,
          x.spec, conftest).
-  code   everything else. Configuration — YAML, JSON, TOML — counts as code
-         here, which the rules already carry as an exemption ("a dependency
-         bump or configuration change classed as code by path heuristics").
-         Excluding it would move landings between bands and invalidate the
-         sweep the bands were set on; adding a config class is a future
-         change and needs its own re-sweep.
+  config declared rather than computed: configuration, manifests, pipeline
+         and container definitions, dotfiles and everything under a dot
+         directory, data tables. Read by a person, so not noise; owes no
+         test and no reasoning, so not code. Until 2026-09-07 this counted
+         as code, and the rules carried it as an exemption ("a dependency
+         bump or configuration change classed as code by path heuristics");
+         the held-out sweep measured the cost — R-025 reported a top-level
+         `.github` directory as an area whose care withdrew, on a history
+         where it held nothing but workflow files — and the class was added
+         with its own re-sweep, recorded in principles/README.md.
+  code   everything else.
 
-Amended on 2026-09-07 by the held-out sweep, in three places: a directory
+Amended on 2026-09-07 by the held-out sweep, in three places and then by the
+configuration class above: a directory
 whose name ends in "test" is a test directory; translation catalogs (.po,
 .pot, .mo) are noise; licence, notice, authorship and ownership files are
 documentation; and the FooTest.java suffix rule is case-sensitive, so that a
@@ -93,17 +99,40 @@ FORGE_COMMITTERS = {
 # For scripts whose DOC_RE was one pattern: doc by extension or by directory.
 DOC_RE = re.compile(DOC_DIR_RE.pattern + "|" + DOC_EXT_RE.pattern, re.I)
 
+# Configuration: what a repository declares rather than computes. By
+# extension — the markup and data formats that carry settings, manifests,
+# schemas and tables; by name — build, container and pipeline definitions,
+# and the requirement and constraint lists a packaging tool reads; by place —
+# any dotfile, and anything under a dot directory (.github/, .circleci/,
+# .vscode/), which is where a repository keeps what its tooling does. A script
+# under scripts/ or ci/ is code: it computes. A workflow that runs it is not.
+# CONFIG_NAME_RE is tested before the documentation extensions, because
+# CMakeLists.txt and requirements.txt are not documents.
+CONFIG_RE = re.compile(
+    r"\.(ya?ml|toml|ini|cfg|conf|properties|env|editorconfig|json|json5|jsonc|xml|plist"
+    r"|csv|tsv|tf|tfvars|hcl|nix|lock)$"
+    r"|(^|/)(?-i:Dockerfile|Containerfile|docker-compose|compose|Makefile|GNUmakefile|justfile"
+    r"|Jenkinsfile|Procfile|Vagrantfile|Brewfile|Gemfile|Podfile)[^/]*$"
+    r"|(^|/)\.[^/]+$"            # any dotfile
+    r"|(^|/)\.[^/]+/"            # anything under a dot directory
+    r"|\.(mk|cmake|gradle|kts|sbt|csproj|vbproj|fsproj|props|targets|pbxproj|xcconfig)$", re.I)
+CONFIG_NAME_RE = re.compile(r"(^|/)(CMakeLists\.txt|(requirements|constraints)[^/]*\.txt|requirements/[^/]+\.txt)$", re.I)
+
 
 def kind(path):
-    """'noise', 'doc', 'test' or 'code' — see the module docstring for the order."""
+    """'noise', 'doc', 'test', 'config' or 'code' — see the module docstring for the order."""
     if NOISE_RE.search(path):
         return "noise"
+    if CONFIG_NAME_RE.search(path):
+        return "config"
     if DOC_EXT_RE.search(path):
         return "doc"
     if TEST_RE.search(path):
         return "test"
     if DOC_DIR_RE.search(path):
         return "doc"
+    if CONFIG_RE.search(path):
+        return "config"
     return "code"
 
 

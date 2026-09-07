@@ -88,3 +88,9 @@ Limitations to state in a case file:
   configuration that owes none. Not a finding about the history: a finding
   about the classifier, and the measured case for the configuration class
   its own note defers. Still `draft`: one engagement, an instrument artefact.
+
+- **Re-read under the configuration class, 2026-09-07.** With workflow files
+  classed as configuration, L's `.github` directory is no longer an area:
+  22 areas, 13 judged, and no area's care fell away from the repository's.
+  The rule's only candidate was an instrument artefact and the instrument is
+  fixed; it has yet to engage on a real history.

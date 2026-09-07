@@ -34,7 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 # One classifier for every script that bins by lines of code. See bin/classify.py.
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, TEST_RE, DOC_RE, INLINE_TEST_RE, FORGE_COMMITTERS  # noqa: E402
+from classify import INLINE_TEST_RE, FORGE_COMMITTERS, kind  # noqa: E402
 
 # Bands, not one threshold. A flat code-min asked the same thing of a 100-line
 # landing and a 10,000-line one, and nothing of a 99-line one. Measured across
@@ -142,14 +142,12 @@ def landings(since, until, ref, act_gap_min):
 def split(rows):
     code = test = 0
     for path, churn in rows:
-        if NOISE_RE.search(path):
-            continue
-        if TEST_RE.search(path):
+        k = kind(path)
+        if k == "test":
             test += churn
-        elif DOC_RE.search(path):
-            continue
-        else:
+        elif k == "code":
             code += churn
+        # documentation and configuration owe no test; noise is nobody's
     return code, test
 
 

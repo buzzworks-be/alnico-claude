@@ -46,7 +46,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 # One classifier for every script that bins by lines of code. See bin/classify.py.
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, TEST_RE, DOC_RE, FORGE_COMMITTERS  # noqa: E402
+from classify import NOISE_RE, TEST_RE, DOC_RE, FORGE_COMMITTERS, kind  # noqa: E402
 
 REVERT_SUBJECT_RE = re.compile(r'^\s*revert\b', re.I)
 REVERTS_SHA_RE = re.compile(r'this reverts commit ([0-9a-f]{7,40})', re.I)
@@ -162,16 +162,6 @@ def landings(ref, since, until, act_gap_min):
 def line_count(ref, path):
     rc, out = tg_try("show", f"{ref}:{path}")
     return out.count("\n") if rc == 0 else None
-
-
-def kind(path):
-    if NOISE_RE.search(path):
-        return "noise"
-    if TEST_RE.search(path):
-        return "test"
-    if DOC_RE.search(path):
-        return "doc"
-    return "code"
 
 
 def main():

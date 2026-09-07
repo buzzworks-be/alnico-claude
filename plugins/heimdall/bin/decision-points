@@ -94,10 +94,9 @@ FAMILY = {
     "rs": RUST,
     **{e: SHELL for e in ("sh", "bash", "zsh", "ksh")},
 }
-# Configuration is code for line counting (bin/classify.py, deliberately) but a
-# workflow's `if:` or a manifest's `when:` is not a path through a program.
-# No decisions are counted in these; the lines still count.
-NO_DECISIONS = re.compile(r"\.(ya?ml|json|toml|ini|cfg|conf|properties|env|lock|xml|csv)$", re.I)
+# A workflow's `if:` or a manifest's `when:` is not a path through a program:
+# the shared classifier's configuration class holds no decisions, and since
+# 2026-09-07 its lines are not code lines either.
 NONE_RE = re.compile(r"(?!x)x")
 COMMENT_START = re.compile(r"^\s*(//|#|/\*|\*|--|<!--|;;?)")
 # Files with no extension: shell if they look like it, else generic.
@@ -123,7 +122,7 @@ def default_ref():
 
 
 def pattern_for(path):
-    if NO_DECISIONS.search(path):
+    if kind(path) == "config":
         return NONE_RE
     ext = path.rsplit(".", 1)[-1].lower() if "." in path.rsplit("/", 1)[-1] else ""
     return FAMILY.get(ext, GENERIC)

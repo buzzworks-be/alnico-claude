@@ -158,3 +158,11 @@ decide **where to look**, never as a conclusion on its own.
   **Closed the same day** by `bin/classify.py`, one classifier imported by
   both; verified on the history that exposed it, where the two now bin the
   same landings into the same bands with identical rates.
+
+- **Re-swept under the configuration class, 2026-09-07.** When the classifier
+  stopped counting configuration as code, this rule's convention fell on the
+  histories whose reasoning lived beside their manifests: on a typed monorepo
+  the rate at 100-299 lines went from 54% to 41%, under the bar, and 32 of
+  34 findings stood down — they were version bumps with a changelog beside
+  them. Elsewhere the rates held within a few points. The record is in
+  principles/README.md.

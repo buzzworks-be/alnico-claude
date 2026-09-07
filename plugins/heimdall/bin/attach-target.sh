@@ -51,6 +51,19 @@ if [ -d "$url" ]; then
   fi
 fi
 
+# A local mirror stands in for its remote. Attaching from a bare clone on disk
+# clones from the path — fast, and offline — but records the identity the
+# mirror was taken from, so the codename is the same one the remote would get
+# and the leak guard searches for the repository's name rather than a
+# directory's. A path whose origin is itself a path is recorded as the path.
+source="$url"
+if [ -d "$url" ]; then
+  origin="$(git -C "$url" remote get-url origin 2>/dev/null || true)"
+  case "$origin" in
+    http://*|https://*|ssh://*|git@*|git://*) url="$origin" ;;
+  esac
+fi
+
 mkdir -p "$DIR"
 
 # Clone into a staging path and swap only on success. Destroying the current
@@ -63,7 +76,8 @@ rm -rf "$STAGE"
 
 clone_fresh() {
   echo "heimdall: cloning $url (bare, read-only)"
-  git clone --bare "$url" "$STAGE"
+  git clone --bare "$source" "$STAGE"
+  [ "$source" != "$url" ] && git --git-dir="$STAGE" remote set-url origin "$url"
   # A bare clone leaves no fetch refspec; observation needs one to refresh.
   git --git-dir="$STAGE" config remote.origin.fetch '+refs/heads/*:refs/heads/*'
   rm -rf "$TARGET"

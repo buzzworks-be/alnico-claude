@@ -138,8 +138,9 @@ def build_series(ref, since_ts, act_gap_min, until_ts=None):
                 test += add + dele
             elif k == "doc":
                 doc += add + dele
-            else:
+            elif k == "code":
                 code += add + dele
+            # configuration: a touched path that owes no test
         if code == 0 and test == 0 and doc == 0:
             return
         if test == 0 and code > 0 and inline_tests(diffargs):

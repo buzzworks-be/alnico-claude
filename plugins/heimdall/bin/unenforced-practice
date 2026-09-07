@@ -38,7 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 # One classifier for every script that bins by lines of code. See bin/classify.py.
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, TEST_RE, DOC_RE, INLINE_TEST_RE, FORGE_COMMITTERS  # noqa: E402
+from classify import INLINE_TEST_RE, FORGE_COMMITTERS, kind  # noqa: E402
 
 DEFAULT_RELIANCE = 0.60   # practice rate above which the repo evidently relies on it
 DEFAULT_MIN_CHANGES = 5   # below this the rate is an accident
@@ -109,13 +109,7 @@ def inline_tests(diffargs):
 
 
 def classify(path):
-    if NOISE_RE.search(path):
-        return "noise"
-    if TEST_RE.search(path):
-        return "test"
-    if DOC_RE.search(path):
-        return "doc"
-    return "code"
+    return kind(path)
 
 
 def matching(tree, globs):

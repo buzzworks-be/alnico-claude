@@ -231,7 +231,8 @@ landing in all six scripts that carry the unit — R-003's own extractor had
 its own copy of the grouping and the same defect. **Re-swept the same day**
 across five histories of different landing shapes, about 2,180 landings: the
 gradient the first sweep reported as monotonic is a climb to a plateau — the
-test rate sits at 74-80% above 100 lines on every history, and the 300-999
+test rate sat at 74-80% above 100 lines on every history (higher on most
+of them once configuration stopped counting as code; see below), and the 300-999
 and 1000+ bands move in no consistent direction from 100-299. R-011 now
 judges the bands from 100 lines up against their pooled rate and reports them
 separately; the 25-99 band, where the five histories straddle the convention
@@ -253,9 +254,9 @@ definition, imported by the twelve scripts that need it, with the order of
 tests stated as the definition. Verified on the history that exposed it: the
 two rules now bin the same landings into the same bands with identical rates,
 the only difference being the doc-dominant landings R-003 excludes by design.
-Configuration still counts as code, deliberately — excluding it would move
-landings between bands and invalidate the sweep, and the rules already carry
-it as an exemption; a config class is a future change with its own re-sweep.
+Configuration counted as code until later that week, deliberately — excluding
+it would have moved landings between bands and invalidated the sweep — and
+the configuration class below was added with its own re-sweep.
 
 **The classifier learned on 2026-09-07 that a directory whose name ends in
 "test" is a test directory.** Found by reading R-027's candidates in full on
@@ -271,6 +272,52 @@ band-sweep histories did, so the bands stand, and these are the first
 changes to the classifier since it was unified, recorded here for that
 reason.
 
+**The classifier gained a configuration class on 2026-09-07**, the change the
+unification note above deferred. Configuration — manifests, pipeline and
+container definitions, dotfiles and everything under a dot directory, data
+tables — is now a fifth kind between documentation and code: read by a
+person, so not noise; owing no test and no reasoning, so not code. Every
+extractor that binned by lines of code through its own copy of the old
+order now reads the shared definition, and the two that carried a local
+configuration pattern (S-14's and R-016's) read the class instead.
+**Re-swept the same day across ten public histories** — the six of the band
+sweep, K, L and M of the held-out sweep, and one more merge-landing
+application, N — over the same twelve-month window before and after:
+
+| history | shape | binned landings | R-011 candidates | R-003 findings |
+|---|---|---|---|---|
+| A | squash monorepo | 175 → 94 | 9 → 8 | 7 → 0 |
+| B | merge, single package, quiet | 30 → 22 | 0 → 0 | 0 → 1 |
+| C | squash workspace | 1129 → 931 | 228 → 190 | 0 → 0 |
+| D | squash, single package | 248 → 141 | 39 → 20 | 12 → 3 |
+| E | merge and squash application | 460 → 332 | 48 → 19 | 8 → 7 |
+| F | typed squash monorepo | 837 → 560 | 40 → 74 | 34 → 2 |
+| N | merge application | 295 → 286 | 54 → 48 | 0 → 0 |
+| K | applied patches, formal policy | 441 → 398 | 21 → 14 | 16 → 15 |
+| L | squash, code owners | 1565 → 1081 | 168 → 118 | 12 → 10 |
+| M | merge and squash editor | 2527 → 2437 | 386 → 380 | 146 → 150 |
+
+What moved, and why it is the right direction. Between a tenth and a half
+of every history's binned landings were configuration and nothing else —
+a dependency bump, a workflow edit, a manifest — and they sat in the
+smallest bands untested, which is where they belong and not what R-011
+asks about. With them gone the test rate above 100 lines rose on seven of
+the ten (A 67-100% → 80-100%, E 73-84% → 89-100%), held on two, and fell
+on one by three points at most, and the convention the conditional reads rose
+with it: on F the 25-99 band went from 44%, under the bar and unjudged,
+to 60% and judged, which is why its candidate count rose — the band was
+always this untested, and configuration had been hiding it. R-003 moved
+the other way where a repository's reasoning lived beside its
+configuration: on F the reasoning rate at 100-299 lines fell from 54% to
+41%, under the bar, and 32 of 34 findings stood down with it — those were
+version bumps with a changelog beside them, not reasoning alongside code.
+R-027 did not move: decisions were never counted in configuration, only
+its lines. And the R-025 candidate that motivated the class is gone: L's
+`.github` directory is no longer an area, 22 remain, and no area's care
+fell away from the repository's. R-011 stays active — it engaged on every
+history before and after — and the plateau it judges against is, if
+anything, better defined.
+
 **The held-out sweep ran on 2026-09-07**, the first calibration against
 histories none of the rules had shaped: three public repositories chosen
 for a shape each — a formal deprecation policy, per-path code owners, a
@@ -280,11 +327,14 @@ three with survivors that read as its shape, and R-016, which engaged on
 two beside the earlier read of forty-one confirmed wide landings. Six
 engaged for the first time on real data and stayed draft: three because
 what they found was innocent (R-012, R-013, R-019); R-026 because its one
-pair passed; R-021 because its one candidate — a broad declaration after which care did not move — is
-unadjudicated; and R-025 because its one candidate was the classifier's,
-not the history's: an area of workflow files, counted as code, on which
-test accompaniment was never owed. That last is the measured case for the
-configuration class the classifier note above defers.
+pair passed; R-021 because its one candidate — a broad declaration after
+which care did not move — dissolved under the configuration class the same
+day, when seven of the sixteen landings after it turned out to be
+configuration and the after-side fell under the floor; and R-025 because
+its one candidate was the classifier's, not the history's: an area of
+workflow files, counted as code, on which test accompaniment was never
+owed. That last was the measured case for the configuration class, added
+the same day and recorded below.
 R-018, on the deprecation
 culture chosen for it, formed a reading only after two amendments and then
 found what a formal policy predicts: thirteen closures, none under the bar.

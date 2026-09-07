@@ -108,8 +108,8 @@ def resolve(expr):
 
 
 def classify(path):
-    # The shared definition; "noise" is a fourth kind and is simply not one of
-    # the three the discipline signals read.
+    # The shared definition. "noise" is nobody's and is not reported;
+    # "config" is reported beside the three the discipline signals read.
     return kind(path)
 
 
@@ -293,7 +293,9 @@ def build(commits, since, until, ref, all_refs, typed=None):
         "code_churn": kind_churn["code"],
         "doc_churn": kind_churn["doc"],
         "test_churn": kind_churn["test"],
+        "config_churn": kind_churn["config"],
         "doc_files_changed": len(kind_files["doc"]),
+        "config_files_changed": len(kind_files["config"]),
         "test_files_changed": len(kind_files["test"]),
         "doc_to_code_churn_ratio": (
             round(kind_churn["doc"] / kind_churn["code"], 3) if kind_churn["code"] else None

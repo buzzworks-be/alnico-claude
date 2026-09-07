@@ -48,7 +48,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 # One classifier for every script that bins by lines of code. See bin/classify.py.
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, TEST_RE, DOC_RE, INLINE_TEST_RE, FORGE_COMMITTERS  # noqa: E402
+from classify import INLINE_TEST_RE, FORGE_COMMITTERS, kind  # noqa: E402
 
 
 # A landing this doc-heavy is a documentation change, not a code change that
@@ -150,14 +150,14 @@ def survey(ref, since, until, act_gap):
     for rows, diffs in landings(ref, since, until, act_gap):
         code = doc = test = 0
         for path, churn in rows:
-            if NOISE_RE.search(path):
-                continue
-            if TEST_RE.search(path):
+            k = kind(path)
+            if k == "test":
                 test += churn
-            elif DOC_RE.search(path):
+            elif k == "doc":
                 doc += churn
-            else:
+            elif k == "code":
                 code += churn
+            # noise is nobody's; configuration is read but owes no test
         b = band_of(code)
         if not b:
             continue

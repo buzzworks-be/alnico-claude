@@ -35,14 +35,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, TEST_RE, kind  # noqa: E402
+from classify import kind  # noqa: E402
 
 # A marker in configuration is a mention, not a notice: a test runner's
 # filterwarnings line naming DeprecationWarning was the first run's only
 # candidate, closed in twenty days, and it deprecated nothing. A marker in
 # documentation is a note about a notice, and pruning the changelog is not
-# removing the thing. Only code gives notice.
-CONFIG_RE = re.compile(r"\.(toml|cfg|ini|ya?ml|json|txt)$|(^|/)\.[^/]+$", re.I)
+# removing the thing. Only code gives notice — the shared classifier's
+# configuration class carries what a local pattern did until 2026-09-07.
 
 DEFAULT_MARKERS = (r"@deprecated\b|#\[deprecated|DeprecationWarning|PendingDeprecationWarning"
                    r"|\[Obsolete\b|^\s*//\s*Deprecated:|^\s*#\s*Deprecated:|\bDEPRECATED\b"
@@ -131,7 +131,7 @@ def main():
         # Only code gives notice, and only code somebody outside can depend on:
         # a symbol under internal/ (a language-level convention) has no
         # downstream reader to give notice to.
-        return p and kind(p) == "code" and not CONFIG_RE.search(p) and not re.search(r"(^|/)internal/", p)
+        return p and kind(p) == "code" and not re.search(r"(^|/)internal/", p)
 
     # Seed the open notices from the tree at the window's start. Without this
     # the walk knew only notices OPENED inside the window, so a closure of an

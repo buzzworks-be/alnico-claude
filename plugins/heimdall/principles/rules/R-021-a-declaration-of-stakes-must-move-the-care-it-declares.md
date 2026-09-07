@@ -116,4 +116,9 @@ Limitations to state in a case file:
   declaration routed rather than raised care is a statement to look for in
   the repository, and platform-enforced review is invisible to the frame;
   both are the reader's. Not applicable on K and M, which declare no owners.
-  Still `draft`: one engagement with its shape, unadjudicated.
+
+  Withdrawn the same day, by the configuration class: seven of the sixteen
+  landings after that declaration were configuration and nothing else, the
+  after-side fell to seven, under the floor, and the comparison cannot be
+  formed. The three judged declarations still read as care rising. Still
+  `draft`: it has engaged, and has yet to hold an engagement with its shape.

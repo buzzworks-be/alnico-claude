@@ -84,7 +84,8 @@ Limitations to state in any case file citing this rule:
 
 - **The count is by token on the diff.** No parser: a keyword in a string
   counts, a language outside the family table is counted by a generic
-  pattern, and configuration counts as code in lines but never in decisions.
+  pattern, and configuration the classifier does not recognise as such
+  counts as code in lines while holding no decisions.
   Read the diff before believing a number.
 - **Test detection is by path convention**, as in R-011, plus the inline
   markers the classifier knows.
