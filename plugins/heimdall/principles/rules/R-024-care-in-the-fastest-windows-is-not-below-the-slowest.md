@@ -88,3 +88,21 @@ Limitations to state in a case file:
   thousand, merges and squash).
   Fastest windows not below the slowest on all three: K 83% against 85%, L 71% against 63%, M 66% against 58%. Still `draft`: engaged on every history and found nothing, which is
   consistent with the three being healthy and is not yet a demonstration.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  Engaged with its shape, on Q: care fifteen points lower in the two
+  fastest windows than in the two slowest (44% against 59%) after the
+  fixture rule, twenty-seven before it. The history's pace fell across the
+  span while its care rose — 48% to 57% by halves — so the fast windows
+  are also the early ones, and pace and time are confounded here; the
+  extractor prints the time reading beside the finding for that reason. Not
+  below on O, P, R and S. Still `draft`: one engagement, confounded.

@@ -196,3 +196,16 @@ Three limitations to state in any case file citing this rule:
   M read reasoning alongside 31% of code-bearing changes, below the bar.
   Still `draft`: it has yet to find a relied-on practice without a carrier
   on a real history.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  No finding on all five: where a practice cleared the reliance bar, on O
+  and S, it had a carrier. Still `draft`.

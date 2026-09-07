@@ -212,3 +212,19 @@ Two limitations to state in any case file citing this rule:
   stated: on a squash history R-008 sees no care at all, while R-021 reads the
   same declaration through test accompaniment and can. K and M declare no
   owners.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  On O, the one history with both merges and an ownership file, the
+  declaration covers every file and every merge sits below its median owner
+  count: one side, not applicable. P, Q, R and S declare nothing at the tip
+  or land without merges. Still `draft`: its partition has yet to yield
+  two sides on a real history.

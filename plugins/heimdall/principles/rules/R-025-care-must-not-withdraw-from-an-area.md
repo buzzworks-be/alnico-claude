@@ -94,3 +94,21 @@ Limitations to state in a case file:
   22 areas, 13 judged, and no area's care fell away from the repository's.
   The rule's only candidate was an instrument artefact and the instrument is
   fixed; it has yet to engage on a real history.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  Engaged on Q after the fixture rule: one of twenty-one areas judged, a
+  lint-plugin package, fell from 71% to 41% while the repository rose from
+  49% to 52%. Its second-half landings read as changelogs, version
+  preparation and configuration compatibility beside one large port — an
+  area whose work changed character is the first exemption, and a reader
+  decides. No area withdrew on O, P, R or S. Still `draft`: one
+  engagement on a real history, unadjudicated.

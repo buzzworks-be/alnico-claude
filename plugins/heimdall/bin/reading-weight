@@ -81,7 +81,11 @@ MACHINE_ONDEMAND = re.compile(
     r"^\.(claude|cursor|wolf|ai|agent)/"
     r"|(^|/)SKILL\.md$|(^|/)(skills|agents|commands)/[^/]+\.md$", re.I)
 CHARS_PER_TOKEN = 4          # the standard rough heuristic; see S-6
-HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+\S|^\s{0,3}(=+|-+)\s*$")
+# Markdown's #, AsciiDoc's =, and a reStructuredText underline or overline in
+# any of the characters the format allows — the first version knew = and -
+# only, and read a fourteen-hundred-line reference page sectioned with ~ and ^
+# as one unbroken span.
+HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+\S|^={1,6}\s+\S|^\s{0,3}([=\-~^\"'+*#`:.<>_])\1{2,}\s*$")
 
 
 def git(*args):

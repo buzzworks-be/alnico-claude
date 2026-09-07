@@ -113,3 +113,23 @@ Limitations to state in a case file:
   renamed across documentation, two lint sweeps, two bumps. All exemptions the
   rule already lists. Still `draft`: the survivors that read as the shape
   remain the ones from the first calibration history.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  Candidates on all five — six on O, five on P, three on Q, twenty-seven on
+  R, one on S — after two shapes joined the list: a clean-up whose source
+  churn is two-thirds deletion is a clean-up (it removed nine on R, two on
+  P, three on Q), and a formatter run is not capped at sixty files. What
+  remains: on O, dependency bumps that forced a hundred to three hundred
+  source lines; on R, renames and clean-ups of a thousand lines and more; on
+  S, one formatter run whose changes went beyond whitespace. The subject is
+  the finding and a reader says what it should have said. Still `draft`:
+  engaged on every history, unadjudicated.

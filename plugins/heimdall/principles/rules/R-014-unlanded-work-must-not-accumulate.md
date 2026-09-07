@@ -14,7 +14,10 @@ applies-to:
 Where a repository removes branch refs when work lands, the branches that
 survive are work that did not. Such work must not be begun and left, window
 after window: stale outstanding branches — last commit older than one window —
-must not have been started in three or more consecutive windows.
+must not have been started in three or more consecutive windows, while the
+stale stock amounts to at least one window of the trunk's throughput. A run
+without a stock — begun and left in consecutive windows, but the whole of it
+a fraction of what lands in one — is an observation, not accumulation.
 
 The claim is about the repository's habit, not about any branch. A single
 abandoned branch is a decision; a stream of them is a process property, and
@@ -171,3 +174,25 @@ Limitations to state in a case file:
   64 and the stale stock fell to 709, three and a half windows — the same
   reading, less of it borrowed from release lines. On M, eight stale; on K,
   none.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  Engaged with its shape on O: 716 outstanding branches on a repository
+  that removes refs when work lands, 693 of them stale — seven and a half
+  windows of throughput — begun and left in three consecutive windows, the
+  oldest survivors feature branches eight and nine years old. One reading,
+  so held to an observation as the rule requires; the shape is there. And a
+  defect on R: three consecutive windows of stale work begun, on a stock of
+  272 against eleven hundred landings a window — a fifth of one window. A
+  run without a stock is not accumulation, and the statement now says so:
+  the stale stock must amount to at least one window of throughput. Q, P
+  and S: old, not growing. Still `draft`: one engagement, held to an
+  observation until a second reading.

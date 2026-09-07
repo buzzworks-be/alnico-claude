@@ -39,9 +39,20 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
 from classify import NOISE_RE, kind  # noqa: E402
 
-TYPED_RE = re.compile(r"^\s*([a-z]+)(\([^)]*\))?!?:\s+\S", re.I)
+# One type, or several joined by / or , — "BUG/ENH:", "TYP, STY:" — before
+# the colon. A repository's OWN vocabulary is learned from the window: a
+# prefix on at least two percent of landings, and ten of them, is a type here
+# whatever the conventional-commit list says. A numerical library typing every
+# subject MAINT:, BUG:, ENH:, DOC: read as fifteen percent typed until it was.
+TYPED_RE = re.compile(r"^\s*([a-z]+(?:\s*[/,]\s*[a-z]+)*)(\([^)]*\))?!?:\s+\S", re.I)
 KNOWN_TYPES = {"feat", "fix", "docs", "doc", "test", "tests", "chore", "refactor", "perf",
                "ci", "build", "style", "revert", "deps", "release", "wip", "types"}
+LEARN_SHARE, LEARN_MIN = 0.02, 10
+
+
+def type_tokens(subject):
+    m = TYPED_RE.match(subject)
+    return [t.strip().lower() for t in re.split(r"[/,]", m.group(1))] if m else []
 # What each restrictive type may carry. Absent types (feat, fix, refactor,
 # perf, chore) may carry anything and are never candidates.
 TOOLING_RE = re.compile(
@@ -64,10 +75,11 @@ TOOLING_RE = re.compile(
 HOME_MIN_TOUCH = 0.50
 HOME_RATIO = 2.0
 HOME_MIN_LANDINGS = 10
-SOURCE_TYPES = {"feat", "fix", "refactor", "perf"}
-TEST_TYPES = {"test", "tests"}
-RESTRICTIVE = {"docs": "docs", "doc": "docs", "test": "test", "tests": "test",
-               "ci": "tooling", "build": "tooling", "style": "style"}
+SOURCE_TYPES = {"feat", "fix", "refactor", "perf", "bug", "enh", "api"}
+TEST_TYPES = {"test", "tests", "tst"}
+RESTRICTIVE = {"docs": "docs", "doc": "docs", "test": "test", "tests": "test", "tst": "test",
+               "ci": "tooling", "build": "tooling", "bld": "tooling", "dev": "tooling",
+               "style": "style", "sty": "style"}
 TRIVIAL_RE = re.compile(
     r"\b(typos?|spelling|misspell\w*|whitespace|formatting|reformat\w*|prettier|lint(ing|er)?|"
     r"clippy|rename\w*|bump(ed|ing)?|version bump|nits?|cleanups?|clean ?up|tidy\w*|"
@@ -118,9 +130,11 @@ def content(diff_range):
     return ns, st
 
 
-def whitespace_neutral(diff_range, max_files=60):
+def whitespace_neutral(diff_range, max_files=1000):
     """True if every file's added lines equal its removed lines once whitespace
-    is stripped — the shape of a formatter run."""
+    is stripped — the shape of a formatter run. The cap was sixty files until a
+    formatter run over 132 files on a held-out history fell outside it and read
+    as substantial."""
     out = tg("diff", "--unified=0", "-M", *diff_range)
     added, removed, files = [], [], 0
     for line in out.splitlines():
@@ -167,10 +181,15 @@ def main():
         print("S-15: no landings in window.")
         return 0
 
-    typed = [c for c in commits if TYPED_RE.match(c["subject"]) and
-             TYPED_RE.match(c["subject"]).group(1).lower() in KNOWN_TYPES]
+    counts = collections.Counter(t for c in commits for t in type_tokens(c["subject"]))
+    learned = {t for t, n in counts.items()
+               if t not in KNOWN_TYPES and n >= max(LEARN_MIN, LEARN_SHARE * len(commits))}
+    vocab = KNOWN_TYPES | learned
+    typed = [c for c in commits if type_tokens(c["subject"])
+             and all(t in vocab for t in type_tokens(c["subject"]))]
     share = len(typed) / len(commits)
-    print(f"S-15: {len(commits)} landing(s) on {ref}; typed subjects: {len(typed)} ({share:.1%}).")
+    print(f"S-15: {len(commits)} landing(s) on {ref}; typed subjects: {len(typed)} ({share:.1%})."
+          + (f" Learned from this history: {', '.join(sorted(learned))}." if learned else ""))
 
     # ---- R-019 ------------------------------------------------------------
     cands_019, examined = [], 0
@@ -178,13 +197,13 @@ def main():
         print(f"R-019: NOT APPLICABLE — typed subjects are not this repository's convention "
               f"({share:.1%} of landings, bar {a.convention:.0%}).")
     else:
-        types = collections.Counter(TYPED_RE.match(c["subject"]).group(1).lower() for c in typed)
+        types = collections.Counter(type_tokens(c["subject"])[0] for c in typed)
         print("  types: " + ", ".join(f"{t} {n}" for t, n in types.most_common(10)))
         # Learn the homes from which typed landings touch which directories.
         cache, n_src, n_test = {}, 0, 0
         touch_src, touch_test = collections.Counter(), collections.Counter()
         for c in typed:
-            t = TYPED_RE.match(c["subject"]).group(1).lower()
+            t = type_tokens(c["subject"])[0]
             ns, st = content(c["range"]); cache[c["sha"]] = (ns, st)
             grp = "src" if t in SOURCE_TYPES else ("test" if t in TEST_TYPES else None)
             if not grp:
@@ -227,9 +246,11 @@ def main():
             return kind(p) == "code" and in_dirs(p, source_homes) and not in_dirs(p, test_homes)
 
         for c in typed:
-            t = TYPED_RE.match(c["subject"]).group(1).lower()
-            if t not in RESTRICTIVE:
+            ts = type_tokens(c["subject"])
+            # A subject claiming several types is restricted only if all are.
+            if any(t not in RESTRICTIVE for t in ts):
                 continue
+            t = ts[0]
             examined += 1
             ns, st = cache[c["sha"]]
             home = RESTRICTIVE[t]
@@ -286,8 +307,7 @@ def main():
         return None
 
     trivial = [c for c in commits if trivial_claim(c["subject"]) and
-               not (TYPED_RE.match(c["subject"]) and
-                    TYPED_RE.match(c["subject"]).group(1).lower() in ("feat", "fix", "refactor", "perf"))]
+               not (type_tokens(c["subject"]) and type_tokens(c["subject"])[0] in SOURCE_TYPES)]
     cands_020 = []
     for c in trivial:
         ns, st = content(c["range"])
@@ -307,6 +327,15 @@ def main():
             continue        # a sweep: many files, a few lines each — the shape of a lint fix
         if m.startswith("bump") and ns and all(kind(p) == "noise" or TOOLING_RE.match(p) for p, _, _ in ns):
             continue
+        # A clean-up that DELETES is a clean-up: dead code, a retired flag, an
+        # experiment wound down. Deletion-dominant source churn is the shape of
+        # the word. Seen as the top of the list on three held-out histories —
+        # 1355, 4956 and 2203 "source lines" that were removals.
+        if m in ("cleanup", "clean up", "clean-up", "cleanups", "tidy", "tidying", "dead code", "unused"):
+            adds = sum(add for p, add, _ in ns if kind(p) == "code" and not TOOLING_RE.match(p))
+            dels = sum(dele for p, _, dele in ns if kind(p) == "code" and not TOOLING_RE.match(p))
+            if dels >= 2 * adds:
+                continue
         if m in ("whitespace", "formatting", "prettier", "reformat", "reformatting", "lint", "linting",
                  "linter", "clippy", "tidy", "tidying") and whitespace_neutral(c["range"]) is True:
             continue

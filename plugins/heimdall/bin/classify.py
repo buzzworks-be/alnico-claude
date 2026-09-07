@@ -119,8 +119,22 @@ CONFIG_RE = re.compile(
 CONFIG_NAME_RE = re.compile(r"(^|/)(CMakeLists\.txt|(requirements|constraints)[^/]*\.txt|requirements/[^/]+\.txt)$", re.I)
 
 
+# A fixture or snapshot directory INSIDE a test directory holds tests: a
+# fixture-driven suite expresses its cases as fixtures, and a snapshot updated
+# beside a change is the suite run and its expectations revised. Binary
+# fixtures stay noise by extension. Until 2026-09-07 fixtures were noise
+# wherever they sat, and a history whose largest suite is fixture-driven read
+# as losing care in its busiest quarters.
+FIXTURE_RE = re.compile(r"(^|/)(__snapshots__|snapshots?|fixtures?)(/)", re.I)
+TEST_DIR_RE = re.compile(r"(^|/)(tests?|__tests__|spec|specs|e2e|testing|(?!latest/)[a-z0-9_-]*tests?)/", re.I)
+BINARY_RE = re.compile(r"\.(svg|png|jpg|jpeg|gif|ico|pdf|woff2?)$", re.I)
+
+
 def kind(path):
     """'noise', 'doc', 'test', 'config' or 'code' — see the module docstring for the order."""
+    m = FIXTURE_RE.search(path)
+    if m and not BINARY_RE.search(path) and TEST_DIR_RE.search(path[:m.start() + 1]):
+        return "test"
     if NOISE_RE.search(path):
         return "noise"
     if CONFIG_NAME_RE.search(path):

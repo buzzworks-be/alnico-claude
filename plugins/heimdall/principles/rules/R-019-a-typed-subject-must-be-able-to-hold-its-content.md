@@ -139,3 +139,22 @@ Limitations to state in a case file:
   the top fourteen all `docs:` landings editing documentation kept in source
   files, and `build:` landings vendoring dependencies — the two exemptions
   above. Still `draft`: engaged, and what it listed was innocent.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  Formed twice. On S, typing 98% of its subjects in the conventional
+  vocabulary, every restrictive type held its content. On P it read as 15%
+  typed until the signal learned the history's own vocabulary — MAINT,
+  BUG, ENH, DOC, TST, TYP, on 93% of landings — and then every restrictive
+  type held its content there too. Stood down on O, Q and R; R tags every
+  subject in brackets rather than with a type and a colon, a convention the
+  pattern does not yet read. Still `draft`: formed on two real histories,
+  both passes.

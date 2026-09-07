@@ -208,3 +208,19 @@ Limitations to state in any case file citing this rule:
   them; 80% on M with twenty-four, the top of the list patches ported from
   the upstream editor, which is the exemption above. Still `draft`, two days
   old and with one exemption per history so far.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  Applied on four — O at 97%, P at 81%, R at 68%, S at 93% — and stood
+  down on Q at 43%. Candidates: two on O, eight on P, two on S, 374 on R,
+  where a bundled API console checked in whole registered as seven thousand
+  decisions in seventy-one lines until a per-line cap named it a bundle.
+  Still `draft`: candidates on every history, none yet read.

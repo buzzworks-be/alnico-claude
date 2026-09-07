@@ -163,3 +163,20 @@ whether they name anything.
   which is a lookup list the non-prose exemption should have recognised and
   did not, because a bulleted list is prose to the measure; and a real
   sixty-page section of an operations manual. None on K or M. Still `draft`.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  Engaged on P once its heading detector learned reStructuredText's
+  adornments: six candidates remain — reference pages of a thousand lines
+  with one to five headings, and a design document of two thousand.
+  Directive blocks still count as prose, the next limitation. On S, a
+  changelog archive (a list, exempt) and two short documents. Still
+  `draft`: candidates that need a reader.

@@ -132,3 +132,22 @@ Two limitations to state in any case file citing this rule:
   unchanged, and none re-landed by subject within the window at all — the
   reverts there are reverts, the healthy shape at scale. On K, one revert
   re-landed changed, the healthy shape. Still `draft`: its one engagement was an exemption.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  Engaged with its shape for the first time, on S: a stack of five commits
+  from one pull request, reverted together and re-landed byte-identical
+  twenty hours later. The revert carries no reason, and the exemptions —
+  release timing, a cause fixed elsewhere — are exactly what git does not
+  record: **cannot tell**, not exempt. On R, eighty reverts and three
+  re-lands, every one changed; on O, P and Q none identical. Still `draft`:
+  its first non-exempt engagement is undecidable from the record, which is
+  the limitation the rule states.

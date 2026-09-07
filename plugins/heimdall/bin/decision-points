@@ -99,6 +99,13 @@ FAMILY = {
 # 2026-09-07 its lines are not code lines either.
 NONE_RE = re.compile(r"(?!x)x")
 COMMENT_START = re.compile(r"^\s*(//|#|/\*|\*|--|<!--|;;?)")
+# A single added line carrying this many decisions, or this many characters,
+# is a bundled or minified program checked in whole — seven thousand decision
+# tokens in seventy-one lines on a held-out history, an offline copy of an API
+# console. Its branching is somebody else's; the line counts, the decisions
+# do not, and the file is named in the output.
+BUNDLE_DECISIONS = 40
+BUNDLE_CHARS = 2000
 # Files with no extension: shell if they look like it, else generic.
 SHEBANG_SHELL = re.compile(r"^#!.*\b(ba|z|k|da)?sh\b")
 
@@ -202,12 +209,18 @@ def read_landing(diffargs):
                 if cur["kind"] != "test" and INLINE_TEST_RE.search(line):
                     inline = True
                 if cur["kind"] == "code" and not COMMENT_START.match(body):
-                    cur["dadd"] += len(cur["pat"].findall(body))
+                    n = len(cur["pat"].findall(body))
+                    if n >= BUNDLE_DECISIONS or len(body) >= BUNDLE_CHARS:
+                        cur["bundled"] = cur.get("bundled", 0) + n
+                    else:
+                        cur["dadd"] += n
             elif line.startswith("-"):
                 body = line[1:]
                 cur["del"] += 1
                 if cur["kind"] == "code" and not COMMENT_START.match(body):
-                    cur["ddel"] += len(cur["pat"].findall(body))
+                    n = len(cur["pat"].findall(body))
+                    if n < BUNDLE_DECISIONS and len(body) < BUNDLE_CHARS:
+                        cur["ddel"] += n
     return files, inline
 
 

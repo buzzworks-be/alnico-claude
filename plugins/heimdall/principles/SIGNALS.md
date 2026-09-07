@@ -157,7 +157,12 @@ must be read for its logic either way. Never quote one file's ratio as exact.
 
 *Structure detection is convention-bound.* Headings are recognised in the
 markdown and rst styles; a document organised some other way reads as
-unstructured when it is not. And any heading counts as an entry point, which
+unstructured when it is not. A heading is recognised by syntax — Markdown's `#`, AsciiDoc's `=`, and a
+reStructuredText underline in any of the characters the format allows — and
+until the second held-out sweep the last knew `=` and `-` only, so a
+fourteen-hundred-line reference page sectioned with `~` and `^` read as one
+unbroken span; a directive block still counts as prose. And any heading
+counts as an entry point, which
 over-credits a document with many shallow headings that do not actually
 partition meaning.
 
@@ -293,6 +298,13 @@ measure of anything about the code.
 
 **Derived rules:** R-012, from the re-land half; R-013, from the file-rewrite
 reading in the same script.
+
+**Method note.** The extractor fingerprinted every later commit once per
+revert, one process pair at a time, and on a history of eighty reverts and
+eleven thousand commits did not finish in forty minutes. It now takes one
+`log -p` through one `patch-id`, one numstat pass, and one `cat-file` batch
+for the line counts R-013 needs: the same output, eighteen seconds on the
+largest stored history.
 
 ---
 
@@ -480,7 +492,13 @@ times. Two symbols under `internal/` had no downstream reader. Three two-day
 closures were one reverted pull request — a notice withdrawn, not a thing
 removed. A rewording in a separate commit read as a fresh notice. And a
 repository migrating text markers to a struct-based mechanism the pattern
-does not know reads as closing every notice at once. And a reading confined
+does not know reads as closing every notice at once. A marker line moved
+between files in one commit read as a closure and a fresh notice, until the
+second held-out sweep. A notice restored by a revert of its removal read as
+a new notice starting at the revert, so the re-done removal a day later was
+a one-day notice on a symbol deprecated years before. A revert landed as a
+merge, whose subject is the platform's and whose reason sits on the body's
+first line, was not seen as a revert. All three are read now. And a reading confined
 to the window: the first held-out run on a repository whose policy keeps a
 notice longer than the window saw 126 opened and none closed, because the
 walk knew nothing of the notices standing open when the window began —

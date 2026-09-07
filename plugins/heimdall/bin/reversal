@@ -38,6 +38,7 @@ Usage:
 import argparse
 import collections
 import json
+import os
 import re
 import subprocess
 import sys
@@ -134,8 +135,7 @@ def landings(ref, since, until, act_gap_min):
 
     def flush():
         if act:
-            out.append(("act", act[0][0], [("show", "--numstat", "--format=", s)
-                                           for s, _ in act], act[0][1]))
+            out.append(("act", act[0][0], [s for s, _ in act], act[0][1]))
             act.clear()
 
     for line in tg("log", "--first-parent", ref, "--reverse", f"--since={since}",
@@ -146,7 +146,7 @@ def landings(ref, since, until, act_gap_min):
         plist, ts = parents.split(), int(ts)
         if len(plist) >= 2:
             flush()
-            out.append(("merge", sha, [("diff", "--numstat", f"{plist[0]}..{sha}")], ts))
+            out.append(("merge", sha, [sha], ts))
         elif ce.strip().lower() in FORGE_COMMITTERS:
             flush()
             act.append((sha, ts))
@@ -159,9 +159,71 @@ def landings(ref, since, until, act_gap_min):
     return out
 
 
-def line_count(ref, path):
-    rc, out = tg_try("show", f"{ref}:{path}")
-    return out.count("\n") if rc == 0 else None
+PATCH_IDS = {}   # sha -> patch-id, every commit in the window with a diff
+
+
+def prefetch_patch_ids(ref, since, until):
+    """One `log -p` piped through one `patch-id`. Per revert, the old code
+    fingerprinted every later commit one process pair at a time — reverts times
+    commits, which on a history of eighty reverts and eleven thousand commits
+    did not finish in forty minutes. A merge, or a commit with no diff, has no
+    line here and falls back to the per-commit call."""
+    log = subprocess.Popen([str(ROOT / "bin" / "target-git"), "log", ref, f"--since={since}",
+                            f"--until={until}", "-p", "--format=commit %H"], stdout=subprocess.PIPE)
+    pid = subprocess.run(["git", "patch-id", "--stable"], stdin=log.stdout, capture_output=True, cwd=str(ROOT))
+    log.wait()
+    for line in pid.stdout.decode("ascii", "replace").splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            PATCH_IDS[parts[1]] = parts[0]
+
+
+def patch_id_of(sha):
+    if sha in PATCH_IDS:
+        return PATCH_IDS[sha]
+    return patch_id("show", "--format=", sha)
+
+
+NUMSTAT = {}     # sha -> [(add, dele, path)], the first-parent diff of every trunk commit in the window
+
+
+def prefetch_numstat(ref, since, until):
+    """One pass. `git log --first-parent --numstat` diffs a merge against its
+    first parent, which is what the landing unit wants; `-M` so a rename is a
+    small diff, as the per-commit calls it replaces had it. Eleven thousand
+    landings on one history took forty minutes one call at a time."""
+    sha = None
+    for line in tg("log", "--first-parent", ref, f"--since={since}", f"--until={until}",
+                   "--numstat", "-M", "--format=%x01%H").splitlines():
+        if line.startswith("\x01"):
+            sha = line[1:].strip(); NUMSTAT.setdefault(sha, [])
+            continue
+        c = line.split("\t")
+        if sha and len(c) == 3 and c[0].isdigit() and c[1].isdigit():
+            NUMSTAT[sha].append((int(c[0]), int(c[1]), c[2]))
+
+
+def line_counts(pairs):
+    """{(ref, path): lines} for many files in one cat-file process; a spec
+    that names nothing is absent from the result."""
+    specs = sorted({f"{r}:{p}" for r, p in pairs})
+    if not specs:
+        return {}
+    p = subprocess.run([str(ROOT / "bin" / "target-git"), "cat-file", "--batch"],
+                       input=("\n".join(specs) + "\n").encode(), capture_output=True)
+    out, buf, i = {}, p.stdout, 0
+    for spec in specs:
+        nl = buf.find(b"\n", i)
+        if nl < 0:
+            break
+        head = buf[i:nl].decode("utf-8", "replace"); i = nl + 1
+        parts = head.split()
+        if len(parts) == 3 and parts[2].isdigit():
+            size = int(parts[2]); body = buf[i:i + size]; i += size + 1
+            r, _, path = spec.partition(":")
+            out[(r, path)] = body.count(b"\n")
+        # "<spec> missing": nothing follows the header
+    return out
 
 
 def main():
@@ -180,6 +242,8 @@ def main():
     ref = a.ref or default_ref()
 
     cs = commits(ref, a.since, a.until)
+    prefetch_numstat(ref, a.since, a.until)
+    prefetch_patch_ids(ref, a.since, a.until)
     by_sha = {c["sha"]: c for c in cs}
     if not cs:
         print("S-8: no commits in window.")
@@ -225,7 +289,7 @@ def main():
         if rc_full[0] != 0:
             continue
         target_sha = rc_full[1].strip()
-        target_pid = patch_id("show", "--format=", target_sha)
+        target_pid = patch_id_of(target_sha)
         if not target_pid:
             continue
         original_subject = PR_SUFFIX_RE.sub("", by_sha.get(target_sha, {}).get(
@@ -239,7 +303,7 @@ def main():
         for c in later:
             if len(c["parents"]) >= 2:
                 continue
-            if patch_id("show", "--format=", c["sha"]) == target_pid:
+            if patch_id_of(c["sha"]) == target_pid:
                 exact = c
                 break
         if exact:
@@ -272,14 +336,12 @@ def main():
     # ---- R-026: the re-land carries what the first attempt lacked ------------
     def test_and_code(sha):
         test = code = 0
-        for row in tg("show", "--numstat", "-M", "--format=", sha).splitlines():
-            c = row.split("\t")
-            if len(c) == 3 and c[0].isdigit() and c[1].isdigit():
-                k = kind(c[2])
-                if k == "test":
-                    test += int(c[0]) + int(c[1])
-                elif k == "code":
-                    code += int(c[0]) + int(c[1])
+        for add, dele, path in NUMSTAT.get(sha, ()):
+            k = kind(path)
+            if k == "test":
+                test += add + dele
+            elif k == "code":
+                code += add + dele
         return test, code
 
     pairs = [(tsha, again) for _, tsha, again, _ in findings_012] + \
@@ -324,18 +386,15 @@ def main():
     touched_before, touches_prev = set(), 0
     landings_with_files = 0
     revert_shas = {c["sha"] for c, _ in reverts}
-    for k, sha, diffargs, ts in units:
+    pending = []                                 # (parent, path, dele, sha) awaiting a line count
+    for k, sha, shas, ts in units:
         if sha in revert_shas:
             continue        # a revert replaces a file by design; it is correction, not churn
         files = {}
-        for arg in diffargs:
-            for row in tg(*arg).splitlines():
-                cols = row.split("\t")
-                if len(cols) == 3 and cols[0].isdigit() and cols[1].isdigit():
-                    add, dele = int(cols[0]), int(cols[1])
-                    p = cols[2]
-                    prev = files.get(p, (0, 0))
-                    files[p] = (prev[0] + add, prev[1] + dele)
+        for s in shas:
+            for add, dele, p in NUMSTAT.get(s, ()):
+                prev = files.get(p, (0, 0))
+                files[p] = (prev[0] + add, prev[1] + dele)
         if not files:
             continue
         landings_with_files += 1
@@ -348,11 +407,14 @@ def main():
         for p, (add, dele) in files.items():
             if kind(p) == "noise" or dele < a.min_lines * a.rewrite_share:
                 continue
-            before = line_count(parent, p)
-            if before is None or before < a.min_lines:
-                continue
-            if dele / before >= a.rewrite_share:
-                rewrites[p].append(sha)
+            pending.append((parent, p, dele, sha))
+    counts = line_counts([(r, p) for r, p, _, _ in pending])
+    for parent, p, dele, sha in pending:
+        before = counts.get((parent, p))
+        if before is None or before < a.min_lines:
+            continue
+        if dele / before >= a.rewrite_share:
+            rewrites[p].append(sha)
 
     print()
     multi = {p: s for p, s in rewrites.items() if len(s) >= 2}

@@ -49,9 +49,15 @@ DEFAULT_MARKERS = (r"@deprecated\b|#\[deprecated|DeprecationWarning|PendingDepre
                    # A warning class named for deprecation or for the release the thing
                    # goes in: the idiom of the frameworks with the most formal policies,
                    # and the one the held-out sweep found the pattern did not know.
-                   r"|\b\w*(Deprecat|Deprecation|RemovedIn)\w*Warning\b")
+                   r"|\b\w*(Deprecat|Deprecation|RemovedIn)\w*Warning\b"
+                   # Go's schema idiom: a `Deprecated:` FIELD carrying the notice as a
+                   # string, beside the `// Deprecated:` comment form above. A held-out
+                   # infrastructure tool with a deprecation culture read as giving no
+                   # notice at all until this was added.
+                   r"|\bDeprecated:\s*\"")
 DEFAULT_BAR_DAYS = 30        # a notice shorter than this gave nobody time; chosen, not swept
 DEFAULT_MIN_MARKERS = 5      # below this the repository does not evidently give notice
+MOVE_DAYS = 14               # a closure followed by the same notice elsewhere within this many days moved
 
 
 def tg(*args):
@@ -90,9 +96,16 @@ def main():
     # One pass over the first-parent diffs, oldest first. A marker is keyed by
     # (file, normalised line): added at one commit, removed at a later one.
     added, closed, withdrawn = {}, [], []   # key -> (ts, sha) ; (key, t0, t1, s0, s1) ; same
+    reopened = 0
     sha = ts = None; subj = ""; path = None
     c_add, c_rm = {}, {}        # this commit's additions and removals, settled at its end
-    REVERT_RE = re.compile(r"^\s*revert\b", re.I)
+    # A revert landed as a merge says so in the pull request's title, which
+    # sits on the body's first line, or in the branch name the platform put in
+    # the merge subject. The first form alone missed a same-day withdrawal on
+    # a held-out merge-commit history.
+    REVERT_RE = re.compile(r"^\s*revert\b|\bfrom \S*/revert-\d+", re.I | re.M)
+
+    nonlocal_reopen = [0]
 
     def settle():
         # A marker removed and added again in the same commit MOVED — it was
@@ -105,6 +118,16 @@ def main():
         # one help string edited. Only a removal with nothing added in its
         # file closes a notice.
         files_with_adds = {k[0] for k in c_add}
+        # A marker line removed from one file and added to another in the same
+        # commit MOVED between files — code shared out of one module into
+        # another carried its notice with it. Seen on a held-out history as a
+        # fifteen-day "closure" that was a refactor. The notice continues
+        # under the new key with its original start.
+        texts_added = {k[1]: k for k in c_add}
+        for key in list(c_rm):
+            if key not in c_add and key[0] not in files_with_adds and key[1] in texts_added and key in added:
+                added[texts_added[key[1]]] = added.pop(key)
+                del c_rm[key]
         for key in c_rm:
             if key in c_add or key[0] in files_with_adds:
                 continue
@@ -116,7 +139,30 @@ def main():
                 (withdrawn if REVERT_RE.search(subj) else closed).append(
                     (key, t0, c_rm[key][0], s0, c_rm[key][1]))
         for key, v in c_add.items():
-            if key not in added:
+            if key in added:
+                continue
+            # A notice added by a REVERT is an earlier notice restored: the
+            # removal was undone, and the notice's start is the original one,
+            # not the revert's date. Without this, a removal reverted and
+            # re-done a day later read as a one-day notice on a held-out
+            # history, on a symbol deprecated years before.
+            if REVERT_RE.search(subj):
+                prior = [c for c in closed if c[0] == key]
+                if prior:
+                    c0 = prior[-1]; closed.remove(c0)
+                    added[key] = (c0[1], c0[3]); nonlocal_reopen[0] += 1
+                    continue
+            # The same notice text closed in another file within the last
+            # two weeks: the code moved between files across commits — a
+            # module split into a package over a fortnight, on a held-out
+            # history, read as a dozen closures of a day to a week. The
+            # notice continues from its original start.
+            moved = [c for c in closed if c[0][1] == key[1] and 0 <= v[0] - c[2] <= MOVE_DAYS * day]
+            if moved:
+                c0 = moved[-1]; closed.remove(c0)
+                added[key] = (c0[1], c0[3]); nonlocal_reopen[0] += 1
+                continue
+            if True:
                 # A notice added to a file that already carries open notices is
                 # most often a rewording of one of them in a separate commit —
                 # the file had been giving notice all along. It inherits the
@@ -167,12 +213,20 @@ def main():
             seeded += 1
 
     out = tg("log", "--first-parent", "--reverse", ref, f"--since={a.since}", f"--until={a.until}",
-             "-p", "--unified=0", "-M", "--format=%x01%H%x01%ct%x01%s")
-    old_path = None
+             "-p", "--unified=0", "-M", "--format=%x01%H%x01%ct%x01%s%x02%b%x03")
+    old_path = None; in_body = False
     for line in out.splitlines():
         if line.startswith("\x01"):
             settle()
             _, sha, t, subj = line.split("\x01", 3); ts = int(t); path = old_path = None
+            # The subject and the body's first line, for the revert test.
+            s_, _, b_ = subj.partition("\x02")
+            first = next((l.strip() for l in b_.split("\x03")[0].splitlines() if l.strip()), "")
+            subj = s_ + "\n" + first; in_body = "\x03" not in b_
+            continue
+        if in_body:
+            if "\x03" in line:
+                in_body = False
             continue
         if line.startswith("--- "):
             p = line[4:]; old_path = None if p == "/dev/null" else (p[2:] if p.startswith("a/") else p)
@@ -194,9 +248,11 @@ def main():
     settle()
 
     n_total = len(added) + len(closed) + len(withdrawn)
+    reopened = nonlocal_reopen[0]
     print(f"S-14: markers /{a.markers[:40]}…/ on {ref}: {seeded} notice(s) open at the window's start, "
           f"{max(0, n_total - seeded)} opened in it; {len(closed)} closed (the thing removed), "
-          f"{len(withdrawn)} withdrawn (the deprecation reverted), {len(added)} still open.")
+          f"{len(withdrawn)} withdrawn (the deprecation reverted), {len(added)} still open"
+          + (f"; {reopened} closure(s) that were a revert undone or a move between files, counted from the original notice" if reopened else "") + ".")
     if n_total < a.min_markers:
         print()
         print(f"R-018: NOT APPLICABLE — {n_total} deprecation notice(s) in the window, below "

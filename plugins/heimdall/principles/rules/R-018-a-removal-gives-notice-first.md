@@ -157,3 +157,34 @@ Limitations to state in a case file:
   `draft`: it has formed its reading on the culture it was built for and
   found what a formal policy predicts, which is a working instrument and
   not yet an engagement.
+
+- **Second held-out sweep, 2026-09-07.** Five public histories chosen for the
+  shapes the drafts still needed, and used only to confirm: O, an
+  infrastructure tool landing by merge commit, applied patch and squash, with
+  a catch-all ownership file (about nine hundred trunk commits a year); P, a
+  numerical library landing by merge commit with a formal deprecation policy
+  (about fourteen hundred); Q, a UI library that reverts and re-lands, landing
+  by squash, with a fixture-driven suite (about eight hundred and fifty); R,
+  an inference engine whose pace tripled in the year, landing by squash (about
+  eleven and a half thousand); S, a framework typing every subject, landing by
+  rebase (about four thousand).
+  Engaged with its shape, on R: 109 notices closed in the year at a median
+  of 86 days, 32 of them under thirty — a field marked "will be removed in
+  v0.16" and removed seven days later by a sweep of things "due for
+  removal", a registry entry at nine days, a tokenizer at eleven. That is
+  the shape the rule tests, on a repository whose pace tripled, and the
+  first run had read 43 before three amendments took the innocent ones
+  out: a notice restored by a revert re-opens the earlier one; a marker
+  line moving between files in one commit, or into another file within a
+  fortnight, moved — R split its configuration module into a package over
+  two weeks and a dozen closures of a day to a week were that; and a
+  revert landed as a merge is read from the pull request's title. On P,
+  the formal policy chosen for it, 71 closures at a median of 839 days and
+  none under 71, once a same-day withdrawal by a merge-landed revert was
+  seen as one; on S, 47 at a median of 820 days and two under the bar, a
+  symbol added and deleted between releases and a notice on an internal
+  instruction, both exemptions. On O and Q, below the marker floor — O
+  gives notice by no marker the pattern knows, the Go field form included.
+  Still `draft`, `advisory`: engaged with its shape on one history, and
+  whether anything downstream depended on what went in a week is what git
+  does not carry.

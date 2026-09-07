@@ -270,7 +270,15 @@ documentation, and the `FooTest.java` suffix rule is case-sensitive. Each
 moves files only on repositories that have such files; none of the six
 band-sweep histories did, so the bands stand, and these are the first
 changes to the classifier since it was unified, recorded here for that
-reason.
+reason. The second held-out sweep, the same day, added one that does move
+bands: **a fixture or snapshot directory inside a test directory holds
+tests.** A fixture-driven suite expresses its cases as fixtures, and a
+snapshot revised beside a change is the suite run and its expectations
+updated; fixtures had been noise wherever they sat, and a UI library whose
+largest suite is fixture-driven read as testing 41% of its landings above
+100 lines and losing care in its busiest quarters — 54% once its fixtures
+counted, and judged. The re-sweep of the ten histories under that rule is
+recorded with the second sweep below.
 
 **The classifier gained a configuration class on 2026-09-07**, the change the
 unification note above deferred. Configuration — manifests, pipeline and
@@ -346,6 +354,46 @@ non-text byte in a diff; two extractors ran out of time on the histories
 chosen for them; and the classifier read translation catalogs as
 code, licence files as code, and a file named `…test.html` as a test.
 Each rule's own history carries its result by the letters K, L and M.
+
+**The second held-out sweep ran on 2026-09-07**, five public histories chosen
+for the shapes the drafts still needed — an infrastructure tool landing by
+merge commit with an ownership file and a deprecation culture (O), a
+numerical library landing by merge commit with a formal deprecation policy
+(P), a UI library that reverts and re-lands with a fixture-driven suite
+(Q), an inference engine whose pace tripled in the year (R), a framework
+typing every subject with frequent reverts (S) — and used only to confirm.
+Every draft rule ran on all five, three times where an amendment changed
+what it read. **No rule was promoted, and seven engaged with their shape on
+a real history for the first time:** R-012, a stack of five commits
+reverted together and re-landed byte-identical twenty hours later, with no
+reason in the record; R-013, three source files each rewritten by three
+landings in a year; R-014, a stale stock of seven and a half windows of
+throughput begun and left window after window; R-024, care fifteen points
+lower in the fastest windows than the slowest; R-025, one package's care
+withdrawing while the repository's rose; R-026, seven re-lands without the
+tests the first attempt lacked; R-018, a deprecation culture removing
+things within weeks of marking them. What holds every one at draft is the
+same thing: the exemptions each rule lists — a revert taken for timing, a
+cause fixed elsewhere, an area that changed character, a symbol never
+released — are what git does not record, so the adjudication is a reader's,
+and a case file's, not the sweep's. R-019 formed on two histories and
+passed both, one of them only after the signal learned the history's own
+type vocabulary; R-010, R-020, R-023 and R-027 engaged with candidates or
+observations that need a reader; R-008, R-009, R-015, R-017, R-021 and
+R-022 found nothing or could not run. **The instrument changed in nine
+places**, each recorded where it was fixed: the reversal extractor did not
+finish on the largest history in forty minutes and reads it in one; a
+fixture inside a test directory is a test; a notice re-added by a revert,
+moved between files in one commit or across a fortnight, or withdrawn by a
+revert landed as a merge, is read as what it is; the typed-subject signal
+learns a history's vocabulary; a deletion-dominant clean-up is a clean-up
+and a formatter run is not capped at sixty files; every reStructuredText
+adornment is a heading; a line that is a program by itself is a bundle;
+a run of stale windows without a stock is not accumulation; and attaching
+from a local mirror records the mirror's remote. The fixture rule, re-swept
+across the ten histories above, moved one candidate on C and one point on
+two bands of L and M: the bands stand. Each rule's own history carries its
+result by the letters O to S.
 
 **R-008** (P-5) is the first rule in the frame to take its standard from the
 target's own declarations rather than from Heimdall: it compares the review

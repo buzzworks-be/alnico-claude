@@ -68,6 +68,7 @@ DEFAULT_WINDOWS = 4
 DEFAULT_MIN_STALE = 5
 DEFAULT_MIN_LANDED = 5        # landings needed before a retention convention is read
 DEFAULT_RUN = 3               # consecutive windows with stale work begun
+DEFAULT_STOCK_WINDOWS = 1.0   # stale stock, in windows of throughput, below which a run is not accumulation
 DEFAULT_RETENTION_BAR = 0.20   # landed branches still holding a ref, above which
                                # the stock cannot be read as outstanding
 
@@ -345,7 +346,17 @@ def main():
     else:
         grew = None
         print("  one reading: inflow only — survivors by start date, nothing about growth.")
-    if best >= DEFAULT_RUN and grew is not False:
+    stock_windows = len(stale) / rate if rate else float("inf")
+    if best >= DEFAULT_RUN and stock_windows < DEFAULT_STOCK_WINDOWS:
+        # A run without a stock: begun and left in consecutive windows, but the
+        # whole of it is a fraction of one window's landings. Seen on a history
+        # landing eleven hundred branches a window with 272 stale — the run
+        # was three, the stock a fifth of a window. Accumulation is relative
+        # to throughput or it is not accumulation.
+        print(f"R-014: no finding — stale work was begun in {best} consecutive window(s), but the")
+        print(f"  stale stock is {stock_windows:.1f} window(s) of throughput, under {DEFAULT_STOCK_WINDOWS:.0f}:")
+        print("  what is left behind is a fraction of what lands. An observation, not accumulation.")
+    elif best >= DEFAULT_RUN and grew is not False:
         print("R-014: CANDIDATE FINDING — outstanding work accumulates across consecutive windows.")
         print("  Work was begun and left in nearly every window, on a repository that")
         print("  removes refs when work lands — so what survives did not land here.")
