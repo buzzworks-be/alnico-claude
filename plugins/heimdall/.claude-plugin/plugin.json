@@ -1,6 +1,6 @@
 {
   "name": "heimdall",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "description": "Read a repository you do not touch, and write a case file about how the work in it was produced.",
   "author": {
     "name": "Jan Van Coppenolle"

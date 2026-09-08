@@ -183,7 +183,11 @@ if [ "${#case_files[@]}" -gt 0 ]; then
   fi
 fi
 
-rm -rf .heimdall
+# The attachment goes; the salt stays. It is what lets a closed case be
+# re-opened under its own codename (bin/attach-target.sh), it names nothing,
+# and it is gitignored with the rest of the directory.
+find .heimdall -mindepth 1 -maxdepth 1 ! -name salt -exec rm -rf {} +
+rmdir .heimdall 2>/dev/null || true
 # Files under other codenames are invisible from here otherwise, and an
 # operator who purges one case can believe the machine is clean when it is not.
 # Codenames are safe to print; they name no repository. The case just closed

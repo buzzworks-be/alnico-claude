@@ -121,6 +121,29 @@ if os.path.isfile(meta):
     except (ValueError, OSError):
         pass
 
+# A closed case re-opened for the same URL keeps its codename too, or the
+# closer's own advice — "re-attach its target to close it" — would draw a
+# fresh codename and leave the old case's files where they were, which is
+# what happened the first time it was followed. The link is a keyed hash of
+# the URL under a salt that lives beside the state and never leaves it:
+# case.json still records no URL, and nobody holding the case directory
+# alone can turn the key back into one.
+import hmac, hashlib
+salt_path = state / ".heimdall" / "salt"
+if not salt_path.is_file():
+    salt_path.parent.mkdir(parents=True, exist_ok=True)
+    salt_path.write_bytes(os.urandom(32))
+key = hmac.new(salt_path.read_bytes(), url.encode(), hashlib.sha256).hexdigest()
+if (state / "cases").is_dir():
+    for d in sorted((state / "cases").iterdir()):
+        cj = d / "case.json"
+        try:
+            if cj.is_file() and json.load(open(cj)).get("targetKey") == key:
+                print(d.name)
+                sys.exit(0)
+        except (ValueError, OSError):
+            pass
+
 words = [w.strip() for w in Path(os.environ["HEIMDALL_HOME"]).joinpath(
     "bin", "codenames.txt").read_text().splitlines()
          if w.strip() and not w.startswith("#")]
@@ -159,9 +182,9 @@ PY
 # the target: no URL, no owner, no paths. The target's identity stays in
 # .heimdall/, which is gitignored for that reason.
 case_dir="$("$ROOT/bin/case-dir")"
-python3 - "$STATE/cases/$codename/case.json" "$codename" <<'PY'
-import json, os, sys, datetime
-path, codename = sys.argv[1:3]
+python3 - "$STATE/cases/$codename/case.json" "$codename" "$url" "$STATE" <<'PY'
+import json, os, sys, datetime, hmac, hashlib
+path, codename, url, state = sys.argv[1:5]
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 data = {"codename": codename, "opened": now, "closed": None, "readings": 0}
 if os.path.isfile(path):
@@ -170,6 +193,11 @@ if os.path.isfile(path):
     except ValueError:
         pass
 data["codename"] = codename
+# The keyed link back to the target (see the codename block): a hash under
+# the state's own salt, never the URL.
+salt = open(os.path.join(state, ".heimdall", "salt"), "rb").read()
+data["targetKey"] = hmac.new(salt, url.encode(), hashlib.sha256).hexdigest()
+data["closed"] = None
 json.dump(data, open(path, "w"), indent=2)
 open(path, "a").write("\n")
 PY
