@@ -49,7 +49,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 # One classifier for every script that bins by lines of code. See bin/classify.py.
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, TEST_RE, DOC_RE, FORGE_COMMITTERS, kind  # noqa: E402
+from classify import NOISE_RE, TEST_RE, DOC_RE, FORGE_COMMITTERS, kind as file_kind  # noqa: E402
 
 # An area that IS the repository's tests, docs or examples is accompaniment,
 # not spread: a change that lands with its tests and its docs is one decision
@@ -333,10 +333,10 @@ def main():
                     p = c[2]
                     if "=>" in p:
                         p = re.sub(r"\{[^}]*=> ([^}]*)\}", r"\1", p)
-                    if kind(p) in ("code", "test"):
+                    if file_kind(p) in ("code", "test"):
                         code += int(c[0]) + int(c[1])
         mech = sum(1 for p, st in files.items()
-                   if st == "R" or kind(p) in ("noise", "config") or CHANGELOG_RE.search(p))
+                   if st == "R" or file_kind(p) in ("noise", "config") or CHANGELOG_RE.search(p))
         # A landing that is all tests (or all benchmarks) is accompaniment
         # however many areas it spans: a test refactor across a workspace is
         # one decision about tests. Seen as the fifth-widest landing on a
