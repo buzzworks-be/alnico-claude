@@ -98,3 +98,20 @@ Limitations to state in a case file:
   process property reported as an observation. Not applicable on the three
   squash and rebase histories. Still `draft`, `advisory`: three merge
   histories seen, none with a flattening to find.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Formed on two merge-commit histories: T flat at +0.01; V at +0.14 with
+  bigger changes waiting longer — the first history to pass the rule outright.
+  Still `draft`, `advisory`: a pass and a flat, no flattening yet.

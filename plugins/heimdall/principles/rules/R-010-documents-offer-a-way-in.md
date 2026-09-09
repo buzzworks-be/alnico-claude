@@ -180,3 +180,22 @@ whether they name anything.
   Directive blocks still count as prose, the next limitation. On S, a
   changelog archive (a list, exempt) and two short documents. Still
   `draft`: candidates that need a reader.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Candidates on U (a library README with 679 unbroken lines), V (manual
+  pages of nine hundred lines under three headings) and Y (vendored
+  changelogs). V's were option lists read as prose, which the check now
+  counts as lookup; Y's were a vendored tree the classifier now knows.
+  Still `draft`.

@@ -395,6 +395,31 @@ across the ten histories above, moved one candidate on C and one point on
 two bands of L and M: the bands stand. Each rule's own history carries its
 result by the letters O to S.
 
+**The third held-out sweep ran on 2026-09-09**, six histories chosen from a
+survey of twenty-six not only for the drafts' shapes but for a record that
+carries what their exemptions turn on: reverts that say why, an ownership
+file, a stated deprecation policy. That was the second sweep's lesson, and
+it held. **R-012 engaged seven times and the record decided five**: a
+diagnostic revert cleared by an unchanged re-land, three deferrals for a
+release, and two reverts with no reason at all — every decidable one an
+exemption, read from the revert message. **R-021 survived its exemptions
+for the first time**, on a declaration after which care did not move where
+the ownership file states no routing purpose. **R-019 produced its first
+standing candidate**, a dependency upgrade typed `build` carrying 560
+source lines. **R-017 engaged at scale** on the one history known for
+maintainer-crafted merges, and every candidate read was the coexistence
+fix-up its exemption names. R-023 passed outright on that history. R-018
+met a stated policy and passed. No rule was promoted: the standing
+engagements are one each, and the rest dissolved on reading, decidably.
+**Eight instrument defects**, each fixed where it was found: a header line
+misread in a deprecation walk; two marker patterns matching identifiers and
+enum members; the `t/` test convention and `deps/` vendored trees unknown
+to the classifier; option and definition lists read as prose; a feature
+named after a trivial word read as a trivial subject; inline test content
+invisible to the typed-subject check; and the leak guard matching a
+four-letter target name inside unrelated identifiers. Each rule's history
+carries its result by the letters T to Y.
+
 **R-008** (P-5) is the first rule in the frame to take its standard from the
 target's own declarations rather than from Heimdall: it compares the review
 window given to `CODEOWNERS`-declared paths against everything else in the same

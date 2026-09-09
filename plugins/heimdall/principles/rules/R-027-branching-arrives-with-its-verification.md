@@ -224,3 +224,19 @@ Limitations to state in any case file citing this rule:
   where a bundled API console checked in whole registered as seven thousand
   decisions in seventy-one lines until a per-line cap named it a bundle.
   Still `draft`: candidates on every history, none yet read.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Applied on U (90%), W (89%), Y (76%) with 41, 22 and 25 candidates; stood
+  down on T, V and X. Still `draft`: candidates unread.

@@ -31,7 +31,9 @@ The order of tests is the definition, and it is deliberate:
          with its own re-sweep, recorded in principles/README.md.
   code   everything else.
 
-Amended on 2026-09-07 by the held-out sweep, in three places and then by the
+Amended on 2026-09-09 by the third held-out sweep: the `t/` convention of git
+and Perl is a test directory, and `deps/` is a vendored tree. Amended on
+2026-09-07 by the held-out sweep, in three places and then by the
 configuration class above: a directory
 whose name ends in "test" is a test directory; translation catalogs (.po,
 .pot, .mo) are noise; licence, notice, authorship and ownership files are
@@ -52,7 +54,7 @@ line of code" and unifying them here would be a category error.
 import re
 
 NOISE_RE = re.compile(
-    r"(^|/)(vendor|vendored|node_modules|third[-_]party|dist|build|generated|__snapshots__|snapshots?|fixtures?)(/)"
+    r"(^|/)(vendor|vendored|node_modules|third[-_]party|deps|dist|build|generated|__snapshots__|snapshots?|fixtures?)(/)"
     r"|(lock|\.lock)$|package-lock\.json$|yarn\.lock$|pnpm-lock\.yaml$|poetry\.lock$"
     r"|go\.sum$|Cargo\.lock$|composer\.lock$|Gemfile\.lock$"
     r"|\.min\.(js|css)$|\.(svg|png|jpg|jpeg|gif|ico|pdf|woff2?|snap)$"
@@ -73,6 +75,8 @@ DOC_DIR_RE = re.compile(r"(^|/)(docs?|adr|adrs|decisions|rfcs?|design)(/|$)", re
 # suite; it is excluded by name.
 TEST_RE = re.compile(
     r"(^|/)(tests?|__tests__|spec|specs|e2e|it|testing|benches|benchmarks?)(/)"
+    # The t/ convention of git and of Perl: numbered scripts, or .t files.
+    r"|(^|/)t/(t\d{4}|[^/]+\.t$)"
     r"|(^|/)(?!latest/)[a-z0-9_-]*tests?(/)"
     r"|(^|/)test_[^/]+$|_test\.[^/.]+$|\.test\.[^/.]+$|\.spec\.[^/.]+$"
     # FooTest.java, case-SENSITIVE inside a case-insensitive pattern: with the

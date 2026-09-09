@@ -137,3 +137,27 @@ Limitations to state in a case file:
   on O, whose ownership file is a catch-all used for routing, and on R,
   whose declarations were three weeks old at the reading; on S, two with
   care at its ceiling before. Still `draft`.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Engaged with its shape and, for the first time, survived the exemptions:
+  on U, a declaration of 24 patterns after which care on the declared paths
+  went from 61% to 60% across 188 and 184 landings; the ownership file states
+  no routing purpose, care was not at its ceiling, and the paths did not go
+  quiet. What remains is the exemption the frame cannot see — review
+  enforced on the platform — which the rule names as invisible. Beside it on
+  U, three later declarations after which care rose; on X a declaration of
+  255 patterns after which it rose from 1,348 to 1,625 landings. Thin on T,
+  W and Y; none on V. Still `draft`: one standing engagement, with the
+  platform caveat.

@@ -45,11 +45,15 @@ from classify import kind  # noqa: E402
 # configuration class carries what a local pattern did until 2026-09-07.
 
 DEFAULT_MARKERS = (r"@deprecated\b|#\[deprecated|DeprecationWarning|PendingDeprecationWarning"
-                   r"|\[Obsolete\b|^\s*//\s*Deprecated:|^\s*#\s*Deprecated:|\bDEPRECATED\b"
+                   # DEPRECATED as a word, not as an enum member or a constant reached
+                   # through :: or . — a diagnostic tag on a held-out editor read as a notice.
+                   r"|\[Obsolete\b|^\s*//\s*Deprecated:|^\s*#\s*Deprecated:|(?<![:.\w])DEPRECATED\b"
                    # A warning class named for deprecation or for the release the thing
                    # goes in: the idiom of the frameworks with the most formal policies,
                    # and the one the held-out sweep found the pattern did not know.
-                   r"|\b\w*(Deprecat|Deprecation|RemovedIn)\w*Warning\b"
+                   # Capitalised, so an identifier such as shouldDisableDeprecatedApiWarning
+                   # (a held-out runtime's flag) is not read as a notice.
+                   r"|\b[A-Z]\w*(Deprecat|Deprecation|RemovedIn)\w*Warning\b"
                    # Go's schema idiom: a `Deprecated:` FIELD carrying the notice as a
                    # string, beside the `// Deprecated:` comment form above. A held-out
                    # infrastructure tool with a deprecation culture read as giving no
@@ -215,10 +219,16 @@ def main():
     out = tg("log", "--first-parent", "--reverse", ref, f"--since={a.since}", f"--until={a.until}",
              "-p", "--unified=0", "-M", "--format=%x01%H%x01%ct%x01%s%x02%b%x03")
     old_path = None; in_body = False
+    # A header is the sha and the timestamp between the markers; a body or a
+    # diff line that happens to begin with the marker byte is not one. A
+    # held-out server runtime carried such a line and the walk read it as a
+    # commit whose timestamp was three control characters.
+    HEADER_RE = re.compile(r"^\x01([0-9a-f]{40})\x01(\d+)\x01")
     for line in out.splitlines():
-        if line.startswith("\x01"):
+        hm = HEADER_RE.match(line)
+        if hm:
             settle()
-            _, sha, t, subj = line.split("\x01", 3); ts = int(t); path = old_path = None
+            sha, ts = hm.group(1), int(hm.group(2)); subj = line[hm.end():]; path = old_path = None
             # The subject and the body's first line, for the revert test.
             s_, _, b_ = subj.partition("\x02")
             first = next((l.strip() for l in b_.split("\x03")[0].splitlines() if l.strip()), "")

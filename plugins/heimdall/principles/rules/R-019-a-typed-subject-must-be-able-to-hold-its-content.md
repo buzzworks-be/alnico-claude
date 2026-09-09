@@ -158,3 +158,26 @@ Limitations to state in a case file:
   subject in brackets rather than with a type and a colon, a convention the
   pattern does not yet read. Still `draft`: formed on two real histories,
   both passes.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Its first candidates that survive the exemptions, on U: a dependency
+  upgrade typed `build` that carried 560 source lines across 35 files as the
+  code adapted to the new library — the type could not hold the content, and
+  the convention tolerating it is the reader's question. The second candidate
+  there, a `test` landing adding 325 lines to a source file, was inline test
+  content the check could not see until it asked the diff; it can now. Formed
+  and passed on W (99% typed) and on Y (74%, with the learned vocabulary);
+  stood down on T, V and X. Still `draft`: one standing candidate on one
+  history.

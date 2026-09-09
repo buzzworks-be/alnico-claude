@@ -54,7 +54,12 @@ scan_tracked() {
     [ -f "$f" ] && files+=("$f")
   done < <(git ls-files -z 2>/dev/null)
   [ "${#files[@]}" -eq 0 ] && return 0
-  printf '%s\0' ${files[@]+"${files[@]}"} | xargs -0 grep -nIiF -- "$needle" || true
+  # Whole words. A four-letter target name is a substring of ordinary
+  # identifiers — a runtime called by the same word as the directory every
+  # package manager writes — and a mention inside a longer word is not a
+  # mention of the target. The qualified owner/repo and the URL still match
+  # whole, since a slash or a dot ends a word.
+  printf '%s\0' ${files[@]+"${files[@]}"} | xargs -0 grep -nIiwF -- "$needle" || true
 }
 
 # Prove the guard still REFUSES over a planted leak.
@@ -385,7 +390,7 @@ done
 base="$(git rev-parse --verify -q origin/main 2>/dev/null || echo "")"
 range="${base:+$base..}HEAD"
 for needle in ${NEEDLES[@]+"${NEEDLES[@]}"}; do
-  hits="$(git log --format='%H %s%n%b' "$range" 2>/dev/null | grep -niF -- "$needle" || true)"
+  hits="$(git log --format='%H %s%n%b' "$range" 2>/dev/null | grep -niwF -- "$needle" || true)"
   if [ -n "$hits" ]; then
     echo "$hits" >&2
     echo "heimdall: '$needle' appears in a commit message (above)." >&2

@@ -506,6 +506,10 @@ hence the seeding above. What remains after all
 of that: the pattern is convention-bound, a commented-out marker matches, and
 whether anything downstream existed is not in git at all.
 
+A warning class must begin with a capital, and DEPRECATED reached
+through `::` or `.` is a code token: an identifier and an enum member each
+read as a notice on the third held-out sweep.
+
 **Derived rule:** R-018, conditional on the repository using markers.
 
 ---
@@ -535,6 +539,13 @@ counted. Measured: on a fully typed history, 348 restrictive-type landings
 yielded six candidates after the layout was learned; on a partly typed one
 the typed half stood down and 227 trivial claims yielded six, all the shape
 the rule describes.
+
+**A learned vocabulary is a convention, not a type system.** The typed share
+counts a prefix the history uses often enough, and on two held-out histories
+those were subsystem names — a platform, a crate — beside the conventional
+types. They count as typed, because the repository types its subjects that
+way; they never count as restrictive, because only the conventional
+restrictive types say what a landing may carry.
 
 **Derived rules:** R-019, from the typed half, conditional; R-020, from the
 trivial-claim half.

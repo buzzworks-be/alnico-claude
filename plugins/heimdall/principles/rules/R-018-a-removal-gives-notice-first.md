@@ -188,3 +188,27 @@ Limitations to state in a case file:
   Still `draft`, `advisory`: engaged with its shape on one history, and
   whether anything downstream depended on what went in a week is what git
   does not carry.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Y, under a stated policy: 24 closures at a median of 531 days and none
+  under 200 — a pass. U: 55 closures at a median of 401 days, the two
+  "short" ones an identifier that happened to contain the words — the
+  pattern now requires a capitalised class name. W: 215 closures at a median
+  of 392 days and eight under thirty, all closed by one landing that moved an
+  entire integrations package to another repository — the code went on
+  elsewhere with its notices, the migration exemption. X: one, an enum
+  member — excluded now. T and V: no markers, or nothing closed. Still
+  `draft`: five histories, one policy-abiding pass, and every short closure an
+  exemption or an instrument artefact.

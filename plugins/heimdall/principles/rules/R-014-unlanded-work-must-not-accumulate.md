@@ -196,3 +196,23 @@ Limitations to state in a case file:
   the stale stock must amount to at least one window of throughput. Q, P
   and S: old, not growing. Still `draft`: one engagement, held to an
   observation until a second reading.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Held to an observation on three: U at one and a half windows of stale
+  stock, X at nearly three, W at five and a half — most of W's over a year
+  old — each begun and left in three consecutive windows on a
+  remove-on-landing convention. The second readings that would decide them
+  are scheduled, not taken. T, V and Y under the floor or not growing. Still
+  `draft`: three observations awaiting their second reading.

@@ -115,3 +115,23 @@ Limitations to state in a case file:
   rebase (about four thousand).
   Not below the baseline on any of the five, across release, post-revert
   and breaking kinds. Still `draft`: engaged everywhere, found nothing.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  One candidate, on U: care at 46% in the fortnight around the one major
+  release against 79% elsewhere. The moment sits at the far edge of the span,
+  where the repository's care was lowest in time (66% to 85% by halves), so
+  the reading is confounded with time — the extractor should compare a risk
+  window against its neighbours, not the whole span. Not below on T, V, W,
+  X and Y. Still `draft`: one engagement, confounded.

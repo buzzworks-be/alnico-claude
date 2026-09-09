@@ -37,7 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, kind  # noqa: E402
+from classify import NOISE_RE, INLINE_TEST_RE, kind  # noqa: E402
 
 # One type, or several joined by / or , — "BUG/ENH:", "TYP, STY:" — before
 # the colon. A repository's OWN vocabulary is learned from the window: a
@@ -264,7 +264,14 @@ def main():
             if t in ("docs", "doc") and code >= a.code_floor:
                 reason = f"docs: carries {code} lines in the source home"
             elif t in ("test", "tests") and code >= a.code_floor:
-                reason = f"test: carries {code} lines in the source home"
+                # Tests that live in the source file — Rust's #[cfg(test)] and
+                # kin — are test content wherever they sit. A `test:` landing
+                # adding three hundred lines of them to a source file on a
+                # held-out runtime read as a type that could not hold its
+                # content until the diff was asked.
+                added = "\n".join(l for l in tg("diff", "--unified=0", *c["range"]).splitlines() if l.startswith("+"))
+                if not INLINE_TEST_RE.search(added):
+                    reason = f"test: carries {code} lines in the source home"
             elif t in ("ci", "build") and code >= a.code_floor:
                 reason = f"{t}: carries {code} lines in the source home, outside tooling paths"
             elif t == "style" and code >= a.code_floor:
@@ -300,6 +307,13 @@ def main():
             return None
         start, end = m.span()
         if core[max(0, start - 1):start] in ("`", "'", '"') or core[end:end + 1] in ("`", "'", '"'):
+            return None
+        # A subject that BUILDS something named by the word is a feature whose
+        # domain is formatting or renaming, not a formatting or a rename:
+        # "Create Prettier Formatting Skill", "Implement range formatting for
+        # remoting". Two held-out histories put one each at the top of the list.
+        if re.match(r"^\W*(add|adds|create|creates|implement|implements|introduce|introduces|support|supports|enable|enables)\b", core, re.I) \
+                or re.match(r"\s+for\s", core[end:end + 5]):
             return None
         words = len(core.split())
         if words <= 6 or re.match(r"^\W*" + re.escape(m.group(1)), core, re.I):

@@ -134,3 +134,24 @@ Limitations to state in a case file:
   Sixty-six merges on O and 566 on P, every one carrying only what its
   branches carried — two merge-commit histories chosen for it, and neither
   fixes anything at merge time. Still `draft`: it has engaged once, ever.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Engaged with its shape on V, the history chosen for it: 23 of 837
+  maintainer merges changed lines no conflict touched, most a few lines in one
+  file on a topic merge whose cover letter describes the topic and not the
+  fix-up. Five read; each is the coexistence fix-up the first exemption
+  names, as far as a merge diff shows. On T, 1,548 merges carrying only what
+  their branches carried. Still `draft`: engaged at scale for the first time,
+  every read candidate the listed exemption.

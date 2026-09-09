@@ -151,3 +151,33 @@ Two limitations to state in any case file citing this rule:
   re-lands, every one changed; on O, P and Q none identical. Still `draft`:
   its first non-exempt engagement is undecidable from the record, which is
   the limitation the rule states.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Seven byte-identical re-lands on four histories, and for the first time
+  the record decided most of them. U: a test fix reverted because "random
+  kills" appeared on one platform after it landed, "reverting to see if it
+  will help", re-landed unchanged a day later — a diagnostic revert, the
+  change cleared, exempt; and a feature reverted with "will be relanded in
+  v2.8" and re-landed unchanged four weeks later — release timing, exempt.
+  V: two commits reverted with "let's not use writev() for now" and re-landed
+  identical four months later — a deferral, exempt. X: one reverted with "I'm
+  going to remerge this tomorrow after releases so we get a full week in
+  nightly" — release timing, exempt; one reverted with no reason and back
+  four hours later — cannot tell. W: an infrastructure fix reverted without a
+  reason and back a day later — cannot tell. Nothing on T or Y. The rule ran
+  end to end on real histories: it found the shape, and where the history
+  wrote down why, the listed exemptions were readable and applied. Still
+  `draft`: every decidable engagement was exempt, and a rule whose findings
+  have all dissolved on reading has not yet shown a finding that stands.

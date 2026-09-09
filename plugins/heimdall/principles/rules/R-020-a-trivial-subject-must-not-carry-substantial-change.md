@@ -133,3 +133,24 @@ Limitations to state in a case file:
   S, one formatter run whose changes went beyond whitespace. The subject is
   the finding and a reader says what it should have said. Still `draft`:
   engaged on every history, unadjudicated.
+
+- **Third held-out sweep, 2026-09-09.** Six public histories chosen from a
+  survey of twenty-six for the shapes the drafts still needed *and* for a
+  record that carries what their exemptions turn on — reverts that say why,
+  an ownership file, a stated policy — and used only to confirm: T, a
+  terminal emulator landing by merge commit with an ownership file (about two
+  thousand trunk commits a year); U, a JavaScript runtime landing by squash,
+  typing nearly every subject and writing a reason on most reverts (about
+  three thousand); V, a version-control system landing by maintainer merges
+  with cover letters (about a thousand); W, an agent-framework library
+  landing by squash with a release most days (about two and a half thousand);
+  X, an editor landing by squash with the largest revert record in the survey
+  (about nine thousand); Y, a server runtime landing by rebase under a stated
+  deprecation policy (about three thousand).
+  Candidates on all six — four on T, three on U, two on V, twenty-four on
+  W, fifty-seven on X, five on Y — and two of the shapes at the top were
+  features named after a trivial word ("implement range formatting for…"),
+  which the head-claim test now sets aside. What remains is lint and
+  docstring sweeps of a thousand lines and dependency bumps that forced
+  source edits; the subject is the finding and a reader says what it should
+  have said. Still `draft`: unadjudicated at volume.

@@ -161,6 +161,13 @@ def split_lines(text, syntax):
 
 TABLE_RE = re.compile(r"^\s*\|.*\|\s*$|^\s*[-:|\s]{6,}$")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# A definition or option list is a lookup, not prose: an AsciiDoc labeled
+# entry (`--option::`, `term::`) and a reStructuredText directive or field
+# (`.. name::`, `:field:`), each with the indented body beneath it. Manual
+# pages of nine hundred lines under three headings on a held-out history were
+# option lists read as unbroken prose.
+DEFN_RE = re.compile(r"^\S.*::\s*$|^\.\.\s+\S+::|^:\w[\w-]*:")
+INDENT_RE = re.compile(r"^(\s{2,}|\t)\S")
 
 
 def doc_shape(text):
@@ -176,7 +183,7 @@ def doc_shape(text):
     """
     lines = text.splitlines()
     non_prose = [False] * len(lines)
-    in_fence = False
+    in_fence = False; in_defn = False
     for i, l in enumerate(lines):
         if FENCE_RE.match(l):
             in_fence = not in_fence
@@ -184,6 +191,14 @@ def doc_shape(text):
             continue
         if in_fence or TABLE_RE.match(l):
             non_prose[i] = True
+            continue
+        if DEFN_RE.match(l):
+            non_prose[i] = True; in_defn = True
+            continue
+        if in_defn and (INDENT_RE.match(l) or not l.strip()):
+            non_prose[i] = True          # the entry's body, or the gap before the next
+            continue
+        in_defn = False
 
     heads = [i for i, l in enumerate(lines)
              if HEADING_RE.match(l) and not non_prose[i]]
