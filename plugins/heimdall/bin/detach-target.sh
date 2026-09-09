@@ -81,7 +81,11 @@ if cases.is_dir():
     for d in sorted(cases.iterdir()):
         if not d.is_dir() or d.name == keep or d.name.startswith("_"):
             continue
-        if any(d.glob("*.md")):
+        # A recorded reading's sidecar (s9-*.json, hashed tips and counts) is
+        # a reading too: the delta R-014 rests on needs it at the next
+        # reading. A shell holding one is kept. The first sweep to record
+        # three lost all three at the close that followed.
+        if any(d.glob("*.md")) or any(d.glob("s9-*.json")):
             continue
         shutil.rmtree(d)
         gone.append(d.name.upper())
@@ -204,7 +208,7 @@ if cases.is_dir():
     for d in sorted(cases.iterdir()):
         if not d.is_dir() or d.name == current:
             continue
-        n = len([f for f in d.glob("*.md")])
+        n = len([f for f in d.glob("*.md")]) + len([f for f in d.glob("s9-*.json")])
         if n:
             others.append(f"{d.name.upper()} ({n})")
     if others:
