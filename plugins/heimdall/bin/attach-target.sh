@@ -112,10 +112,16 @@ state = Path(state)
 # A codename is stable for the life of a case. Re-attaching or refreshing the
 # same URL keeps it; case files already carry it, and a case that renamed
 # itself mid-investigation would orphan them.
+# A codename read back from disk becomes a path component (and pathlib would
+# let an absolute one replace the case root outright), so it is checked before
+# it is reused — here and in bin/case-dir, where it is used.
+import re
+CODENAME_RE = re.compile(r"[a-z][a-z0-9]*(-[0-9]+)?")
+
 if os.path.isfile(meta):
     try:
         prev = json.load(open(meta))
-        if prev.get("url") == url and prev.get("codename"):
+        if prev.get("url") == url and CODENAME_RE.fullmatch(prev.get("codename") or ""):
             print(prev["codename"])
             sys.exit(0)
     except (ValueError, OSError):
@@ -138,7 +144,8 @@ if (state / "cases").is_dir():
     for d in sorted((state / "cases").iterdir()):
         cj = d / "case.json"
         try:
-            if cj.is_file() and json.load(open(cj)).get("targetKey") == key:
+            if cj.is_file() and json.load(open(cj)).get("targetKey") == key \
+                    and CODENAME_RE.fullmatch(d.name):
                 print(d.name)
                 sys.exit(0)
         except (ValueError, OSError):

@@ -17,6 +17,7 @@ Usage:
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,9 @@ STATE = Path(subprocess.run([str(ROOT / "bin" / "heimdall-state")],
                             check=True).stdout.strip())
 META = STATE / ".heimdall" / "target.json"
 CASES = STATE / "cases"
+# What bin/codenames.txt can produce, plus the "-2" suffix attach adds on a
+# collision. Anything else did not come from there.
+CODENAME_RE = re.compile(r"[a-z][a-z0-9]*(-[0-9]+)?")
 
 
 def main():
@@ -39,6 +43,16 @@ def main():
     if not codename:
         print("heimdall: attached target has no codename; re-run "
               "bin/attach-target.sh to assign one.", file=sys.stderr)
+        return 3
+    # The codename becomes a path component, so it must be one. Only
+    # bin/attach-target.sh writes it, and only from the wordlist — but
+    # target.json is a plain file on disk, and pathlib would let an absolute
+    # codename replace the case root entirely (`Path("cases") / "/etc"` is
+    # `/etc`) rather than nest under it. Checked where it is used, not only
+    # where it is written.
+    if not CODENAME_RE.fullmatch(codename):
+        print(f"heimdall: codename {codename!r} in the target metadata is not a "
+              "plain name; refusing to build a case path from it.", file=sys.stderr)
         return 3
     d = CASES / codename
     if check and not d.is_dir():

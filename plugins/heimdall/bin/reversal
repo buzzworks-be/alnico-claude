@@ -206,7 +206,12 @@ def prefetch_numstat(ref, since, until):
 def line_counts(pairs):
     """{(ref, path): lines} for many files in one cat-file process; a spec
     that names nothing is absent from the result."""
-    specs = sorted({f"{r}:{p}" for r, p in pairs})
+    # cat-file --batch reads one request per LINE and answers one per request.
+    # A path containing a newline would be split into two requests, and every
+    # response after it would be read against the wrong spec — so such paths
+    # are dropped rather than counted. Legal on most filesystems, vanishingly
+    # rare, and the lenient direction: the file is not judged.
+    specs = sorted({f"{r}:{p}" for r, p in pairs if "\n" not in p and "\n" not in r})
     if not specs:
         return {}
     p = subprocess.run([str(ROOT / "bin" / "target-git"), "cat-file", "--batch"],
