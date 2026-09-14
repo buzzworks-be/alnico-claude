@@ -9,7 +9,9 @@ the repository. A derived frame stays inspectable — see [`LICENSING.md`](../LI
 Fifteen candidate principles, each with the rules derived from it, the
 **producer signature** whose departure it is most sensitive to, and what it
 **reads** from history. The signatures are a reading aid, not a taxonomy the
-rules enforce; a rule cites a principle, never a column here.
+rules enforce; a rule cites a principle, never a column here. The italic line
+under each principle is one concrete instance of the shape it names — an
+illustration for a reader, never a threshold and never a finding.
 
 - **Human**: a reader or decider had to be present. The concern is that
   nobody could have been.
@@ -22,21 +24,21 @@ rules enforce; a rule cites a principle, never a column here.
 
 | Id | Principle | Rules | Signature | Reads |
 |---|---|---|---|---|
-| P-1 | Work that outruns digestion is not done | R-001, R-004, R-006 | Human absent, synthetic pace | Time |
-| P-2 | Where the repository holds the reasoning, code arrives with it | R-003 | Synthetic | Content |
-| P-3 | A specification and its implementation landing together means no decision happened between them | R-002, R-005 | Agentic | Time |
-| P-4 | The history says truthfully what produced the work | R-007 | Mechanic, undeclared | Record |
-| P-5 | Care is proportional to what is at stake | R-008 | Human judgement against uniform care | Content |
-| P-6 | Discipline belongs to the system, not to whoever is currently in it | R-009 | Mechanic, missing | Structure |
-| P-7 | Documentation must be readable in the part a reader needs | R-010 | Synthetic prose | Content |
-| P-8 | Where the repository verifies its work, code arrives with its verification | R-011, R-027 | Synthetic pace | Content |
-| P-9 | A process that never revisits does not correct | R-012, R-013, R-026 | Agentic thrash | Trend |
-| P-10 | Work begun is work owed | R-014, R-015 | Agentic spawning | Trend |
-| P-11 | An increment must be separable to be reviewable | R-016 | Agentic reach | Structure |
-| P-12 | The record must describe the change it carries | R-017, R-019, R-020 | Synthetic labels | Record |
-| P-13 | Removal must give a reader time to leave | R-018 | Human, downstream | Time |
-| P-14 | Care must rise where the repository says risk rose | R-021, R-022, R-023 | Human judgement against uniform care | Trend |
-| P-15 | Rigor must not erode as pace rises | R-024, R-025 | Synthetic pace, agentic scale | Trend |
+| P-1 | Work that outruns digestion is not done<br/>*forty branches merge in a week, each minutes after it opened* | R-001, R-004, R-006 | Human absent, synthetic pace | Time |
+| P-2 | Where the repository holds the reasoning, code arrives with it<br/>*a repository with a decision record behind every prior feature lands a subsystem with none* | R-003 | Synthetic | Content |
+| P-3 | A specification and its implementation landing together means no decision happened between them<br/>*a 900-line design document and the 4,000 lines implementing it arrive in one landing* | R-002, R-005 | Agentic | Time |
+| P-4 | The history says truthfully what produced the work<br/>*a week of landings at a pace no typist could sustain, every attribution trailer stripped* | R-007 | Mechanic, undeclared | Record |
+| P-5 | Care is proportional to what is at stake<br/>*the path with three owners and the examples directory get the same interval and the same tests* | R-008 | Human judgement against uniform care | Content |
+| P-6 | Discipline belongs to the system, not to whoever is currently in it<br/>*every change arrives with a test and a decision record, and nothing in the repository requires it* | R-009 | Mechanic, missing | Structure |
+| P-7 | Documentation must be readable in the part a reader needs<br/>*a six-thousand-line handbook under four headings, where one answer costs reading all of it* | R-010 | Synthetic prose | Content |
+| P-8 | Where the repository verifies its work, code arrives with its verification<br/>*nine landings in ten touch a test file; the new subsystem touches none* | R-011, R-027 | Synthetic pace | Content |
+| P-9 | A process that never revisits does not correct<br/>*reverted on Monday, back on Thursday with the same diff line for line* | R-012, R-013, R-026 | Agentic thrash | Trend |
+| P-10 | Work begun is work owed<br/>*open branches go from twelve to fifty over four windows while landings stay flat* | R-014, R-015 | Agentic spawning | Trend |
+| P-11 | An increment must be separable to be reviewable<br/>*one commit edits nine of the workspace's declared packages — nine decisions, one identifier* | R-016 | Agentic reach | Structure |
+| P-12 | The record must describe the change it carries<br/>*a merge that also regenerated a lockfile and fixed a test so the result would pass* | R-017, R-019, R-020 | Synthetic labels | Record |
+| P-13 | Removal must give a reader time to leave<br/>*a public function marked deprecated on Monday and deleted on Friday* | R-018 | Human, downstream | Time |
+| P-14 | Care must rise where the repository says risk rose<br/>*the fortnight before a major version tag is the least-tested fortnight of the year* | R-021, R-022, R-023 | Human judgement against uniform care | Trend |
+| P-15 | Rigor must not erode as pace rises<br/>*tests-with-code drifts from four in five to seven in ten across eight quarters* | R-024, R-025 | Synthetic pace, agentic scale | Trend |
 
 Rules under P-1 to P-4 are active; every rule under P-5 to P-15 is draft. Two
 things the table makes visible: the active rules are all human-absent or

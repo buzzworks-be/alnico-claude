@@ -155,7 +155,7 @@ this ground in this order: what stands · what looked bad and was not, and why �
 **what you could not look at here, and why** · what the record cannot settle and
 what would settle it · the one question worth asking. The third is the one a
 summary cuts and the one without which a quiet reading misleads. The last is a
-question, never an instruction.
+question, never an instruction, and it is put to the work, never to Heimdall.
 
 If it will not fit, the case file is the answer and not longer notes.
 
@@ -169,6 +169,18 @@ report, rewrite it.
   adjective does the deciding the reader is there to do.
 - **Never *violation*, *pass*, *severity*, *not applicable*** — frame words, all
   of them. Say what happened.
+- **Nothing about Heimdall.** The notes are about the target: never that a rule
+  is new or draft, never what the frame does not yet detect, never how the
+  reading went. **A rule that found nothing has no sentence here at all** —
+  what ran is the strip's job, and paraphrasing a citation you are not allowed
+  to print is exactly how the instrument ends up as the subject. A limit on
+  what the evidence could show is a different thing and belongs in the third
+  paragraph: *"nothing declares which parts of the code matter most"* is about
+  the repository; *"our scanner doesn't look for that"* is about us. A defect
+  you find in the instrument still gets recorded — to whoever maintains
+  Heimdall, and in the case file as something not checked — but it is not a
+  finding about the work, so it never travels in the notes and never becomes
+  the closing question.
 - **Never name a person**, or anything from which one could be worked out.
 - **"The record does not show"**, never *"there is no"*. The first is true; the
   second is a claim about the world that a repository cannot support.

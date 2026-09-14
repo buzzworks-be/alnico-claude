@@ -71,7 +71,14 @@ outcomes:               # every rule that existed at principles_sha, no exceptio
      tell and what would settle it · the one question worth asking. The style
      rules are in the profile skill: spoken register, nothing that grades, no
      frame words, no names, "the record does not show" rather than "there is
-     no". -->
+     no".
+
+     NOTHING about Heimdall. Not that a rule is new or draft, not what the
+     frame does not yet detect, not how the reading went. A rule that found
+     nothing has no sentence here — what ran is the strip's job. A limit on
+     what the evidence could show is different and belongs in the third
+     paragraph. The closing question is put to the work. An instrument defect
+     goes to whoever maintains Heimdall and into "Not checked", never here. -->
 
 ```
 CODENAME — <the period, in words>
