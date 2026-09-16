@@ -169,8 +169,8 @@ Then: copy `rules/_TEMPLATE.md` to `rules/R-0NN-short-slug.md` and fill it in.
   assume disclosure — so where a concern can be checked either way, take the
   second framing. Where only the first is available, say so in *Not a
   violation*: a reader deciding what a passing result means deserves to know
-  the result was cheap to buy. The narrative behind this is in
-  `docs/concept.md` under *Doing better, or losing the trail*.
+  the result was cheap to buy. The narrative behind this is in the project's
+  concept document, under *Doing better, or losing the trail*.
 
 ## Severities
 

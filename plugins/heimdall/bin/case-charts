@@ -541,7 +541,7 @@ def chart_stocks(a, ref, md):
             except ValueError:
                 continue
             readings.append((d.get("reading", f.name)[:10], d.get("outstanding", {})))
-    T, B, y0 = 40, 72, 40
+    B, y0 = 72, 40
     y1 = H - B
 
     def panel_a(x0, x1):

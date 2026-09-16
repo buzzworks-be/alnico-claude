@@ -262,7 +262,7 @@ def main():
         outstanding.sort(key=lambda o: o["tip"])
         stale = [o for o in outstanding if now - o["tip"] > a.window * day]
         buckets = [(0, 30, "<30d"), (30, 180, "30-180d"), (180, 365, "180-365d"), (365, 10 ** 6, ">1y")]
-        print(f"  outstanding by age of last commit: " + "  ".join(
+        print("  outstanding by age of last commit: " + "  ".join(
             f"{lbl} {sum(1 for o in outstanding if lo <= (now - o['tip']) / day < hi)}"
             for lo, hi, lbl in buckets))
         # Counted over STALE refs only. The most recent window is full of open
@@ -273,12 +273,12 @@ def main():
             age = (now - o["begun"]) // (a.window * day)
             if age < a.windows:
                 begun_per_window[age] += 1
-        print(f"  stale outstanding work BEGUN per window, most recent first: "
+        print("  stale outstanding work BEGUN per window, most recent first: "
               + " ".join(str(n) for n in begun_per_window)
               + "  (surviving refs only — deleted abandonments are invisible)")
         ahead_total = sum(o["ahead"] or 0 for o in outstanding)
         print(f"  commits held outstanding: {ahead_total}; stale (older than one window): {len(stale)}")
-        print(f"  (a surviving ref did not land here; that is not the same as unfinished)")
+        print("  (a surviving ref did not land here; that is not the same as unfinished)")
         for o in outstanding[:12]:
             print(f"    {(now - o['tip']) // day:>5}d  ahead={o['ahead'] if o['ahead'] is not None else '?':>4}  {o['name']}")
         if len(outstanding) > 12:

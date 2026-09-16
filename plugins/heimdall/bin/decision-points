@@ -317,7 +317,7 @@ def main():
         print(f"  {lab:<12}{len(rows):>9}{statistics.median(ds):>8.0f}{pct(ds, .9):>6}{max(ds):>6}{dens:>15.1f}")
 
     # 2. care by decision band, beside care by line band
-    print(f"\n  2. a test arrived with the landing — by decision band, and by line band")
+    print("\n  2. a test arrived with the landing — by decision band, and by line band")
     print(f"  {'decisions':<12}{'landings':>9}{'tested':>8}{'rate':>7}    {'code lines':<12}{'landings':>9}{'tested':>8}{'rate':>7}")
     dl, ll = labels(DBANDS), labels(BANDS)
     for i in range(max(len(dl), len(ll))):
@@ -369,14 +369,14 @@ def main():
         for r in sorted(cands, key=lambda r: -r["net"])[:a.list]:
             print(f"     {r['sha'][:10]}  {r['code']:>4} lines  {r['net']:>3} net ({r['dadd']:>3} added)  {r['files']:>2} files  {r['subject'][:56]}")
     if dense:
-        print(f"     the densest landings, for the record:")
+        print("     the densest landings, for the record:")
         for r in sorted(dense, key=lambda r: -r["net"])[:a.list]:
             v = "test" if r["test"] else ("inline" if r["inline"] else "none")
             print(f"     {r['sha'][:10]}  {r['code']:>4} lines  {r['net']:>3} net  {v:<6}  {r['subject'][:60]}")
 
     # 4. where the branching went
-    print(f"\n  4. where the decisions went — by top-level area, share of decisions added"
-          f" against share of code lines, and the care in each")
+    print("\n  4. where the decisions went — by top-level area, share of decisions added"
+          " against share of code lines, and the care in each")
     tot_d = sum(r["dadd"] for r in recs) or 1
     tot_l = sum(r["code"] for r in recs) or 1
     per_area = collections.defaultdict(lambda: {"d": 0, "l": 0, "landings": 0, "tested": 0})

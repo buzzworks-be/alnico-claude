@@ -123,7 +123,7 @@ def iso(ts):
 
 
 def collect(since, until, ref):
-    commits, cur = [], None
+    commits = []
     skipped_forge = 0
     fmt = ("\x1d%H|%at|%ce|%an <%ae>|"
            "%(trailers:key=Co-Authored-By,valueonly,separator=; )|%s")

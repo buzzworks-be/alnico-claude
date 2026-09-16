@@ -47,7 +47,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, INLINE_TEST_RE, FORGE_COMMITTERS, kind  # noqa: E402
+from classify import INLINE_TEST_RE, FORGE_COMMITTERS, kind  # noqa: E402
 
 DEFAULT_WINDOWS = 8
 DEFAULT_WINDOW_DAYS = 90

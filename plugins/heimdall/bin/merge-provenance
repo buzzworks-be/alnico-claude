@@ -30,14 +30,13 @@ Usage:
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, kind  # noqa: E402
+from classify import kind  # noqa: E402
 
 DEFAULT_MIN_LINES = 1     # any line outside a conflict is content from nowhere
 

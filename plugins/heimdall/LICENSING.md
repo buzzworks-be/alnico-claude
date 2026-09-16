@@ -4,6 +4,7 @@ Two licences, split along a real line rather than a convenient one.
 
 | Path | Licence | SPDX |
 |---|---|---|
+| `docs/**` | Creative Commons Attribution-ShareAlike 4.0 International | `CC-BY-SA-4.0` |
 | `principles/**` | Creative Commons Attribution-ShareAlike 4.0 International | `CC-BY-SA-4.0` |
 | everything else | Apache License 2.0 | `Apache-2.0` |
 

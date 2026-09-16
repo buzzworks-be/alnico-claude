@@ -37,7 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, INLINE_TEST_RE, kind  # noqa: E402
+from classify import INLINE_TEST_RE, kind  # noqa: E402
 
 # One type, or several joined by / or , — "BUG/ENH:", "TYP, STY:" — before
 # the colon. A repository's OWN vocabulary is learned from the window: a
@@ -115,6 +115,10 @@ def default_ref():
     return tg("symbolic-ref", "--short", "HEAD").strip()
 
 
+# git's empty tree: the parent a root commit does not have.
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
 def content(diff_range):
     """(numstat rows, name-status rows) for a range or a single commit."""
     ns = []
@@ -175,7 +179,13 @@ def main():
                 subj = first or tg("log", "-1", "--format=%s", ps[1]).strip()
             rng = [f"{ps[0]}..{sha}"]
         else:
-            rng = [f"{sha}^", sha] if ps else [sha]
+            # A root commit has no parent, and `diff <sha>` with one argument
+            # compares against the work tree — which a bare clone does not
+            # have, so it died with "must be run in a work tree" on any window
+            # reaching back to the first commit. Diffing the empty tree gives
+            # the same answer and needs no work tree. Same defect
+            # reasoning-with-code records at commit_churn().
+            rng = [f"{sha}^", sha] if ps else [EMPTY_TREE, sha]
         commits.append({"sha": sha, "subject": subj.strip(), "range": rng, "merge": len(ps) >= 2})
     if not commits:
         print("S-15: no landings in window.")

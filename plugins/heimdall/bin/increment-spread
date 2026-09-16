@@ -49,7 +49,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 # One classifier for every script that bins by lines of code. See bin/classify.py.
 sys.path.insert(0, str(ROOT / "bin"))
-from classify import NOISE_RE, TEST_RE, DOC_RE, FORGE_COMMITTERS, kind as file_kind  # noqa: E402
+from classify import NOISE_RE, TEST_RE, FORGE_COMMITTERS, kind as file_kind  # noqa: E402
 
 # An area that IS the repository's tests, docs or examples is accompaniment,
 # not spread: a change that lands with its tests and its docs is one decision
@@ -370,7 +370,7 @@ def main():
         print(f"  hub area(s), touched by more than {a.hub:.0%} of landings and excluded: "
               + ", ".join(sorted(hubs)))
     if accomp:
-        print(f"  accompaniment area(s) — tests, docs, examples, tooling — excluded: "
+        print("  accompaniment area(s) — tests, docs, examples, tooling — excluded: "
               + ", ".join(sorted(accomp)))
     print(f"  {len(recs)} landing(s); mechanical (rename/lockfile/manifest/changelog-dominant): "
           f"{sum(1 for r in recs if r['mechanical'] and not r['sweep'])}; sweeps "
