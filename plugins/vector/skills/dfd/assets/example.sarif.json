@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "informationUri": "https://codeql.github.com/",
+          "rules": [
+            {
+              "id": "js/missing-rate-limiting",
+              "name": "js/missing-rate-limiting",
+              "shortDescription": { "text": "Missing rate limiting" }
+            },
+            {
+              "id": "js/clear-text-logging",
+              "name": "js/clear-text-logging",
+              "shortDescription": { "text": "Clear-text logging of sensitive information" }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "js/missing-rate-limiting",
+          "level": "warning",
+          "message": {
+            "text": "This route handler performs a database access and a network call, but is not rate-limited."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "src/checkout-api/routes/orders.ts" },
+                "region": { "startLine": 61, "startColumn": 3 }
+              }
+            }
+          ],
+          "partialFingerprints": { "primaryLocationLineHash": "1f3c9a0d4e2b:1" }
+        },
+        {
+          "ruleId": "js/clear-text-logging",
+          "level": "error",
+          "message": {
+            "text": "This logs the shopper's delivery address, which is personal data, in clear text."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "src/support-console/views/order.ts" },
+                "region": { "startLine": 118, "startColumn": 9 }
+              }
+            }
+          ],
+          "partialFingerprints": { "primaryLocationLineHash": "77a1be04c9d3:1" }
+        }
+      ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Trivy",
+          "informationUri": "https://trivy.dev/",
+          "rules": [
+            {
+              "id": "CVE-2025-31910",
+              "shortDescription": { "text": "Request smuggling in the proxy's HTTP/1.1 parser" }
+            },
+            {
+              "id": "CVE-2025-44701",
+              "shortDescription": { "text": "Prototype pollution in a templating helper" }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "CVE-2025-31910",
+          "level": "error",
+          "message": {
+            "text": "edge-proxy 2.14.1 is affected by CVE-2025-31910. Fixed in 2.14.4."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "infra/edge-proxy/Dockerfile" },
+                "region": { "startLine": 1 }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2025-44701",
+          "level": "warning",
+          "message": {
+            "text": "handlebars 4.7.6 is affected by CVE-2025-44701. Fixed in 4.7.8."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "apps/marketing/package-lock.json" },
+                "region": { "startLine": 2840 }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

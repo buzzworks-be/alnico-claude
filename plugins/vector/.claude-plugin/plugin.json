@@ -1,0 +1,19 @@
+{
+  "name": "vector",
+  "description": "Continuous Threat Modeling with STRIDE for security and LINDDUN for privacy",
+  "version": "0.12.0",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Jan Van Coppenolle"
+  },
+  "repository": "https://github.com/buzzworks-be/alnico-claude/tree/main/plugins/vector",
+  "keywords": [
+    "threat-modeling",
+    "dfd",
+    "stride",
+    "linddun",
+    "privacy",
+    "security"
+  ],
+  "homepage": "https://github.com/buzzworks-be/alnico-claude/tree/main/plugins/vector"
+}

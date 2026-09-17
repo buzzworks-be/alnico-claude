@@ -1,0 +1,577 @@
+# The worked register: the threat model over example.threats.yaml.
+#
+# Written by hand, like the enumeration it decides. Eighteen findings and one
+# open question, each ending up in exactly one place — a vector, a chain, or a
+# dismissal with a reason. Four vectors are chains: the same concern seen from
+# several elements, tracked once so that one control closes it rather than
+# three ids drifting apart.
+#
+# Every vector also carries a disposition, and the mitigations behind the
+# mitigated and deferred ones follow the vectors. Those are the threat matrix's
+# fields, written by hand for the same reason the rest is. Each mitigation
+# names where its requirement is written: `example.spec.md` beside this file
+# stands in for the project's own specification, and `implemented_in` is a
+# claim about code the example does not ship.
+#
+# Nothing is retired, and no disposition has a history, because nothing in
+# this model's life has been retired or reversed yet. A fixture that invented
+# either to exercise the section would be a lie about the system; the tests
+# exercise both instead.
+
+threats: example.threats.yaml
+threats_digest: sha256:0aaa0c75cad6bfe511b5480774d85c5121a5b87af5999fa4fe678ee7b600e336
+
+vectors:
+
+  # --- chains: one concern, several findings ------------------------------
+
+  - id: VEC-0001
+    title: A guest's identity is never verified, at checkout or on a data request
+    element: dsar-handler
+    category: stride/spoofing
+    source: authored
+    verdicts:
+      - {element: shopper, category: stride/spoofing}
+      - {element: dsar-handler, category: stride/spoofing}
+      - {element: dsar-handler, category: linddun/unawareness}
+    promoted: 2026-09-13
+    attack: >-
+      Submit an order, or a data access request, naming somebody else's email
+      address. `shopper.authenticates_how` records guest checkout as anonymous,
+      and `dsar-request.authn` falls back to "documentary proof for guests" that
+      a privacy team member judges with no account to compare it against.
+    impact: >-
+      At checkout, an order and its confirmation directed at a stranger. On a
+      data request, a complete export delivered to a stranger — a reportable
+      breach. The same missing control causes both, and the third finding in
+      this chain is the same dial turned the other way: tighten verification to
+      stop the stranger and a genuine guest with no documents is locked out of
+      their own data.
+    context: >-
+      Account holders prove control of the login and are not affected. The
+      model records that guest verification is "harder" and stops there — who
+      judges the documents, against what, and what happens on refusal are all
+      unrecorded, so this is a decision that has not been made rather than one
+      that was made badly.
+    disposition:
+      state: deferred
+      owner: Ines Verhaeghe, privacy lead
+      reason: >-
+        The control is designed and written into the specification, and it is
+        not built: guest verification lands with the partner-onboarding work
+        that reworks the guest path, rather than ahead of it. Until then the
+        exposure is real on both paths and is carried under this date.
+      until: 2027-03-31
+      until_label: 2027.1 — guest path rework
+      decided: 2026-09-13
+      mitigations: [MIT-0001]
+
+  - id: VEC-0002
+    title: Gift recipients are data subjects the system cannot inform or serve
+    element: dsar-handler
+    category: linddun/non_compliance
+    source: authored
+    verdicts:
+      - {element: shopper, category: linddun/unawareness}
+      - {element: dsar-handler, category: linddun/non_compliance}
+    promoted: 2026-09-13
+    attack: >-
+      None needed. `address.subjects` is "Shoppers and their gift recipients",
+      and `address.notes` records that recipients never interact with us. Every
+      route into the rights process starts from a shopper with an account or a
+      documented identity; a recipient has neither and no order to name.
+    impact: >-
+      A class of data subject with no way to learn their address is held, and
+      no way to have it removed. That is an unawareness harm and a rights
+      failure at once, and it is structural — no flow in the model could carry
+      a recipient's request even if one arrived.
+    context: >-
+      Retention bounds it: `address.retention` is 90 days after delivery, so
+      the exposure is short-lived per address. The model has no notion of a
+      subject who is not a shopper, which is why the enumeration found this as
+      an absence rather than a weak control.
+    disposition:
+      state: accepted
+      owner: Ines Verhaeghe, privacy lead
+      reason: >-
+        A recipient's address is the shopper's disclosure, held for ninety days
+        and then purged. A rights route for someone who never interacts with
+        us needs a notion of subject the data model does not have, and no such
+        request has ever arrived. Carried knowingly; revisited if one does, or
+        if `address.retention` ever grows.
+      decided: 2026-09-13
+
+  - id: VEC-0003
+    title: The order path has no throttle anywhere in the model
+    element: checkout-api
+    category: stride/denial_of_service
+    source: authored
+    verdicts:
+      - {element: checkout-api, category: stride/denial_of_service}
+      - {element: submit-order, category: stride/denial_of_service}
+    promoted: 2026-09-13
+    attack: >-
+      Flood `submit-order`. It is `trigger: user_action` from the browser zone,
+      a guest needs no account to reach it, and every request behind it costs
+      a `persist-order` write and a synchronous `charge` call to Stripe.
+    impact: >-
+      Database and third-party API quota consumed by an unauthenticated
+      caller, and the checkout unavailable to paying shoppers while it lasts.
+      The Stripe cost is the part a rate limit on our side has to absorb before
+      the request leaves.
+    context: >-
+      No field in the model records a rate limit, a quota, a queue or a
+      circuit breaker on any element. The interview asked `authn` and `authz`
+      of this process and nothing about availability, so this may be an
+      unrecorded control rather than a missing one — but until it is recorded
+      the model says there is none.
+    disposition:
+      state: mitigated
+      decided: 2026-09-13
+      mitigations: [MIT-0002]
+
+  - id: VEC-0004
+    title: The audit log keeps email past its own retention, beyond erasure's reach
+    element: audit-log
+    category: linddun/non_compliance
+    source: authored
+    verdicts:
+      - {element: audit-log, category: linddun/data_disclosure}
+      - {element: audit-log, category: linddun/non_compliance}
+    promoted: 2026-09-13
+    attack: >-
+      None needed. `support-audit` writes `email` into `audit-log` on every
+      support lookup, `audit-log.retention` is 2 years, and
+      `email.retention` is life of account plus 30 days. `dsar-read` reads
+      only `orders-db`, and the log's object lock prevents deletion before
+      expiry by design.
+    impact: >-
+      A shopper who closes their account has their email address here for up
+      to two years, in a copy nobody described as one. An erasure request
+      cannot reach it, so "we erased everything" is untrue and "we erased
+      everything we could reach" is undocumented — either of which a regulator
+      would be shown.
+    context: >-
+      This may be entirely defensible: a legal-obligation record can outlive
+      an erasure request, and `audit-event` carries that basis. What is missing
+      is the decision — whether the log needs the address or a pseudonym, and
+      what the stated exception to erasure is. Recording that is most of the
+      mitigation.
+    disposition:
+      state: deferred
+      owner: Ines Verhaeghe, privacy lead
+      reason: >-
+        The decision the vector asked for has been made — audit events will
+        carry the shopper id rather than the address, and the event itself is
+        the stated exception to erasure — and the migration that makes it
+        true of the existing two years of events is not done. Carried until
+        it is.
+      until: 2026-12-31
+      decided: 2026-09-13
+      mitigations: [MIT-0003]
+
+  # --- the model's own open question ---------------------------------------
+
+  - id: VEC-0005
+    title: Nobody could say whether the backup snapshots honour the address purge
+    element: orders-db
+    category: linddun/non_compliance
+    source: question
+    question: >-
+      Nobody could confirm whether the nightly database snapshots are covered by
+      the 90-day address purge, or whether they retain addresses for 35 days past it.
+    promoted: 2026-09-13
+    attack: >-
+      None needed. A subject access request, or a regulator, asks what is
+      retained. `orders-db.retention` promises addresses purged 90 days after
+      delivery; `orders-db.backups` are nightly snapshots kept 35 days.
+    impact: >-
+      If the purge does not reach the snapshots, the stated retention is false
+      by up to 35 days for every address ever delivered to. A storage-limitation
+      commitment that is false is worse than one never made.
+    context: >-
+      This started life as the interview's one unanswerable question and was
+      carried forward unchanged. The enumeration found the same concern on
+      `orders-db` as a non-compliance finding, which is dismissed below in
+      favour of tracking it here, where it began: the vector's first job is
+      to get the question answered.
+    disposition:
+      state: deferred
+      owner: Ruben De Smet, platform lead
+      reason: >-
+        Nothing can be mitigated or accepted until the question is answered:
+        whether the purge reaches the snapshots is a fact about the backup job
+        that nobody in the room could state. The owner is finding out, and
+        the answer decides which of the other two states this becomes.
+      until: 2026-10-31
+      decided: 2026-09-13
+
+  # --- promoted findings ----------------------------------------------------
+
+  - id: VEC-0006
+    title: Backups add no isolation from the compromise that matters
+    element: orders-db
+    category: stride/information_disclosure
+    source: verdict
+    promoted: 2026-09-13
+    attack: >-
+      Compromise the AWS account, or the KMS key. `orders-db.backups` are
+      "Nightly snapshots retained 35 days in the same account, same KMS key",
+      so whoever can decrypt the live database can decrypt every snapshot.
+    impact: >-
+      Thirty-five days of history exposed alongside the live data, including
+      addresses the purge has already removed from the live table. The
+      encryption defends a stolen disk, which is not how this database would
+      be read.
+    context: >-
+      `access_control` is service roles with break-glass through PAM, so the
+      credential path is guarded. The finding is about blast radius once that
+      guard fails, not about how likely it is to.
+    disposition:
+      state: accepted
+      owner: Ruben De Smet, platform lead
+      reason: >-
+        Snapshots under a separate key in a separate account is a platform
+        programme with no date, and the compromise that reaches the live key
+        already reaches everything the snapshots would add. Break-glass through
+        PAM guards the credential path; the residual is blast radius once that
+        fails, and it is carried by name rather than deferred to a date nobody
+        can give.
+      decided: 2026-09-13
+
+  - id: VEC-0007
+    title: Address masking in the support console is lifted by the agent who wants it
+    element: support-console
+    category: linddun/data_disclosure
+    source: verdict
+    promoted: 2026-09-13
+    attack: >-
+      An agent opens a ticket-linked view. `support-console.authz` records
+      that addresses are masked "unless the agent opens a ticket-linked view",
+      and nothing in the model says who checks that the ticket is real,
+      relevant, or the shopper's own.
+    impact: >-
+      Any agent can read any shopper's delivery address at will. The masking
+      is a speed bump on a path the agent controls both ends of.
+    context: >-
+      `support-console.logging` records every lookup with the agent identity
+      and a reason, so this is detective rather than absent — an agent doing
+      it habitually would be visible afterwards. Compare `dsar-handler`, which
+      has a two-person rule for a comparable read.
+    disposition:
+      state: mitigated
+      decided: 2026-09-13
+      mitigations: [MIT-0004, MIT-0005]
+
+  - id: VEC-0008
+    title: The full order record lands on a laptop in a zone the model calls untrusted
+    element: support-render
+    category: stride/information_disclosure
+    source: verdict
+    promoted: 2026-09-13
+    attack: >-
+      Compromise, lose, or photograph a support agent's laptop.
+      `support-render` carries `order`, `address` and `email` from `prod-vpc`
+      into `corp-net`, and the model's own assumptions say the corporate
+      network is not trusted.
+    impact: >-
+      Every shopper an agent has looked up, on a device with no recorded
+      control over what happens to the data after it arrives — no disk
+      encryption, screenshot or clipboard restriction, or endpoint management
+      appears anywhere in the model.
+    context: >-
+      The untrusted-network assumption is honoured for authentication —
+      WebAuthn, device-bound sessions — and abandoned for data. Those controls
+      very likely exist and were not asked about; the vector's first job is
+      to find out.
+    disposition:
+      state: mitigated
+      decided: 2026-09-13
+      mitigations: [MIT-0006]
+
+  - id: VEC-0009
+    title: Verifying a guest collects identity documents the model does not know it holds
+    element: dsar-request
+    category: linddun/data_disclosure
+    source: verdict
+    promoted: 2026-09-13
+    attack: >-
+      None needed. `dsar-request.authn` accepts "documentary proof for
+      guests" by HTTPS form or by email to the privacy inbox. No `data` entry
+      exists for an identity document, so it has no classification, no lawful
+      basis, no retention and no store modelled to hold it.
+    impact: >-
+      Among the most sensitive personal data the system touches, sitting in a
+      mailbox or a form backend with nothing able to say whether it is deleted
+      after the check or kept indefinitely. The control protecting the rights
+      process collects data the rights process cannot account for.
+    context: >-
+      Chained conceptually to VEC-0001 — it is the cost of the verification
+      that vector says is too weak — but tracked separately because its
+      mitigation is different: model the document, decide its retention, and
+      delete on schedule, regardless of how verification is strengthened.
+    disposition:
+      state: deferred
+      owner: Ines Verhaeghe, privacy lead
+      reason: >-
+        The document is now a modelled data item with a retention and a
+        deletion job in the specification, and the job does not exist. Until
+        it does, the privacy inbox's own retention rule is the only control,
+        and it was not written with identity documents in mind.
+      until: 2026-11-30
+      decided: 2026-09-13
+      mitigations: [MIT-0007]
+
+  - id: VEC-0010
+    title: Nothing in the model tells a shopper what is collected or on what basis
+    element: checkout-web
+    category: linddun/unawareness
+    source: verdict
+    promoted: 2026-09-13
+    attack: >-
+      None needed. `checkout-web` is the only process the shopper sees, and
+      the model contains no privacy notice, no consent interaction, and no
+      flow or store that would carry one. `lawful_basis` is recorded per data
+      item for the reviewer and shown to nobody.
+    impact: >-
+      Collection under a contract basis is likely lawful; collection nobody
+      was told about is still an unawareness harm and a transparency failure.
+      The information exists for the auditor and not for the data subject,
+      which is exactly the wrong way round.
+    context: >-
+      A notice almost certainly exists on the real site and was simply not
+      modelled — a notice is not a flow. That is itself worth knowing: the
+      model has no way to represent the thing this vector is about.
+    disposition:
+      state: mitigated
+      decided: 2026-09-13
+      mitigations: [MIT-0008]
+
+  - id: VEC-0011
+    title: PII scrubbing on client error reports is a filter that fails open
+    element: checkout-web
+    category: stride/information_disclosure
+    source: verdict
+    promoted: 2026-09-13
+    attack: >-
+      Trigger a client error while the page holds `address` and `email` —
+      which is when errors are likeliest. `checkout-web.logging` sends client
+      errors to Sentry "with PII scrubbing on", and scrubbing is pattern
+      matching that a new field, a nested object or a captured local variable
+      defeats silently.
+    impact: >-
+      Shopper addresses and email addresses in a third-party error tracker,
+      under that tracker's retention and access, with no record that anyone
+      would notice.
+    context: >-
+      Nothing in the model says the scrubber is tested, and a scrubber nobody
+      tests is a claim rather than a control. The fix is small — a test that
+      fails when a known PII shape reaches Sentry — which is why this is
+      tracked rather than dismissed as theoretical.
+    disposition:
+      state: mitigated
+      decided: 2026-09-13
+      mitigations: [MIT-0009]
+
+dismissed:
+
+  - element: checkout-api
+    category: linddun/detecting
+    reason: >-
+      Real but small. Login already reveals account existence by design, since
+      email is the login identifier, so closing a timing side channel on the
+      DSAR path changes little. Revisit if an anonymous lookup is ever added.
+
+  - element: session-cache
+    category: stride/denial_of_service
+    reason: >-
+      A restart drops every live session, which is a nuisance for shoppers
+      mid-checkout and not a threat: the cart is rebuilt, no order is lost,
+      and `retention` says nothing was meant to survive. Operational, for a
+      runbook rather than the threat model.
+
+  - element: orders-db
+    category: linddun/non_compliance
+    reason: >-
+      Promoted as VEC-0005 from the model's own open question rather than from
+      this finding. The two are one concern and the question is where it
+      started; tracking both would be two ids for one decision.
+
+mitigations:
+
+  - id: MIT-0001
+    title: Bind the guest email before an order or a data request is accepted
+    control: >-
+      A six-digit code is sent to the address and must be returned within
+      fifteen minutes; five attempts per address and twenty per source address
+      per hour. A guest who cannot complete it on a data request is told the
+      alternative route, and the request is recorded as opened either way.
+    specified_in: example.spec.md#guest-email-verification
+    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    verification: code
+    vectors: [VEC-0001]
+
+  - id: MIT-0002
+    title: Rate-limit submit-order before any downstream cost
+    control: >-
+      Ten orders per session and sixty per source address per hour, enforced
+      at the API gateway in front of the checkout API, so a rejected request
+      never reaches the database or Stripe.
+    specified_in: example.spec.md#order-throttle
+    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    implemented_in: infra/gateway/rate-limits.yaml
+    verification: code
+    vectors: [VEC-0003]
+
+  - id: MIT-0003
+    title: Audit events carry the shopper id, not the email address
+    control: >-
+      Support-lookup audit events record the internal shopper id, which
+      resolves to nothing after erasure. Existing events are rewritten once by
+      a migration that reports what it could not resolve.
+    specified_in: example.spec.md#audit-log-pseudonymisation
+    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    verification: code
+    vectors: [VEC-0004]
+
+  - id: MIT-0004
+    title: A ticket-linked view needs a ticket the shopper opened, checked server-side
+    control: >-
+      The console unmasks an address only when the request names a ticket, the
+      ticket exists, and its reporter is the order's shopper; the check runs in
+      the support-console service, not the browser.
+    implemented_in: src/support-console/views/order.ts
+    verification: code
+    vectors: [VEC-0007]
+
+  - id: MIT-0005
+    title: Support lookups are sampled and reviewed monthly
+    control: >-
+      A named reviewer outside the support team samples at least twenty
+      lookups a month from the audit log, weighted to the agents with the most,
+      and checks each against the ticket it names.
+    specified_in: example.spec.md#support-lookup-review
+    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    verification: manual
+    evidence: Signed monthly review, sample and exceptions in the compliance drive.
+    vectors: [VEC-0007]
+
+  - id: MIT-0006
+    title: Only managed, compliant devices can open the support console
+    control: >-
+      Device management enforces disk encryption, a five-minute screen lock and
+      blocked local export; the identity provider refuses the WebAuthn
+      challenge from a device out of compliance.
+    specified_in: example.spec.md#managed-endpoints
+    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    implemented_in: infra/mdm/support-baseline.yaml
+    verification: manual
+    evidence: Monthly device compliance report, filed with the support lookup review.
+    vectors: [VEC-0008]
+
+  - id: MIT-0007
+    title: Identity documents are modelled, held once, and deleted thirty days after the request closes
+    control: >-
+      A guest's identity document is a restricted data item held in one place,
+      never forwarded or attached to the ticket, and removed by a job that
+      reports what it deleted.
+    specified_in: example.spec.md#identity-document-retention
+    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    verification: code
+    vectors: [VEC-0009]
+
+  - id: MIT-0008
+    title: The checkout page links a privacy notice generated from the model's data entries
+    control: >-
+      The notice states what is collected, why, on what basis and for how long,
+      per data item, from the same entries the model carries, and is linked
+      from the step that first asks for an address.
+    specified_in: example.spec.md#privacy-notice
+    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    implemented_in: src/checkout-web/pages/checkout.tsx
+    verification: code
+    vectors: [VEC-0010]
+
+  - id: MIT-0009
+    title: A test fails when a known PII shape reaches the error reporter
+    control: >-
+      The client error pipeline is exercised with a page state holding an
+      address and an email, and the test asserts neither appears in what is
+      sent to Sentry.
+    implemented_in: src/checkout-web/telemetry/scrub.test.ts
+    verification: code
+    vectors: [VEC-0011]
+
+retired: []
+
+# The four answers a scan produced, per ADR-0009. A finding is keyed by the
+# scanner that reported it, the rule it reported, and the scope somebody drew —
+# never by a fingerprint, because a fingerprint's failures suppress a question
+# nobody knows was asked. The fingerprints below are recorded so a person can
+# find the original, and nothing reads them.
+#
+# This is the one part of the register that is not an attestation. Everything
+# above was written by the people whose work it describes; a scanner observes
+# the system as built and knows nothing about any of it.
+
+answers:
+
+  - id: ANS-0001
+    scanner: codeql
+    rule: js/missing-rate-limiting
+    where: src/checkout-api/
+    answer: vector
+    vector: VEC-0003
+    contradiction: false_positive
+    reason: >-
+      VEC-0003 is dispositioned mitigated by MIT-0002, and this says it is not.
+      It is: the throttle runs at the edge proxy in front of the API, which is
+      outside the tree this scan covers and which the model does not contain at
+      all. The scanner is right that the handler has no limit and wrong that
+      nothing limits it. Recorded rather than suppressed, because the next
+      person to read this deserves the argument rather than silence.
+    seen_as:
+      partialFingerprints: {primaryLocationLineHash: "1f3c9a0d4e2b:1"}
+    answered: 2026-09-13
+
+  - id: ANS-0002
+    scanner: codeql
+    rule: js/clear-text-logging
+    where: src/support-console/
+    answer: vector
+    vector: VEC-0004
+    reason: >-
+      This is the address reaching the audit log, which is the exposure
+      VEC-0004 already tracks — the log keeps it past the 90-day purge and out
+      of erasure's reach. The finding is evidence for the deferral rather than
+      against it, and it does not change the date.
+    seen_as:
+      partialFingerprints: {primaryLocationLineHash: "77a1be04c9d3:1"}
+    answered: 2026-09-13
+
+  - id: ANS-0003
+    scanner: trivy
+    rule: CVE-2025-31910
+    where: infra/edge-proxy/
+    answer: model_gap
+    reason: >-
+      The edge proxy is not in this model. Every flow from the browser reaches
+      `checkout-api` through it, it terminates TLS, and it is where MIT-0002's
+      throttle actually runs — and the diagram does not contain it, so nothing
+      was ever enumerated against it. This is the most serious answer of the
+      four: the repair is the model, not this register.
+    model_digest: sha256:0deb63cd449e855ec9c3df49197988076ef3e62c988d995cec144d40e9196082
+    answered: 2026-09-13
+
+  - id: ANS-0004
+    scanner: trivy
+    rule: CVE-2025-44701
+    where: apps/marketing/
+    answer: not_a_threat
+    reason: >-
+      The marketing site is out of scope in this model and shares no data with
+      checkout — no flow connects them and it holds nothing about a shopper.
+      The same advisory on `checkout-web` would not get this answer, which is
+      the whole reason a scanner finding is worth putting to a threat model.
+    model_digest: sha256:0deb63cd449e855ec9c3df49197988076ef3e62c988d995cec144d40e9196082
+    answered: 2026-09-13

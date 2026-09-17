@@ -1,0 +1,443 @@
+# A worked example: a small e-commerce checkout, modelled for both STRIDE and
+# LINDDUN. It is deliberately ordinary — the point is to show the shape of a
+# finished model, including the parts people skip (support tooling, audit logs,
+# and the data subject access path).
+
+system:
+  name: Acme Checkout
+  slug: acme-checkout
+  description: >-
+    Takes an order from a shopper, charges their card through Stripe, and hands
+    the order to fulfilment. Serves consumers in the EU and UK.
+  analysis: [stride, linddun]
+  scope:
+    in_scope:
+      - The checkout web app, its API, the fulfilment worker, and the support console
+      - The data subject access and deletion path
+    out_of_scope:
+      - The warehouse management system, treated as a consumer of orders
+      - Stripe's internals, treated as a third-party service
+      - The marketing site, which shares no data with checkout
+  assumptions:
+    - Card numbers never reach our servers; Stripe Elements tokenises in-browser.
+    - The corporate network is not trusted; the support console authenticates
+      every request regardless of network position.
+  open_questions:
+    - Nobody could confirm whether the nightly database snapshots are covered by
+      the 90-day address purge, or whether they retain addresses for 35 days past it.
+  accepted_gaps:
+    - MISSING_FIELD:stores/session-cache:backups
+
+  # Where this project writes its design down, and what somebody has read this
+  # model against. A model declaring no design_sources is not using the currency
+  # review at all — the field is how a project opts in.
+  #
+  # One source here, and it is the same file the register's mitigations name as
+  # their specification. That is the real relationship rather than a shortcut: a
+  # specification covers mitigations from below, and the model has to stay
+  # current against it from above.
+  design_sources:
+    - skills/dfd/assets/example.spec.md
+  review_cycle: 365
+  reviewed:
+    - path: skills/dfd/assets/example.spec.md
+      digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+      reviewed: 2026-09-10
+      impact: none
+      reason: >-
+        States how guest email is bound and how support lookups are logged, both
+        of which this model already carries. No element, flow or data item moves.
+
+trust_zones:
+  - id: browser
+    name: Shopper's browser
+    description: Fully under the shopper's control; nothing running here is trusted.
+    controlled_by: end_user
+  - id: corp-net
+    name: Corporate network
+    description: Staff laptops and the SSO estate. Trusted for identity, not for authorisation.
+    controlled_by: us
+  - id: prod-vpc
+    name: Production VPC
+    description: Private subnets in our AWS account. No inbound access except through the edge proxy.
+    controlled_by: us
+  - id: stripe
+    name: Stripe
+    description: Payment processor. We see tokens and outcomes, never card numbers.
+    controlled_by: third_party
+
+actors:
+  - id: shopper
+    name: Shopper
+    type: human
+    description: Buys things, and can ask for a copy of their data or its deletion.
+    trust_zone: browser
+    authenticates_how: Email and password with optional TOTP; guest checkout is anonymous.
+    is_data_subject: true
+  - id: support-agent
+    name: Support agent
+    type: human
+    description: Looks up orders to answer customer queries. Handles other people's data.
+    trust_zone: corp-net
+    authenticates_how: Okta SSO with mandatory WebAuthn.
+    is_data_subject: false
+  - id: stripe-api
+    name: Stripe API
+    type: third_party_service
+    description: Tokenises cards in the browser and settles charges server-side.
+    trust_zone: stripe
+    authenticates_how: Publishable key in-browser; restricted secret key server-side.
+    is_data_subject: false
+
+processes:
+  - id: checkout-web
+    name: Checkout web app
+    description: Renders the cart, collects the address, and hands the card to Stripe Elements.
+    trust_zone: browser
+    kind: service
+    owner: Storefront team
+    tech: React SPA
+    authn: Session cookie issued by the API; no credentials held in the page.
+    authz: None — every decision is re-made server-side.
+    logging: Client errors to Sentry with PII scrubbing on; no order contents.
+  - id: checkout-api
+    name: Checkout API
+    description: Validates carts, creates orders, and calls Stripe to settle payment.
+    trust_zone: prod-vpc
+    kind: service
+    owner: Payments team
+    tech: Go service on ECS
+    authn: mTLS from the edge proxy, plus the shopper's session cookie for user context.
+    authz: Row-level ownership checks on every order read or write.
+    logging: Structured audit events to the audit log; request logs without bodies.
+  - id: fulfilment-worker
+    name: Fulfilment worker
+    description: Polls for paid orders and pushes picking instructions to the warehouse.
+    trust_zone: prod-vpc
+    kind: job
+    owner: Fulfilment team
+    tech: Python worker on ECS
+    authn: IAM role; no inbound network path.
+    authz: Read-only database role scoped to paid orders.
+    logging: Audit event per dispatched order.
+  - id: support-console
+    name: Support console
+    description: Internal tool for looking up an order by email or order number.
+    trust_zone: prod-vpc
+    kind: service
+    owner: Support engineering
+    tech: Rails app behind the SSO proxy
+    authn: Okta SSO, WebAuthn enforced, session bound to device.
+    authz: Role-based; addresses are masked unless the agent opens a ticket-linked view.
+    logging: Every lookup written to the audit log with the agent identity and reason.
+  - id: dsar-handler
+    name: Data request handler
+    description: >-
+      Assembles a copy of everything held about a shopper, or erases it. Runs
+      semi-automatically; a privacy team member approves each run.
+    trust_zone: prod-vpc
+    kind: job
+    owner: Privacy team
+    tech: Scheduled job plus a manual approval step
+    authn: Okta SSO for the approver; IAM role for the job.
+    authz: Two-person rule on erasure runs.
+    logging: Full audit trail of every request, approval, and export.
+
+stores:
+  - id: orders-db
+    name: Orders database
+    description: Postgres. Orders, line items, delivery addresses, and shopper emails.
+    trust_zone: prod-vpc
+    kind: database
+    data: [order, address, email]
+    encryption_at_rest: AES-256 via AWS KMS, customer-managed key.
+    access_control: Service roles only. Human access is break-glass through PAM and alerts the on-call.
+    retention: Orders kept 7 years for tax; addresses purged 90 days after delivery.
+    backups: Nightly snapshots retained 35 days in the same account, same KMS key.
+  - id: audit-log
+    name: Audit log
+    description: Append-only record of order changes and every support lookup.
+    trust_zone: prod-vpc
+    kind: log
+    data: [audit-event, email]
+    encryption_at_rest: AES-256 via AWS KMS; object lock prevents deletion before expiry.
+    access_control: Write-only for services. Read requires a security team role.
+    retention: 2 years, then hard delete.
+    backups: Cross-region replication, same 2-year expiry.
+  - id: session-cache
+    name: Session cache
+    description: Redis. Session ids mapped to shopper ids and cart state.
+    trust_zone: prod-vpc
+    kind: cache
+    data: [session-id, cart]
+    encryption_at_rest: In-memory only, encrypted volume; no persistence to disk.
+    access_control: Checkout API service role only.
+    retention: 30-minute TTL; nothing survives a restart.
+    backups: null
+
+data:
+  - id: email
+    name: Email address
+    classification: confidential
+    personal_data: personal
+    subjects: Shoppers
+    examples: alice@example.com
+    lawful_basis: Contract
+    retention: Life of account plus 30 days
+    notes: Doubles as the login identifier, so it cannot be pseudonymised.
+  - id: address
+    name: Delivery address
+    classification: confidential
+    personal_data: personal
+    subjects: Shoppers and their gift recipients
+    examples: 12 Example Street, Ghent
+    lawful_basis: Contract
+    retention: 90 days after delivery
+    notes: Gift recipients never interact with us, which makes transparency harder.
+  - id: cart
+    name: Cart contents
+    classification: internal
+    personal_data: pseudonymous
+    subjects: Shoppers
+    examples: 2x SKU-441
+    lawful_basis: Legitimate interests
+    retention: 30 minutes in cache; persisted only once an order is placed
+    notes: Purchase history is linkable to a person once joined to an order.
+  - id: order
+    name: Order record
+    classification: confidential
+    personal_data: personal
+    subjects: Shoppers
+    examples: Order 10023, paid, 2 items
+    lawful_basis: Contract
+    retention: 7 years
+    notes: null
+  - id: card-token
+    name: Stripe card token
+    classification: restricted
+    personal_data: pseudonymous
+    subjects: Shoppers
+    examples: tok_1A2b3C
+    lawful_basis: Contract
+    retention: Not stored; passed through and discarded
+    notes: Meaningless without Stripe's vault, but links a shopper to a payment instrument.
+  - id: session-id
+    name: Session identifier
+    classification: confidential
+    personal_data: pseudonymous
+    subjects: Shoppers
+    examples: sess_9f2c
+    lawful_basis: Legitimate interests
+    retention: 30 minutes
+    notes: Links otherwise separate requests to one person; a classic linkability vector.
+  - id: audit-event
+    name: Audit event
+    classification: confidential
+    personal_data: personal
+    subjects: Shoppers and staff
+    examples: agent bob viewed order 10023 at 14:02
+    lawful_basis: Legal obligation
+    retention: 2 years
+    notes: Deliberately non-repudiable for staff, which is a LINDDUN cost accepted on purpose.
+
+flows:
+  - id: browse
+    name: Browse and build cart
+    from: shopper
+    to: checkout-web
+    data: [cart]
+    protocol: In-page interaction
+    encryption_in_transit: n/a — never leaves the browser
+    authn: n/a — anonymous until checkout
+    trigger: user_action
+    notes: null
+  - id: tokenise-card
+    name: Tokenise card
+    from: checkout-web
+    to: stripe-api
+    data: [card-token]
+    protocol: HTTPS POST to Stripe Elements
+    encryption_in_transit: TLS 1.3
+    authn: Stripe publishable key
+    trigger: user_action
+    notes: Card number goes browser-to-Stripe and never touches our infrastructure.
+  - id: submit-order
+    name: Submit order
+    from: checkout-web
+    to: checkout-api
+    data: [cart, address, email, card-token]
+    protocol: HTTPS POST /orders
+    encryption_in_transit: TLS 1.3
+    authn: Session cookie, SameSite=Lax, plus CSRF token
+    trigger: user_action
+    notes: null
+  - id: charge
+    name: Charge card
+    from: checkout-api
+    to: stripe-api
+    data: [card-token, order]
+    protocol: HTTPS POST to Stripe charges
+    encryption_in_transit: TLS 1.3
+    authn: Restricted secret key, rotated quarterly
+    trigger: event
+    notes: null
+  - id: charge-result
+    name: Charge result
+    from: stripe-api
+    to: checkout-api
+    data: [order]
+    protocol: HTTPS response and webhook
+    encryption_in_transit: TLS 1.3
+    authn: Webhook signature verification
+    trigger: event
+    notes: null
+  - id: persist-order
+    name: Persist order
+    from: checkout-api
+    to: orders-db
+    data: [order, address, email]
+    protocol: Postgres wire protocol
+    encryption_in_transit: TLS, verify-full
+    authn: IAM database authentication
+    trigger: event
+    notes: null
+  - id: session-write
+    name: Write session
+    from: checkout-api
+    to: session-cache
+    data: [session-id, cart]
+    protocol: Redis over TLS
+    encryption_in_transit: TLS 1.2
+    authn: Redis AUTH plus security group
+    trigger: event
+    notes: null
+  - id: session-read
+    name: Read session
+    from: session-cache
+    to: checkout-api
+    data: [session-id, cart]
+    protocol: Redis over TLS
+    encryption_in_transit: TLS 1.2
+    authn: Redis AUTH plus security group
+    trigger: event
+    notes: null
+  - id: audit-write
+    name: Write audit event
+    from: checkout-api
+    to: audit-log
+    data: [audit-event]
+    protocol: HTTPS to the log ingest endpoint
+    encryption_in_transit: TLS 1.3
+    authn: IAM role
+    trigger: event
+    notes: null
+  - id: order-response
+    name: Order confirmation
+    from: checkout-api
+    to: checkout-web
+    data: [order]
+    protocol: HTTPS response
+    encryption_in_transit: TLS 1.3
+    authn: Session cookie
+    trigger: event
+    notes: null
+  - id: render-confirmation
+    name: Show confirmation
+    from: checkout-web
+    to: shopper
+    data: [order]
+    protocol: In-page rendering
+    encryption_in_transit: n/a — never leaves the browser
+    authn: n/a — already in the shopper's session
+    trigger: event
+    notes: null
+  - id: poll-orders
+    name: Poll for paid orders
+    from: orders-db
+    to: fulfilment-worker
+    data: [order, address]
+    protocol: Postgres wire protocol
+    encryption_in_transit: TLS, verify-full
+    authn: IAM database authentication, read-only role
+    trigger: scheduled
+    notes: null
+  - id: fulfilment-audit
+    name: Record dispatch
+    from: fulfilment-worker
+    to: audit-log
+    data: [audit-event]
+    protocol: HTTPS to the log ingest endpoint
+    encryption_in_transit: TLS 1.3
+    authn: IAM role
+    trigger: event
+    notes: null
+  - id: support-lookup
+    name: Look up an order
+    from: support-agent
+    to: support-console
+    data: [email]
+    protocol: HTTPS
+    encryption_in_transit: TLS 1.3
+    authn: Okta SSO session with WebAuthn
+    trigger: user_action
+    notes: null
+  - id: support-read
+    name: Read order for support
+    from: orders-db
+    to: support-console
+    data: [order, address, email]
+    protocol: Postgres wire protocol
+    encryption_in_transit: TLS, verify-full
+    authn: IAM database authentication, read-only role
+    trigger: event
+    notes: null
+  - id: support-render
+    name: Show order to agent
+    from: support-console
+    to: support-agent
+    data: [order, address, email]
+    protocol: HTTPS
+    encryption_in_transit: TLS 1.3
+    authn: Okta SSO session
+    trigger: event
+    notes: Address is masked unless the view is linked to an open ticket.
+  - id: support-audit
+    name: Record support lookup
+    from: support-console
+    to: audit-log
+    data: [audit-event, email]
+    protocol: HTTPS to the log ingest endpoint
+    encryption_in_transit: TLS 1.3
+    authn: IAM role
+    trigger: event
+    notes: null
+  - id: dsar-request
+    name: Data subject access or erasure request
+    from: shopper
+    to: dsar-handler
+    data: [email]
+    protocol: HTTPS form, or email to the privacy inbox
+    encryption_in_transit: TLS 1.3
+    authn: Identity verification against the account, or documentary proof for guests
+    trigger: user_action
+    notes: Guest checkout makes verification harder, since there is no account to prove.
+  - id: dsar-read
+    name: Assemble the shopper's data
+    from: orders-db
+    to: dsar-handler
+    data: [order, address, email]
+    protocol: Postgres wire protocol
+    encryption_in_transit: TLS, verify-full
+    authn: IAM database authentication, approved run only
+    trigger: manual
+    notes: null
+  - id: dsar-export
+    name: Deliver the export
+    from: dsar-handler
+    to: shopper
+    data: [order, address, email]
+    protocol: Expiring signed download link over HTTPS
+    encryption_in_transit: TLS 1.3
+    authn: One-time link tied to the verified identity, 72-hour expiry
+    trigger: manual
+    notes: null
