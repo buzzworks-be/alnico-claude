@@ -8,7 +8,7 @@ Takes an order from a shopper, charges their card through Stripe, and hands the 
 
 **In scope**
 
-- The checkout web app, its API, the fulfilment worker, and the support console
+- The checkout web app, its API, the fulfilment worker, the support console, and the support assistant that drafts replies inside it
 - The data subject access and deletion path
 
 
@@ -22,7 +22,7 @@ Takes an order from a shopper, charges their card through Stripe, and hands the 
 ## Diagram
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph browser["Shopper's browser"]
     shopper["Shopper"]
     checkout-web("Checkout web app")
@@ -34,6 +34,7 @@ flowchart LR
     checkout-api("Checkout API")
     fulfilment-worker("Fulfilment worker")
     support-console("Support console")
+    support-assistant("Support assistant")
     dsar-handler("Data request handler")
     orders-db[("Orders database")]
     audit-log[("Audit log")]
@@ -59,6 +60,9 @@ flowchart LR
   orders-db -->|"Order record, Delivery address, Email address"| support-console
   support-console ==>|"Order record, Delivery address, Email address"| support-agent
   support-console -->|"Audit event, Email address"| audit-log
+  support-console -->|"Order record, Delivery address, Shopper's message"| support-assistant
+  support-assistant -->|"Drafted reply"| support-console
+  support-assistant -->|"Audit event"| audit-log
   shopper ==>|"Email address"| dsar-handler
   orders-db -->|"Order record, Delivery address, Email address"| dsar-handler
   dsar-handler ==>|"Order record, Delivery address, Email address"| shopper
@@ -94,6 +98,7 @@ Rectangles are external entities, rounded boxes are processes, cylinders are dat
 | Checkout API | Production VPC | Payments team | mTLS from the edge proxy, plus the shopper's session cookie for user context. | Row-level ownership checks on every order read or write. | Structured audit events to the audit log; request logs without bodies. |
 | Fulfilment worker | Production VPC | Fulfilment team | IAM role; no inbound network path. | Read-only database role scoped to paid orders. | Audit event per dispatched order. |
 | Support console | Production VPC | Support engineering | Okta SSO, WebAuthn enforced, session bound to device. | Role-based; addresses are masked unless the agent opens a ticket-linked view. | Every lookup written to the audit log with the agent identity and reason. |
+| Support assistant | Production VPC | Support engineering | IAM role; reachable only from the support console, no public route. | The refund tool is capped and scoped to the order in the open ticket. | Prompt, every tool call, and every refund decision to the audit log. |
 | Data request handler | Production VPC | Privacy team | Okta SSO for the approver; IAM role for the job. | Two-person rule on erasure runs. | Full audit trail of every request, approval, and export. |
 
 
@@ -116,6 +121,8 @@ Rectangles are external entities, rounded boxes are processes, cylinders are dat
 | Order record | confidential | personal | Shoppers | 7 years | Contract |
 | Stripe card token | restricted | pseudonymous | Shoppers | Not stored; passed through and discarded | Contract |
 | Session identifier | confidential | pseudonymous | Shoppers | 30 minutes | Legitimate interests |
+| Shopper's message | confidential | personal | Shoppers | 2 years with the ticket | Contract |
+| Drafted reply | confidential | personal | Shoppers | 2 years with the ticket | Contract |
 | Audit event | confidential | personal | Shoppers and staff | 2 years | Legal obligation |
 
 
@@ -140,6 +147,9 @@ Rectangles are external entities, rounded boxes are processes, cylinders are dat
 | Read order for support | Orders database | Support console | Order record, Delivery address, Email address | Postgres wire protocol | TLS, verify-full | IAM database authentication, read-only role | event | no |
 | Show order to agent | Support console | Support agent | Order record, Delivery address, Email address | HTTPS | TLS 1.3 | Okta SSO session | event | yes |
 | Record support lookup | Support console | Audit log | Audit event, Email address | HTTPS to the log ingest endpoint | TLS 1.3 | IAM role | event | no |
+| Ask the assistant to draft a reply | Support console | Support assistant | Order record, Delivery address, Shopper's message | HTTPS POST inside the VPC | TLS 1.3 | IAM role, plus the agent identity of the console session | user_action | no |
+| Return the draft | Support assistant | Support console | Drafted reply | HTTPS response inside the VPC | TLS 1.3 | IAM role | event | no |
+| Record the prompt and the tool calls | Support assistant | Audit log | Audit event | HTTPS to the log ingest endpoint | TLS 1.3 | IAM role | event | no |
 | Data subject access or erasure request | Shopper | Data request handler | Email address | HTTPS form, or email to the privacy inbox | TLS 1.3 | Identity verification against the account, or documentary proof for guests | user_action | yes |
 | Assemble the shopper's data | Orders database | Data request handler | Order record, Delivery address, Email address | Postgres wire protocol | TLS, verify-full | IAM database authentication, approved run only | manual | no |
 | Deliver the export | Data request handler | Shopper | Order record, Delivery address, Email address | Expiring signed download link over HTTPS | TLS 1.3 | One-time link tied to the verified identity, 72-hour expiry | manual | yes |
@@ -162,7 +172,7 @@ This model has been read against the documents below. It is a claim about docume
 
 | Document | Read on | Impact | Why |
 |---|---|---|---|
-| skills/dfd/assets/example.spec.md | 2026-09-10 | none | States how guest email is bound and how support lookups are logged, both of which this model already carries. No element, flow or data item moves. |
+| skills/dfd/assets/example.spec.md | 2026-09-10 | modelled | Two sections were added about a support assistant the model did not contain. Reading them put `support-assistant` in as an agent process, with `assist-request`, `assist-draft` and `assist-audit` around it and `shopper-message` and `draft-reply` as data. The older sections still describe what was already here — how guest email is bound, how support lookups are logged — and moved nothing. |
 
 
 ---

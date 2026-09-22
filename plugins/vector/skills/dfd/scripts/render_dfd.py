@@ -69,7 +69,17 @@ def mermaid(model):
             name = label(item.get("name") or ident)
             node_line[ident] = f'{mid(ident)}{open_shape}{name}{close_shape}'
 
-    lines = ["flowchart LR"]
+    # Top-to-bottom, because a real model is wider than a screen otherwise.
+    # Measured with mermaid-cli over the four models in this repository: LR
+    # rendered 2874, 2398, 4094 and 2897 pixels wide; TB rendered 2317, 1389,
+    # 1823 and 1982. The largest halves. Height grows in exchange, and that is
+    # the right trade where these are read — a Markdown column scales a wide
+    # diagram down until the labels are unreadable, and scrolls a tall one.
+    #
+    # `direction` inside a subgraph is not the lever it looks like: Mermaid
+    # ignores it once edges cross between subgraphs, which every data flow
+    # diagram has. Both LR and TB measured byte-identical with and without it.
+    lines = ["flowchart TB"]
 
     for zone in sections["trust_zones"]:
         members = [i for i, z in zone_of.items() if z == zone.get("id")]

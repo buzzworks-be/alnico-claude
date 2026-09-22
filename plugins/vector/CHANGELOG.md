@@ -11,6 +11,98 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.15.0] — 2026-09-22
+
+### Changed
+
+- **The diagram runs top to bottom.** Left to right, a real model is wider than
+  anything that reads it: measured with mermaid-cli across four models, `LR`
+  rendered 2874, 2398, 4094 and 2897 pixels wide, against `TB`'s 2317, 1389,
+  1823 and 1982. The largest more than halves. Height grows in exchange, which
+  is the right way round — a Markdown column scales a wide diagram down until
+  the labels cannot be read, and scrolls a tall one.
+
+  **Re-render your models** to pick this up; nothing regenerates them for you,
+  and a committed `.dfd.md` keeps the old shape until you do. The model itself
+  is unchanged, so the diagram is the only difference.
+
+## [0.14.1] — 2026-09-22
+
+### Changed
+
+- **The `dfd` skill now says to write every prose value as a `>-` block
+  scalar, and why.** A sentence like *the chain ends here: somebody decides* is
+  ordinary English and invalid YAML as a plain value — it reads as a nested
+  mapping and the file stops parsing, before the validator has a model to
+  report gaps about, so what comes back is a line and a column rather than the
+  colon. Two of the four models this toolkit has been pointed at hit it while
+  being written.
+- Two shapes are worse than that because they **parse**: a value beginning with
+  `&` is read as an anchor and loses its first word, and a ` #` anywhere
+  truncates the rest of the line. Nothing reports either — the model validates
+  clean and the sentence is simply not in it. `model-schema.md` carries the
+  same rule beside the `null` and `"n/a"` conventions.
+
+## [0.14.0] — 2026-09-21
+
+### Added
+
+- **`LLM10` — Output Manipulation via Injected Content**, under tampering in
+  `references/STRIDE.md`. Every `LLM` node used to sit under elevation of
+  privilege, which assumes an injection reaches something worth reaching. When
+  the component holds no authority — a blind adjudicator, a summariser, a
+  classifier — the only casualty is its own answer, and there was no id for
+  that: the coverage check refused the elevation-side node, correctly, and the
+  nearest tampering-side one was `LLM04` Training Data Poisoning, a different
+  attack at a different stage. An enumeration of a real project hit this twice.
+
+### Changed
+
+- The catalogue now states how to choose between them, in its own header rather
+  than only in a decision record: an `LLM` entry is filed by **what the
+  injection buys, not by the mechanism**. Reaches authority, it is `LLM01` or
+  `LLM02`; reaches only the answer, it is `LLM10`. One id belongs to one
+  category, so two ids is the only way the file can say both — and citing the
+  half that does not match your finding's category is what the check refuses.
+
+## [0.13.0] — 2026-09-21
+
+### Added
+
+- **The worked example now contains an agent.** `example.dfd.yaml` gained a
+  support assistant — a language model in a tool-calling loop, with a refund
+  tool — because the model kinds `llm` and `agent` demand four extra fields
+  (`untrusted_input`, `system_prompt`, `output_handling`, `authority`) that no
+  shipped example demonstrated. Anyone modelling their own agent had the
+  interview's questions and nothing to copy from. The enumeration, the
+  register, the specification and every rendered view carry it through: three
+  new findings, among them prompt injection reaching a tool that moves money,
+  and the containment written into `example.spec.md`.
+- The example's specification records an `impact: modelled` review for the
+  first time — a design document grew a section, somebody read it, and the
+  model moved because of it. Only `impact: none` had ever been shown.
+
+### Fixed
+
+- **`DISCONNECTED` named the wrong half of a split diagram.** The check flooded
+  outward from whichever element was declared first and reported everything it
+  failed to reach. So a single stranded actor at the top of the file reported
+  the entire rest of the diagram as the disconnected piece, and moving that same
+  actor further down the file reversed the message without changing the graph.
+  Every piece is now found, the largest is the diagram, and the rest are named —
+  whatever order they appear in.
+
+## [0.12.1] — 2026-09-20
+
+### Fixed
+
+- **`validate_dfd.py` exited 1 for a file it could not read**, which is the
+  same code it uses for *the model has blocking gaps* — so a mistyped filename
+  was indistinguishable from an unfinished model, and the interview would have
+  carried on against a file that was never there. A usage error now exits 2,
+  the way every other check in the toolkit already did, and `/vector:dfd` says
+  so.
+
 ## [0.12.0] — 2026-09-17
 
 ### Added
@@ -401,6 +493,11 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.15.0]: https://github.com/buzzworks-be/vector/commit/ea26d59
+[0.14.1]: https://github.com/buzzworks-be/vector/commit/7dccaae
+[0.14.0]: https://github.com/buzzworks-be/vector/commit/665d6d4
+[0.13.0]: https://github.com/buzzworks-be/vector/commit/42f0e9d
+[0.12.1]: https://github.com/buzzworks-be/vector/commit/5093604
 [0.12.0]: https://github.com/buzzworks-be/vector/commit/e8b1e3f
 [0.11.0]: https://github.com/buzzworks-be/vector/commit/2b7e440
 [0.10.0]: https://github.com/buzzworks-be/vector/commit/87c4736

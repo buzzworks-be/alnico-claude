@@ -5,6 +5,16 @@ knows about is listed here. Use explicit `null` for "not asked yet" and the
 string `"n/a"` (with a reason in the adjacent `notes` field where one exists)
 for "asked, does not apply".
 
+Any value that is a sentence is written as a block scalar — `>-`, with the text
+indented on the following lines — rather than inline. A plain value containing
+a colon followed by a space reads as a nested mapping and the file stops
+parsing, which surfaces as a usage error naming a line number rather than as a
+gap naming the field. Two shapes are worse than that because they parse: a
+leading `&` is read as an anchor and swallows the first word, and a ` #`
+anywhere starts a comment and truncates the rest. Prose describing a real
+system runs into all three; the short placeholders below do not, which is the
+only reason they are inline.
+
 Identifiers are short kebab-case strings, unique across the whole file — not
 just within their section — because flows reference actors, processes, and
 stores interchangeably.

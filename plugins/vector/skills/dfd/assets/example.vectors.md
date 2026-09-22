@@ -4,7 +4,7 @@ Generated from `example.threats.yaml` and the register beside it by `render_vect
 
 ## Tracked vectors
 
-11 vector(s), grouped by the element each is anchored to. A chain lists the findings it ties together.
+14 vector(s), grouped by the element each is anchored to. A chain lists the findings it ties together.
 
 ### Processes
 
@@ -93,6 +93,44 @@ STRIDE information disclosure · promoted 2026-09-13
 **Impact.** Shopper addresses and email addresses in a third-party error tracker, under that tracker's retention and access, with no record that anyone would notice.
 
 **Context.** Nothing in the model says the scrubber is tested, and a scrubber nobody tests is a claim rather than a control. The fix is small — a test that fails when a known PII shape reaches Sentry — which is why this is tracked rather than dismissed as theoretical.
+
+#### `support-assistant` — Support assistant
+
+**VEC-0012 — A shopper's own words reach the prompt of a process that can move money**
+
+STRIDE elevation of privilege · promoted 2026-09-13
+
+> `LLM02` Indirect Prompt Injection via Retrieved Content · `LLM05` Excessive Agency via Unauthorized Tool Use
+
+**Attack.** Place an order with a delivery note written as an instruction, then open a support ticket about it. `support-assistant.untrusted_input` records that both the note and the message go into the prompt verbatim, and `authority` gives the process a tool that refunds the order in the open ticket up to EUR 50.
+
+**Impact.** A refund the shopper was not owed, issued by a process whose decision no person reviewed. The cap bounds one loss and not how many: placing orders is something the attacker already does, and each carries its own note.
+
+**Context.** Everything else about this process is tight — `system_prompt` is shipped with the service and never assembled from shopper input, `authority` scopes the tool to one order, and `logging` records every call. What is missing is not a boundary around the model but a person between the tool call and the money, and that is what the mitigation adds.
+
+**VEC-0013 — An assistant's draft can restate an address the console masked**
+
+STRIDE information disclosure · promoted 2026-09-13
+
+> `LLM08` Sensitive Information Disclosure Through Output
+
+**Attack.** Open a ticket-less lookup in the support console, where `support-console.authz` masks the address, and ask the assistant to draft a delivery answer. `assist-request` carries `address` with no such condition, and `support-assistant.output_handling` puts the draft in front of the agent.
+
+**Impact.** The address the console deliberately withheld, on the agent's screen, by a route the masking rule does not cover — and in the audit log as part of the prompt, where `audit-log.retention` keeps it for two years.
+
+**Context.** This is the cost of adding an element beside a control rather than inside it. VEC-0007 and `MIT-0004` bought the ticket-linked rule; a second reader of the same data was added later and nobody carried the rule across. The mitigation is to send the assistant what the agent is allowed to see, and no more.
+
+**VEC-0014 — Nobody tells the shopper a model read their message and wrote the reply**
+
+LINDDUN unawareness · promoted 2026-09-13
+
+> `U.1.1` Unawareness as data subject
+
+**Attack.** None needed. `assist-request` carries `shopper-message`, `order` and `address` into a language model, and `assist-draft` returns a statement about the shopper that `support-assistant.output_handling` sends out under a named agent. No flow in the model tells them either thing happened.
+
+**Impact.** An unawareness harm on its own, and it compounds: `draft-reply.notes` records that the reply is generated rather than looked up, so a shopper who cannot know a model wrote it also cannot know to doubt it. The prompt is kept for two years in `audit-log` and `dsar-request` has no way to surface something the shopper was never told existed.
+
+**Context.** The same control answers this and VEC-0010 — a notice that says what is collected and why — which is why one mitigation carries both rather than two ids drifting apart. What is new here is the disclosure in the reply itself, because a notice nobody opens is not what makes this one visible.
 
 ### Stores
 

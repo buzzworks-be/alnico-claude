@@ -9,7 +9,7 @@
 # whole capability exists to avoid.
 
 model: example.dfd.yaml
-model_digest: sha256:0deb63cd449e855ec9c3df49197988076ef3e62c988d995cec144d40e9196082
+model_digest: sha256:31e0f0518615ca45413bbfb9ee597bb66a3e0bd496d918785996c4c8c289d9d8
 analysis: [stride, linddun]
 
 carried_forward:
@@ -557,6 +557,139 @@ verdicts:
       Access is logged with a stated reason, which is what an audit of support
       access asks for, and the read-only role prevents the console becoming a
       way to change records outside the order path.
+
+  - element: support-assistant
+    category: stride/elevation_of_privilege
+    verdict: threat
+    nodes: [LLM02, LLM05]
+    summary: >-
+      Text a shopper writes reaches the prompt of a process that holds a refund
+      tool.
+    detail: >-
+      `untrusted_input` records that the shopper's message and the order's
+      free-text delivery note both go into the prompt verbatim, and `authority`
+      gives the process a tool that moves money: refund the order in the open
+      ticket, capped at EUR 50. Nothing in the model separates instruction from
+      data at the point the tool call is decided, so a delivery note written to
+      read like an instruction is indistinguishable from the system prompt. The
+      cap bounds one loss rather than the number of them — placing orders is
+      something the attacker already does, and every order carries its own note.
+
+  - element: support-assistant
+    category: stride/information_disclosure
+    verdict: threat
+    nodes: [LLM08]
+    summary: >-
+      A draft can restate the delivery address that the console deliberately
+      masks.
+    detail: >-
+      `support-console`'s `authz` masks addresses unless the agent opens a
+      ticket-linked view. `assist-request` hands this process `address` with no
+      such condition, and `output_handling` puts the draft in front of the agent
+      as text. A draft that quotes the address to answer a delivery question
+      therefore puts it on the agent's screen by a path the masking rule never
+      sees. The control and the way around it are one element apart in this
+      model.
+
+  - element: support-assistant
+    category: linddun/unawareness
+    verdict: threat
+    nodes: [U.1.1]
+    summary: >-
+      The shopper is not told a model read their message or wrote the reply
+      they receive.
+    detail: >-
+      `assist-request` carries `shopper-message`, `order` and `address` into a
+      language model, and `output_handling` sends the result out under a named
+      support agent. No flow in the model informs the shopper that either
+      happened. The reply is a statement about them, generated rather than
+      looked up — `draft-reply.notes` says as much — and the one path that
+      exists for a shopper to ask what is held about them, `dsar-request`, has
+      no way to surface a prompt they were never told about.
+
+  - element: support-assistant
+    category: stride/spoofing
+    verdict: controlled
+    reason: >-
+      `authn` is an IAM role with no public route; only `support-console` can
+      reach it. Impersonating the caller means holding the console's identity,
+      which is recorded against `support-console`.
+
+  - element: support-assistant
+    category: stride/tampering
+    verdict: controlled
+    reason: >-
+      `system_prompt` is held in the repository and shipped with the service,
+      not editable from the console and not assembled from anything a shopper
+      writes. Changing what the process is told to do means changing the
+      deployed artefact. Tampering with the data inside the prompt is the
+      elevation of privilege finding above rather than a second one.
+
+  - element: support-assistant
+    category: stride/repudiation
+    verdict: controlled
+    reason: >-
+      `logging` records the prompt, every tool call and every refund decision to
+      `audit-log`, which is append-only with object lock. Neither the process nor
+      the agent who accepted a draft can deny a refund.
+
+  - element: support-assistant
+    category: stride/denial_of_service
+    verdict: controlled
+    reason: >-
+      Reachable only from `support-console`, which is behind Okta SSO with
+      WebAuthn. Losing it degrades to an agent writing the reply themselves,
+      since `output_handling` already requires them to press send.
+
+  - element: support-assistant
+    category: linddun/linking
+    verdict: controlled
+    reason: >-
+      `tech` records that no conversation state is kept between tickets, and
+      `authority` scopes the process to the order in the open one. Nothing here
+      joins two tickets or two shoppers.
+
+  - element: support-assistant
+    category: linddun/identifying
+    verdict: controlled
+    reason: >-
+      It works on an identified order because the ticket is about one, and
+      `authority` holds it there. Identification is the function rather than a
+      side effect.
+
+  - element: support-assistant
+    category: linddun/non_repudiation
+    verdict: controlled
+    reason: >-
+      Deliberate, per `audit-event.notes`: the prompt and the tool calls are
+      logged precisely so a refund is attributable.
+
+  - element: support-assistant
+    category: linddun/detecting
+    verdict: not_applicable
+    reason: >-
+      `authn` records no inbound path from outside `prod-vpc`. Nothing outside
+      can time it or watch it respond.
+
+  - element: support-assistant
+    category: linddun/data_disclosure
+    verdict: controlled
+    reason: >-
+      `assist-request` carries `order`, `address` and `shopper-message` and not
+      `email` — the console already knows who it is talking to, so the
+      identifier stays out. The address travels because the questions this
+      process answers are about delivery. What it then does with the address is
+      the information disclosure finding above.
+
+  - element: support-assistant
+    category: linddun/non_compliance
+    verdict: controlled
+    reason: >-
+      `output_handling` keeps a named agent between every generated statement
+      and the shopper, so nothing the shopper reads is an automated decision.
+      The one thing decided without a human is a refund under EUR 50, which runs
+      in the shopper's favour. What is not covered is telling them any of this
+      happened, and that is the unawareness finding above.
 
   - element: dsar-handler
     category: stride/spoofing
@@ -1936,6 +2069,189 @@ verdicts:
     reason: >-
       Legal-obligation basis. The erasure conflict it contributes to is
       recorded against `audit-log`.
+
+  - element: assist-request
+    category: stride/tampering
+    verdict: controlled
+    reason: >-
+      TLS 1.3 and an IAM role between two processes in `prod-vpc`. `notes`
+      records that the shopper's message crosses into the prompt unaltered,
+      which is what the flow is for; that the receiving process cannot tell an
+      instruction from data is recorded against `support-assistant` under
+      elevation of privilege.
+
+  - element: assist-request
+    category: stride/information_disclosure
+    verdict: controlled
+    reason: >-
+      TLS 1.3 inside the VPC, IAM role on both ends. What this flow hands over
+      is the data disclosure verdict below; what the assistant does with it is
+      recorded against `support-assistant`.
+
+  - element: assist-request
+    category: stride/denial_of_service
+    verdict: controlled
+    reason: >-
+      One call per draft, and `authn` requires the console's own agent session
+      behind SSO.
+
+  - element: assist-request
+    category: linddun/linking
+    verdict: controlled
+    reason: >-
+      One order per call, and `support-assistant.tech` keeps no state between
+      tickets, so nothing is joined across them.
+
+  - element: assist-request
+    category: linddun/identifying
+    verdict: controlled
+    reason: >-
+      `order` and `address` are identified data by the model's own
+      classification, and the ticket is about that one shopper.
+
+  - element: assist-request
+    category: linddun/non_repudiation
+    verdict: controlled
+    reason: >-
+      Deliberate, per `audit-event.notes`; the prompt this flow carries is
+      recorded by `assist-audit`.
+
+  - element: assist-request
+    category: linddun/detecting
+    verdict: not_applicable
+    reason: Process to process inside `prod-vpc`, unobservable from outside.
+
+  - element: assist-request
+    category: linddun/data_disclosure
+    verdict: controlled
+    reason: >-
+      Narrower than `support-read`, which carries `order`, `address` and
+      `email`: the identifier is left behind because the assistant has no use
+      for it. DD.3.2 would need data to travel further than the function
+      requires, and this flow was cut to the function.
+
+  - element: assist-request
+    category: linddun/non_compliance
+    verdict: controlled
+    reason: >-
+      Same `lawful_basis: Contract` the source data already carries, and
+      `shopper-message` states a retention that matches the ticket it belongs
+      to.
+
+  - element: assist-draft
+    category: stride/tampering
+    verdict: controlled
+    reason: >-
+      TLS 1.3 and an IAM role inside the VPC. The console does not treat what
+      comes back as markup either — `support-assistant.output_handling` renders
+      the draft as plain text, never as HTML.
+
+  - element: assist-draft
+    category: stride/information_disclosure
+    verdict: controlled
+    reason: >-
+      TLS 1.3 inside the VPC. That the draft can contain a masked address is
+      recorded against `support-assistant`, where the decision to include it is
+      made.
+
+  - element: assist-draft
+    category: stride/denial_of_service
+    verdict: controlled
+    reason: One response per request; losing it costs a draft, not the ticket.
+
+  - element: assist-draft
+    category: linddun/linking
+    verdict: controlled
+    reason: Carries one draft about one order and nothing that joins tickets.
+
+  - element: assist-draft
+    category: linddun/identifying
+    verdict: controlled
+    reason: >-
+      `draft-reply` is a statement about the shopper whose ticket it answers;
+      naming them back to themselves is the point.
+
+  - element: assist-draft
+    category: linddun/non_repudiation
+    verdict: controlled
+    reason: Deliberate, per `audit-event.notes`; recorded by `assist-audit`.
+
+  - element: assist-draft
+    category: linddun/detecting
+    verdict: not_applicable
+    reason: Process to process inside `prod-vpc`, unobservable from outside.
+
+  - element: assist-draft
+    category: linddun/data_disclosure
+    verdict: controlled
+    reason: >-
+      One draft, to the console that asked for it, kept for as long as the
+      ticket per `draft-reply.retention`. It goes no further without an agent
+      pressing send.
+
+  - element: assist-draft
+    category: linddun/non_compliance
+    verdict: controlled
+    reason: >-
+      `support-assistant.output_handling` means nothing generated reaches a
+      shopper unreviewed, so a wrong statement is caught by a person before it
+      becomes something to rectify.
+
+  - element: assist-audit
+    category: stride/tampering
+    verdict: controlled
+    reason: TLS 1.3, IAM role, append-only destination with object lock.
+
+  - element: assist-audit
+    category: stride/information_disclosure
+    verdict: controlled
+    reason: Write-only into the log; the path cannot be reversed to read history.
+
+  - element: assist-audit
+    category: stride/denial_of_service
+    verdict: controlled
+    reason: One event per draft, and a draft requires an authenticated agent.
+
+  - element: assist-audit
+    category: linddun/linking
+    verdict: controlled
+    reason: >-
+      Links an agent, a shopper's order and a prompt, which is the
+      accountability the log exists for.
+
+  - element: assist-audit
+    category: linddun/identifying
+    verdict: controlled
+    reason: >-
+      Carries `audit-event` only, so the entry names the order rather than
+      restating the shopper's address. What the log's retention costs is
+      recorded against `audit-log`.
+
+  - element: assist-audit
+    category: linddun/non_repudiation
+    verdict: controlled
+    reason: Deliberate for staff, per `audit-event.notes`.
+
+  - element: assist-audit
+    category: linddun/detecting
+    verdict: not_applicable
+    reason: Service to store inside `prod-vpc`, unobservable from outside.
+
+  - element: assist-audit
+    category: linddun/data_disclosure
+    verdict: controlled
+    reason: >-
+      Carries only what the audit entry needs to be meaningful. The prompt text
+      it references includes `shopper-message`, so what two-year retention costs
+      is recorded against `audit-log` with the rest of the log's duration
+      finding.
+
+  - element: assist-audit
+    category: linddun/non_compliance
+    verdict: controlled
+    reason: >-
+      Legal-obligation basis, same as the other audit writes. The erasure
+      conflict it contributes to is recorded against `audit-log`.
 
   - element: dsar-request
     category: stride/tampering

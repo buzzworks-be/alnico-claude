@@ -156,7 +156,7 @@ The two fields the matrix owns are `disposition` on each vector and the
 `mitigations` list; `retired` is shared with `/vector:promote`, and a retired
 mitigation goes there with a reason. Nothing else in the file is this skill's
 to change. The worked register at `assets/example.vectors.yaml` dispositions
-eleven vectors, with `assets/example.spec.md` standing in for the
+fourteen vectors, with `assets/example.spec.md` standing in for the
 specification its mitigations were written into, and `assets/example.matrix.md`
 is what the result reads like.
 

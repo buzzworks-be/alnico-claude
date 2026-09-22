@@ -16,6 +16,17 @@ matters less. Coverage is uneven by category: repudiation has one entry, and
 patterns for data stores and data flows are far thinner than for processes.
 Cite one when it fits and write the finding out in full when it does not.
 
+The `LLM` entries are this catalogue's own, which is why none of them carries a
+CAPEC. They are filed by **what the injection buys rather than by the
+mechanism**, because the mechanism is the same one every time and the category
+is not: text a component was told to read, read instead as direction. Where that
+reaches authority — a tool call, a privileged action, a config it can rewrite —
+it is `LLM01` or `LLM02` under elevation of privilege. Where the component holds
+no authority at all and the only casualty is its own answer, it is `LLM10` under
+tampering. An id belongs to one category here, so two ids is the only way to say
+both, and citing the half that does not match the finding's category is what
+`check_coverage.py` refuses.
+
 ## S — Spoofing
 
 Violates **authentication**.
@@ -80,6 +91,7 @@ Violates **integrity**.
 | INP40 | Stored XSS | CAPEC-592 |
 | LB01 | API Manipulation | CAPEC-113 |
 | LLM04 | Training Data Poisoning | — |
+| LLM10 | Output Manipulation via Injected Content | — |
 | SC02 | XSS Targeting Non-Script Elements | CAPEC-18 |
 | SC03 | Embedding Scripts within Scripts | CAPEC-19 |
 | SC04 | XSS Using Alternate Syntax | CAPEC-199 |

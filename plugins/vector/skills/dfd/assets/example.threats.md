@@ -4,7 +4,7 @@ Generated from `example.dfd.yaml` by `render_threats.py`. Do not edit; regenerat
 
 ## Findings
 
-18 finding(s), grouped by the element they were found on.
+21 finding(s), grouped by the element they were found on.
 
 ### Actors
 
@@ -59,6 +59,26 @@ The process authenticates shoppers and, through `dsar-request`, receives request
 > `DD.4.1.1` Predetermined set of parties · `DD.1.2` Data type granularity
 
 `authz` records that "addresses are masked unless the agent opens a ticket-linked view". Nothing in the model says who verifies that the ticket is real, relevant, or the shopper's own — so the control is a speed bump on a path the agent controls both ends of. `logging` makes every unmasking visible afterwards, which makes this detective rather than preventive, and worth deciding about deliberately: compare `dsar-handler`, which has a two-person rule for a comparable action.
+
+#### `support-assistant` — Support assistant
+
+**STRIDE elevation of privilege** — Text a shopper writes reaches the prompt of a process that holds a refund tool.
+
+> `LLM02` Indirect Prompt Injection via Retrieved Content · `LLM05` Excessive Agency via Unauthorized Tool Use
+
+`untrusted_input` records that the shopper's message and the order's free-text delivery note both go into the prompt verbatim, and `authority` gives the process a tool that moves money: refund the order in the open ticket, capped at EUR 50. Nothing in the model separates instruction from data at the point the tool call is decided, so a delivery note written to read like an instruction is indistinguishable from the system prompt. The cap bounds one loss rather than the number of them — placing orders is something the attacker already does, and every order carries its own note.
+
+**STRIDE information disclosure** — A draft can restate the delivery address that the console deliberately masks.
+
+> `LLM08` Sensitive Information Disclosure Through Output
+
+`support-console`'s `authz` masks addresses unless the agent opens a ticket-linked view. `assist-request` hands this process `address` with no such condition, and `output_handling` puts the draft in front of the agent as text. A draft that quotes the address to answer a delivery question therefore puts it on the agent's screen by a path the masking rule never sees. The control and the way around it are one element apart in this model.
+
+**LINDDUN unawareness** — The shopper is not told a model read their message or wrote the reply they receive.
+
+> `U.1.1` Unawareness as data subject
+
+`assist-request` carries `shopper-message`, `order` and `address` into a language model, and `output_handling` sends the result out under a named support agent. No flow in the model informs the shopper that either happened. The reply is a statement about them, generated rather than looked up — `draft-reply.notes` says as much — and the one path that exists for a shopper to ask what is held about them, `dsar-request`, has no way to surface a prompt they were never told about.
 
 #### `dsar-handler` — Data request handler
 
@@ -149,18 +169,18 @@ This flow crosses `prod-vpc` to `corp-net`, and the model's own assumptions say 
 | Section | STRIDE | LINDDUN | Total |
 | :--- | ---: | ---: | ---: |
 | actors | 6 | 3 | 9 |
-| processes | 30 | 35 | 65 |
+| processes | 36 | 42 | 78 |
 | stores | 12 | 18 | 30 |
-| flows | 60 | 120 | 180 |
-| **all** | **108** | **176** | **284** |
+| flows | 69 | 138 | 207 |
+| **all** | **123** | **201** | **324** |
 
 | Verdict | Count |
 | :--- | ---: |
-| threat | 18 |
-| controlled | 232 |
-| not_applicable | 34 |
+| threat | 21 |
+| controlled | 265 |
+| not_applicable | 38 |
 
-284 of 284 applicable pairings verdicted.
+324 of 324 applicable pairings verdicted.
 
 ## Considered and dismissed
 
@@ -229,6 +249,16 @@ One line each. The reasons are the point: a dismissal a reader cannot disagree w
 | `support-console` | LINDDUN detecting | controlled | Its only users are authenticated agents inside `prod-vpc`. There is no unauthenticated response from which an outsider could deduce that a person is a customer. |
 | `support-console` | LINDDUN unawareness | not_applicable | Its users are staff, not data subjects. A shopper never reaches this process, so it can neither inform them nor take instruction from them; those paths are `checkout-web`'s and `dsar-handler`'s. |
 | `support-console` | LINDDUN non compliance | controlled | Access is logged with a stated reason, which is what an audit of support access asks for, and the read-only role prevents the console becoming a way to change records outside the order path. |
+| `support-assistant` | STRIDE spoofing | controlled | `authn` is an IAM role with no public route; only `support-console` can reach it. Impersonating the caller means holding the console's identity, which is recorded against `support-console`. |
+| `support-assistant` | STRIDE tampering | controlled | `system_prompt` is held in the repository and shipped with the service, not editable from the console and not assembled from anything a shopper writes. Changing what the process is told to do means changing the deployed artefact. Tampering with the data inside the prompt is the elevation of privilege finding above rather than a second one. |
+| `support-assistant` | STRIDE repudiation | controlled | `logging` records the prompt, every tool call and every refund decision to `audit-log`, which is append-only with object lock. Neither the process nor the agent who accepted a draft can deny a refund. |
+| `support-assistant` | STRIDE denial of service | controlled | Reachable only from `support-console`, which is behind Okta SSO with WebAuthn. Losing it degrades to an agent writing the reply themselves, since `output_handling` already requires them to press send. |
+| `support-assistant` | LINDDUN linking | controlled | `tech` records that no conversation state is kept between tickets, and `authority` scopes the process to the order in the open one. Nothing here joins two tickets or two shoppers. |
+| `support-assistant` | LINDDUN identifying | controlled | It works on an identified order because the ticket is about one, and `authority` holds it there. Identification is the function rather than a side effect. |
+| `support-assistant` | LINDDUN non repudiation | controlled | Deliberate, per `audit-event.notes`: the prompt and the tool calls are logged precisely so a refund is attributable. |
+| `support-assistant` | LINDDUN detecting | not_applicable | `authn` records no inbound path from outside `prod-vpc`. Nothing outside can time it or watch it respond. |
+| `support-assistant` | LINDDUN data disclosure | controlled | `assist-request` carries `order`, `address` and `shopper-message` and not `email` — the console already knows who it is talking to, so the identifier stays out. The address travels because the questions this process answers are about delivery. What it then does with the address is the information disclosure finding above. |
+| `support-assistant` | LINDDUN non compliance | controlled | `output_handling` keeps a named agent between every generated statement and the shopper, so nothing the shopper reads is an automated decision. The one thing decided without a human is a refund under EUR 50, which runs in the shopper's favour. What is not covered is telling them any of this happened, and that is the unawareness finding above. |
 | `dsar-handler` | STRIDE tampering | controlled | `authz` is a two-person rule on erasure runs, so the destructive path needs two identities. `dsar-read.authn` restricts the read to an approved run rather than to anyone holding the role. |
 | `dsar-handler` | STRIDE repudiation | controlled | `logging` is a full audit trail of every request, approval and export, into the append-only `audit-log`. Both the requester and the approver are recorded. |
 | `dsar-handler` | STRIDE information disclosure | controlled | Reads are limited to approved runs and the export goes out over TLS 1.3. Whether the right person receives it depends on verification, which is the spoofing finding above. |
@@ -425,6 +455,33 @@ One line each. The reasons are the point: a dismissal a reader cannot disagree w
 | `support-audit` | LINDDUN detecting | not_applicable | Service to store inside `prod-vpc`, unobservable from outside. |
 | `support-audit` | LINDDUN data disclosure | controlled | This is the flow that puts `email` into a store that keeps it for two years, past the address's own stated retention. Recorded as a finding where the duration lives, against `audit-log`; the flow itself carries only what the audit entry needs to be meaningful. |
 | `support-audit` | LINDDUN non compliance | controlled | Legal-obligation basis. The erasure conflict it contributes to is recorded against `audit-log`. |
+| `assist-request` | STRIDE tampering | controlled | TLS 1.3 and an IAM role between two processes in `prod-vpc`. `notes` records that the shopper's message crosses into the prompt unaltered, which is what the flow is for; that the receiving process cannot tell an instruction from data is recorded against `support-assistant` under elevation of privilege. |
+| `assist-request` | STRIDE information disclosure | controlled | TLS 1.3 inside the VPC, IAM role on both ends. What this flow hands over is the data disclosure verdict below; what the assistant does with it is recorded against `support-assistant`. |
+| `assist-request` | STRIDE denial of service | controlled | One call per draft, and `authn` requires the console's own agent session behind SSO. |
+| `assist-request` | LINDDUN linking | controlled | One order per call, and `support-assistant.tech` keeps no state between tickets, so nothing is joined across them. |
+| `assist-request` | LINDDUN identifying | controlled | `order` and `address` are identified data by the model's own classification, and the ticket is about that one shopper. |
+| `assist-request` | LINDDUN non repudiation | controlled | Deliberate, per `audit-event.notes`; the prompt this flow carries is recorded by `assist-audit`. |
+| `assist-request` | LINDDUN detecting | not_applicable | Process to process inside `prod-vpc`, unobservable from outside. |
+| `assist-request` | LINDDUN data disclosure | controlled | Narrower than `support-read`, which carries `order`, `address` and `email`: the identifier is left behind because the assistant has no use for it. DD.3.2 would need data to travel further than the function requires, and this flow was cut to the function. |
+| `assist-request` | LINDDUN non compliance | controlled | Same `lawful_basis: Contract` the source data already carries, and `shopper-message` states a retention that matches the ticket it belongs to. |
+| `assist-draft` | STRIDE tampering | controlled | TLS 1.3 and an IAM role inside the VPC. The console does not treat what comes back as markup either — `support-assistant.output_handling` renders the draft as plain text, never as HTML. |
+| `assist-draft` | STRIDE information disclosure | controlled | TLS 1.3 inside the VPC. That the draft can contain a masked address is recorded against `support-assistant`, where the decision to include it is made. |
+| `assist-draft` | STRIDE denial of service | controlled | One response per request; losing it costs a draft, not the ticket. |
+| `assist-draft` | LINDDUN linking | controlled | Carries one draft about one order and nothing that joins tickets. |
+| `assist-draft` | LINDDUN identifying | controlled | `draft-reply` is a statement about the shopper whose ticket it answers; naming them back to themselves is the point. |
+| `assist-draft` | LINDDUN non repudiation | controlled | Deliberate, per `audit-event.notes`; recorded by `assist-audit`. |
+| `assist-draft` | LINDDUN detecting | not_applicable | Process to process inside `prod-vpc`, unobservable from outside. |
+| `assist-draft` | LINDDUN data disclosure | controlled | One draft, to the console that asked for it, kept for as long as the ticket per `draft-reply.retention`. It goes no further without an agent pressing send. |
+| `assist-draft` | LINDDUN non compliance | controlled | `support-assistant.output_handling` means nothing generated reaches a shopper unreviewed, so a wrong statement is caught by a person before it becomes something to rectify. |
+| `assist-audit` | STRIDE tampering | controlled | TLS 1.3, IAM role, append-only destination with object lock. |
+| `assist-audit` | STRIDE information disclosure | controlled | Write-only into the log; the path cannot be reversed to read history. |
+| `assist-audit` | STRIDE denial of service | controlled | One event per draft, and a draft requires an authenticated agent. |
+| `assist-audit` | LINDDUN linking | controlled | Links an agent, a shopper's order and a prompt, which is the accountability the log exists for. |
+| `assist-audit` | LINDDUN identifying | controlled | Carries `audit-event` only, so the entry names the order rather than restating the shopper's address. What the log's retention costs is recorded against `audit-log`. |
+| `assist-audit` | LINDDUN non repudiation | controlled | Deliberate for staff, per `audit-event.notes`. |
+| `assist-audit` | LINDDUN detecting | not_applicable | Service to store inside `prod-vpc`, unobservable from outside. |
+| `assist-audit` | LINDDUN data disclosure | controlled | Carries only what the audit entry needs to be meaningful. The prompt text it references includes `shopper-message`, so what two-year retention costs is recorded against `audit-log` with the rest of the log's duration finding. |
+| `assist-audit` | LINDDUN non compliance | controlled | Legal-obligation basis, same as the other audit writes. The erasure conflict it contributes to is recorded against `audit-log`. |
 | `dsar-request` | STRIDE tampering | controlled | TLS 1.3, and `authz` on the handler is a two-person rule for erasure, so a tampered request cannot by itself destroy anything. |
 | `dsar-request` | STRIDE information disclosure | controlled | Carries `email` inbound over TLS 1.3. What goes back out is `dsar-export`, and the verification it depends on is recorded as a finding against `dsar-handler`. |
 | `dsar-request` | STRIDE denial of service | controlled | `trigger: user_action` but every run is manual and approved, so volume costs human time rather than availability. |

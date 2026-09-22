@@ -19,7 +19,7 @@
 # exercise both instead.
 
 threats: example.threats.yaml
-threats_digest: sha256:0aaa0c75cad6bfe511b5480774d85c5121a5b87af5999fa4fe678ee7b600e336
+threats_digest: sha256:8a2b5c57d38b549367f75fcb8e74cd2c18afe54d32bb2f5d915290253c326279
 
 vectors:
 
@@ -373,6 +373,96 @@ vectors:
       decided: 2026-09-13
       mitigations: [MIT-0009]
 
+  - id: VEC-0012
+    title: A shopper's own words reach the prompt of a process that can move money
+    element: support-assistant
+    category: stride/elevation_of_privilege
+    source: verdict
+    promoted: 2026-09-13
+    attack: >-
+      Place an order with a delivery note written as an instruction, then open a
+      support ticket about it. `support-assistant.untrusted_input` records that
+      both the note and the message go into the prompt verbatim, and
+      `authority` gives the process a tool that refunds the order in the open
+      ticket up to EUR 50.
+    impact: >-
+      A refund the shopper was not owed, issued by a process whose decision no
+      person reviewed. The cap bounds one loss and not how many: placing orders
+      is something the attacker already does, and each carries its own note.
+    context: >-
+      Everything else about this process is tight — `system_prompt` is shipped
+      with the service and never assembled from shopper input, `authority`
+      scopes the tool to one order, and `logging` records every call. What is
+      missing is not a boundary around the model but a person between the tool
+      call and the money, and that is what the mitigation adds.
+    disposition:
+      state: deferred
+      owner: Maya Okonkwo, support engineering lead
+      reason: >-
+        The proposal flow is specified and is a product change rather than a
+        patch: the console needs a confirmation step, the payment path needs to
+        stop accepting a tool call, and the rejection log needs somewhere to go.
+        It lands with the support console's next release. Until then the tool
+        issues refunds under the EUR 50 cap and the exposure is carried here.
+      until: 2027-01-31
+      until_label: 2027.1 — support console release
+      decided: 2026-09-13
+      mitigations: [MIT-0010]
+
+  - id: VEC-0013
+    title: An assistant's draft can restate an address the console masked
+    element: support-assistant
+    category: stride/information_disclosure
+    source: verdict
+    promoted: 2026-09-13
+    attack: >-
+      Open a ticket-less lookup in the support console, where
+      `support-console.authz` masks the address, and ask the assistant to draft
+      a delivery answer. `assist-request` carries `address` with no such
+      condition, and `support-assistant.output_handling` puts the draft in front
+      of the agent.
+    impact: >-
+      The address the console deliberately withheld, on the agent's screen, by a
+      route the masking rule does not cover — and in the audit log as part of the
+      prompt, where `audit-log.retention` keeps it for two years.
+    context: >-
+      This is the cost of adding an element beside a control rather than inside
+      it. VEC-0007 and `MIT-0004` bought the ticket-linked rule; a second reader
+      of the same data was added later and nobody carried the rule across. The
+      mitigation is to send the assistant what the agent is allowed to see, and
+      no more.
+    disposition:
+      state: mitigated
+      decided: 2026-09-13
+      mitigations: [MIT-0011]
+
+  - id: VEC-0014
+    title: Nobody tells the shopper a model read their message and wrote the reply
+    element: support-assistant
+    category: linddun/unawareness
+    source: verdict
+    promoted: 2026-09-13
+    attack: >-
+      None needed. `assist-request` carries `shopper-message`, `order` and
+      `address` into a language model, and `assist-draft` returns a statement
+      about the shopper that `support-assistant.output_handling` sends out under
+      a named agent. No flow in the model tells them either thing happened.
+    impact: >-
+      An unawareness harm on its own, and it compounds: `draft-reply.notes`
+      records that the reply is generated rather than looked up, so a shopper
+      who cannot know a model wrote it also cannot know to doubt it. The prompt
+      is kept for two years in `audit-log` and `dsar-request` has no way to
+      surface something the shopper was never told existed.
+    context: >-
+      The same control answers this and VEC-0010 — a notice that says what is
+      collected and why — which is why one mitigation carries both rather than
+      two ids drifting apart. What is new here is the disclosure in the reply
+      itself, because a notice nobody opens is not what makes this one visible.
+    disposition:
+      state: mitigated
+      decided: 2026-09-13
+      mitigations: [MIT-0008]
+
 dismissed:
 
   - element: checkout-api
@@ -407,7 +497,7 @@ mitigations:
       per hour. A guest who cannot complete it on a data request is told the
       alternative route, and the request is recorded as opened either way.
     specified_in: example.spec.md#guest-email-verification
-    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    specified_digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
     verification: code
     vectors: [VEC-0001]
 
@@ -418,7 +508,7 @@ mitigations:
       at the API gateway in front of the checkout API, so a rejected request
       never reaches the database or Stripe.
     specified_in: example.spec.md#order-throttle
-    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    specified_digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
     implemented_in: infra/gateway/rate-limits.yaml
     verification: code
     vectors: [VEC-0003]
@@ -430,7 +520,7 @@ mitigations:
       resolves to nothing after erasure. Existing events are rewritten once by
       a migration that reports what it could not resolve.
     specified_in: example.spec.md#audit-log-pseudonymisation
-    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    specified_digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
     verification: code
     vectors: [VEC-0004]
 
@@ -451,7 +541,7 @@ mitigations:
       lookups a month from the audit log, weighted to the agents with the most,
       and checks each against the ticket it names.
     specified_in: example.spec.md#support-lookup-review
-    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    specified_digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
     verification: manual
     evidence: Signed monthly review, sample and exceptions in the compliance drive.
     vectors: [VEC-0007]
@@ -463,7 +553,7 @@ mitigations:
       blocked local export; the identity provider refuses the WebAuthn
       challenge from a device out of compliance.
     specified_in: example.spec.md#managed-endpoints
-    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    specified_digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
     implemented_in: infra/mdm/support-baseline.yaml
     verification: manual
     evidence: Monthly device compliance report, filed with the support lookup review.
@@ -476,7 +566,7 @@ mitigations:
       never forwarded or attached to the ticket, and removed by a job that
       reports what it deleted.
     specified_in: example.spec.md#identity-document-retention
-    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    specified_digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
     verification: code
     vectors: [VEC-0009]
 
@@ -487,10 +577,10 @@ mitigations:
       per data item, from the same entries the model carries, and is linked
       from the step that first asks for an address.
     specified_in: example.spec.md#privacy-notice
-    specified_digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+    specified_digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
     implemented_in: src/checkout-web/pages/checkout.tsx
     verification: code
-    vectors: [VEC-0010]
+    vectors: [VEC-0010, VEC-0014]
 
   - id: MIT-0009
     title: A test fails when a known PII shape reaches the error reporter
@@ -501,6 +591,33 @@ mitigations:
     implemented_in: src/checkout-web/telemetry/scrub.test.ts
     verification: code
     vectors: [VEC-0011]
+
+  - id: MIT-0010
+    title: The assistant proposes a refund; an agent issues it
+    control: >-
+      The refund tool returns a proposal — amount, order and stated reason —
+      which the console shows beside the draft and which settles nothing until
+      an agent confirms it. The confirmation carries the agent identity and is
+      what reaches the payment path. A rejected proposal is logged as a
+      rejection with the prompt that produced it, and rejections are reviewed
+      with the support lookup sample.
+    specified_in: example.spec.md#assistant-refund-proposals
+    specified_digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
+    verification: code
+    vectors: [VEC-0012]
+
+  - id: MIT-0011
+    title: Send the assistant the address only when the agent may already see it
+    control: >-
+      `assist-request` carries the delivery address only where the console has
+      unmasked it for the agent under the ticket-linked rule in MIT-0004, and
+      the masked form otherwise, so a draft cannot restate what the console
+      withheld. The audit event records which form was sent.
+    specified_in: example.spec.md#assistant-address-masking
+    implemented_in: src/support-console/views/assistant.ts
+    specified_digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
+    verification: code
+    vectors: [VEC-0013]
 
 retired: []
 
@@ -560,7 +677,7 @@ answers:
       throttle actually runs — and the diagram does not contain it, so nothing
       was ever enumerated against it. This is the most serious answer of the
       four: the repair is the model, not this register.
-    model_digest: sha256:0deb63cd449e855ec9c3df49197988076ef3e62c988d995cec144d40e9196082
+    model_digest: sha256:31e0f0518615ca45413bbfb9ee597bb66a3e0bd496d918785996c4c8c289d9d8
     answered: 2026-09-13
 
   - id: ANS-0004
@@ -573,5 +690,5 @@ answers:
       checkout — no flow connects them and it holds nothing about a shopper.
       The same advisory on `checkout-web` would not get this answer, which is
       the whole reason a scanner finding is worth putting to a threat model.
-    model_digest: sha256:0deb63cd449e855ec9c3df49197988076ef3e62c988d995cec144d40e9196082
+    model_digest: sha256:31e0f0518615ca45413bbfb9ee597bb66a3e0bd496d918785996c4c8c289d9d8
     answered: 2026-09-13

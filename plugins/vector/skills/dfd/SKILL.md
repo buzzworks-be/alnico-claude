@@ -83,6 +83,32 @@ mean "not asked yet" or "not applicable" — and the validator cannot tell the
 difference. `null` means "still to ask"; `"n/a"` with a reason means asked and
 answered.
 
+**Write every prose value as a block scalar.** A field whose value is a
+sentence gets `>-`, with the text indented beneath it:
+
+```yaml
+    notes: >-
+      Gift recipients never interact with us, which makes transparency harder.
+```
+
+Not for tidiness. A plain value containing a colon followed by a space reads
+as a nested mapping and the file stops parsing, and a sentence like *the chain
+ends here: somebody decides* is the ordinary way to write English rather than a
+rare accident — two of the four models this toolkit has been pointed at hit it
+while being written. A value beginning with `-`, `[`, `{`, `*`, `?`, `|`, `>`,
+`%`, `@`, a backtick or a quote fails the same way.
+
+**Two of them do not fail. They quietly change what the field says.** A value
+beginning with `&` is read as an anchor and the first word disappears — `&c is
+a language` becomes `is a language`. A ` #` anywhere in a plain value starts a
+comment, so `a note # and a caveat` becomes `a note`. Nothing reports either;
+the model validates clean and the sentence a reader needs is not in it.
+
+When a file does fail, it fails before any of this is checkable. The validator
+never gets a model, so it reports no gaps — it exits 2 as a usage error and
+names a line and a column rather than the colon. Writing every sentence as `>-`
+costs one line and removes all of it.
+
 **4. Then work element by element.**
 
 Once the skeleton exists, run the validator and let its output drive the
@@ -152,8 +178,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/validate_dfd.py <slug>.dfd.ya
 python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_dfd.py <slug>.dfd.yaml -o <slug>.dfd.md
 ```
 
-`validate_dfd.py` exits 0 when there are no blocking gaps, 1 otherwise, and
-prints gaps grouped as BLOCKING or ADVISORY with the element each belongs to.
+`validate_dfd.py` exits 0 when there are no blocking gaps and 1 when there are,
+and prints them grouped as BLOCKING or ADVISORY with the element each belongs
+to. **Exit 2 is a usage error** — no such file, unreadable YAML, not a mapping
+— and never means the model is incomplete, so a mistyped name stops the loop
+instead of looking like more work to do.
 Pass `--json` if you want to reason over the output programmatically rather
 than reading it. If PyYAML is missing and `uv` is available, substitute
 `uv run --script` for `python3` — each script carries inline dependency metadata

@@ -12,7 +12,8 @@ system:
   analysis: [stride, linddun]
   scope:
     in_scope:
-      - The checkout web app, its API, the fulfilment worker, and the support console
+      - The checkout web app, its API, the fulfilment worker, the support console,
+        and the support assistant that drafts replies inside it
       - The data subject access and deletion path
     out_of_scope:
       - The warehouse management system, treated as a consumer of orders
@@ -41,12 +42,16 @@ system:
   review_cycle: 365
   reviewed:
     - path: skills/dfd/assets/example.spec.md
-      digest: sha256:cb8228922932082f864ef2dc345d6583e6f22964bf5f62207a5178c60902b04d
+      digest: sha256:ba3427d96c0ec14ae61a2fbda14387f28871a7c4f13c3f1edb985a2badf18d0a
       reviewed: 2026-09-10
-      impact: none
+      impact: modelled
       reason: >-
-        States how guest email is bound and how support lookups are logged, both
-        of which this model already carries. No element, flow or data item moves.
+        Two sections were added about a support assistant the model did not
+        contain. Reading them put `support-assistant` in as an agent process,
+        with `assist-request`, `assist-draft` and `assist-audit` around it and
+        `shopper-message` and `draft-reply` as data. The older sections still
+        describe what was already here — how guest email is bound, how support
+        lookups are logged — and moved nothing.
 
 trust_zones:
   - id: browser
@@ -130,6 +135,32 @@ processes:
     authn: Okta SSO, WebAuthn enforced, session bound to device.
     authz: Role-based; addresses are masked unless the agent opens a ticket-linked view.
     logging: Every lookup written to the audit log with the agent identity and reason.
+  - id: support-assistant
+    name: Support assistant
+    description: >-
+      Drafts a reply to a shopper's message from the order it is shown, and
+      issues the refund itself when the amount is under EUR 50.
+    trust_zone: prod-vpc
+    kind: agent
+    owner: Support engineering
+    tech: >-
+      A language model served from our own AWS account, in a tool-calling
+      loop. No conversation state is kept between tickets.
+    authn: IAM role; reachable only from the support console, no public route.
+    authz: The refund tool is capped and scoped to the order in the open ticket.
+    logging: Prompt, every tool call, and every refund decision to the audit log.
+    untrusted_input: >-
+      Yes. The shopper's own message goes into the prompt verbatim, and so does
+      the free-text delivery note carried on the order.
+    system_prompt: >-
+      Held in the repository and shipped with the service. Not editable from the
+      console, and nothing a shopper writes is interpolated into it.
+    output_handling: >-
+      The draft is shown to the support agent and is never sent until they press
+      send. Rendered as plain text, never as HTML.
+    authority: >-
+      One tool: refund the order in the open ticket, capped at EUR 50. It cannot
+      read another shopper's order, change a delivery address, or call Stripe.
   - id: dsar-handler
     name: Data request handler
     description: >-
@@ -230,6 +261,28 @@ data:
     lawful_basis: Legitimate interests
     retention: 30 minutes
     notes: Links otherwise separate requests to one person; a classic linkability vector.
+  - id: shopper-message
+    name: Shopper's message
+    classification: confidential
+    personal_data: personal
+    subjects: Shoppers
+    examples: Where is my order? I moved house last week.
+    lawful_basis: Contract
+    retention: 2 years with the ticket
+    notes: >-
+      Free text a shopper writes, so it is unpredictable personal data and the
+      untrusted input the assistant is asked to read, at the same time.
+  - id: draft-reply
+    name: Drafted reply
+    classification: confidential
+    personal_data: personal
+    subjects: Shoppers
+    examples: Your order 10023 shipped on Tuesday.
+    lawful_basis: Contract
+    retention: 2 years with the ticket
+    notes: >-
+      A statement about a person generated rather than looked up, so it can be
+      wrong in ways neither the agent nor the shopper can see.
   - id: audit-event
     name: Audit event
     classification: confidential
@@ -406,6 +459,36 @@ flows:
     from: support-console
     to: audit-log
     data: [audit-event, email]
+    protocol: HTTPS to the log ingest endpoint
+    encryption_in_transit: TLS 1.3
+    authn: IAM role
+    trigger: event
+    notes: null
+  - id: assist-request
+    name: Ask the assistant to draft a reply
+    from: support-console
+    to: support-assistant
+    data: [order, address, shopper-message]
+    protocol: HTTPS POST inside the VPC
+    encryption_in_transit: TLS 1.3
+    authn: IAM role, plus the agent identity of the console session
+    trigger: user_action
+    notes: The shopper's message crosses into the prompt here, unaltered.
+  - id: assist-draft
+    name: Return the draft
+    from: support-assistant
+    to: support-console
+    data: [draft-reply]
+    protocol: HTTPS response inside the VPC
+    encryption_in_transit: TLS 1.3
+    authn: IAM role
+    trigger: event
+    notes: null
+  - id: assist-audit
+    name: Record the prompt and the tool calls
+    from: support-assistant
+    to: audit-log
+    data: [audit-event]
     protocol: HTTPS to the log ingest endpoint
     encryption_in_transit: TLS 1.3
     authn: IAM role

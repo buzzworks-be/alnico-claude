@@ -106,7 +106,7 @@ is not sufficient — which is why VEC-0009 is deferred rather than mitigated.
 
 ## Privacy notice
 
-*MIT-0008 · answers VEC-0010*
+*MIT-0008 · answers VEC-0010 and VEC-0014*
 
 The checkout page links the privacy notice from the step where the address is
 first asked for, and the notice states, per data item the model carries, what
@@ -116,3 +116,45 @@ disagree without the diff showing it.
 
 Verified by a test that the rendered checkout page carries the link, and a
 test that every `data` item in the model appears in the notice.
+
+The notice also states that a language model reads messages sent to support and
+drafts the reply, that a named person reviews every draft before it is sent, and
+what is kept of the prompt and for how long. The same reply carries one line
+saying it was drafted with assistance, so the disclosure reaches the shopper at
+the moment it is about them rather than only in a document they did not open.
+
+## Assistant refund proposals
+
+*MIT-0010 · answers VEC-0012*
+
+The support assistant does not issue refunds. Its refund tool returns a
+proposal — amount, order and the reason it gives — which the support console
+shows to the agent beside the draft, and which does nothing until the agent
+confirms it. The agent's confirmation, not the model's tool call, is what
+reaches the payment path, and the audit event records both.
+
+This is containment rather than prevention: the shopper's message and the
+order's delivery note still reach the prompt, and nothing reliably separates an
+instruction from data inside one. What changes is that the injected instruction
+now has to persuade a person rather than a parser. Attempts are worth seeing, so
+a proposal the agent rejects is logged as a rejection with the prompt that
+produced it, and the rejections are reviewed with the support lookup sample.
+
+Verified by a test that the refund tool's result cannot settle a payment
+without a confirmation carrying an agent identity.
+
+## Assistant address masking
+
+*MIT-0011 · answers VEC-0013*
+
+The delivery address is sent to the assistant only when the console has already
+unmasked it for the agent under the ticket-linked rule in `MIT-0004`. Where the
+address is masked, the assistant is given the same masked form the agent sees,
+so a draft cannot restate what the console withheld.
+
+Where the address is unmasked, the draft may quote it, because the agent is
+already entitled to read it and a reply about a delivery is what the ticket
+asked for.
+
+Verified by a test that a masked lookup sends no address on `assist-request`,
+and by a check on the audit event that records which form was sent.

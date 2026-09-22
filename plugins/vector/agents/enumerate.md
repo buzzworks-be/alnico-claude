@@ -27,7 +27,7 @@ sufficient, not when the obvious threats are written down.
 python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_coverage.py <slug>.threats.yaml
 ```
 
-A model of 31 elements produces 284 pairings. That number is not padding: the
+A model of 35 elements produces 324 pairings. That number is not padding: the
 questions people skip are the ones that look uninteresting before they are
 asked, which is exactly why a script and not a person decides which get asked.
 
@@ -100,7 +100,7 @@ dismissal nobody can argue with is not a dismissal.
 
 ## What you cannot do
 
-**Coverage is checkable; seriousness is not.** An enumeration of 284 shallow
+**Coverage is checkable; seriousness is not.** An enumeration of 324 shallow
 dismissals passes every check in this toolkit. Nothing here prevents that, and
 nothing can — so say it in the document rather than letting a green check imply
 otherwise. The rendered output states this limit, and you should state it again

@@ -473,18 +473,34 @@ def validate(model):
             if a in adjacency and b in adjacency:
                 adjacency[a].add(b)
                 adjacency[b].add(a)
-        seen_nodes, stack = set(), [nodes[0]]
-        while stack:
-            node = stack.pop()
-            if node in seen_nodes:
+        # Every piece, not one flood from nodes[0]: whichever element happened
+        # to be declared first was treated as the main diagram, so a single
+        # stranded actor at the top of the file reported every other element as
+        # the stranded one. The largest piece is the main diagram instead, ties
+        # broken by declaration order, which is a property of the graph.
+        pieces, placed = [], set()
+        for start in nodes:
+            if start in placed:
                 continue
-            seen_nodes.add(node)
-            stack.extend(adjacency[node] - seen_nodes)
-        stranded = sorted(set(nodes) - seen_nodes)
-        if stranded:
+            seen_nodes, stack = set(), [start]
+            while stack:
+                node = stack.pop()
+                if node in seen_nodes:
+                    continue
+                seen_nodes.add(node)
+                stack.extend(adjacency[node] - seen_nodes)
+            placed |= seen_nodes
+            pieces.append(sorted(seen_nodes))
+        if len(pieces) > 1:
+            main = max(pieces, key=len)
+            detached = [p for p in pieces if p is not main]
+            loose = [n for p in detached for n in p]
             report.add(ADVISORY, "DISCONNECTED", "graph",
-                       "the diagram is in more than one piece: "
-                       + ", ".join(stranded) + " do not connect to the rest",
+                       f"the diagram is in {len(pieces)} pieces: "
+                       + "; ".join(", ".join(p) for p in detached)
+                       + (" does" if len(loose) == 1 else " do")
+                       + f" not connect to the other {len(main)} element"
+                       + ("" if len(main) == 1 else "s"),
                        "Is there a missing flow, or are these genuinely separate systems "
                        "that belong in their own diagram?")
 
@@ -562,16 +578,26 @@ def main():
     parser.add_argument("--json", action="store_true", help="emit gaps as JSON")
     args = parser.parse_args()
 
+    # Exit 2, not 1, and the distinction is the whole point: 1 means the model
+    # has blocking gaps, which is what the interview loops on. `sys.exit(str)`
+    # exits 1, so a mistyped filename used to be indistinguishable from an
+    # unfinished model — the skill would keep interviewing against a file that
+    # was never there. Every other check in the toolkit already separates the
+    # two this way.
+    def usage(message):
+        print(message, file=sys.stderr)
+        sys.exit(2)
+
     try:
         with open(args.model) as handle:
             model = yaml.safe_load(handle)
     except FileNotFoundError:
-        sys.exit(f"no such model: {args.model}")
+        usage(f"no such model: {args.model}")
     except yaml.YAMLError as exc:
-        sys.exit(f"{args.model} is not valid YAML: {exc}")
+        usage(f"{args.model} is not valid YAML: {exc}")
 
     if not isinstance(model, dict):
-        sys.exit(f"{args.model} should be a mapping with system/actors/processes/... keys")
+        usage(f"{args.model} should be a mapping with system/actors/processes/... keys")
 
     report = validate(model)
 

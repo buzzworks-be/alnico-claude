@@ -133,7 +133,7 @@ with no setup.
 
 A dismissal is a pairing and a reason; a dismissed open question is the
 question's text, verbatim, and a reason. The worked register at
-`assets/example.vectors.yaml` decides eighteen findings and one question, and
+`assets/example.vectors.yaml` decides twenty-one findings and one question, and
 is the reference for what a finished one reads like.
 
 ## What the check reports, and why each is worth satisfying

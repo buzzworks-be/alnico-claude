@@ -94,7 +94,7 @@ def catalogue(directory):
     The title is carried alongside the category because `render_threats.py`
     needs it and would otherwise parse the same two documents a second way.
 
-    Parsed rather than duplicated here as constants: 186 ids copied into this
+    Parsed rather than duplicated here as constants: 187 ids copied into this
     file would be a second source of truth for something the documents already
     state, and the two would drift. The cost is that this script now needs its
     references beside it, which is how it ships.
@@ -162,8 +162,8 @@ def applicable(model, analysis):
     """Every pairing the frameworks ask about, as {(element_id, category)}.
 
     This is the grid. Its size is the enumeration's terminating condition, so
-    the conditions below are the whole reason a model of 31 elements produces
-    284 questions rather than 31 times thirteen.
+    the conditions below are the whole reason a model of 35 elements produces
+    324 questions rather than 35 times thirteen.
     """
     data_index = {d.get("id"): d.get("personal_data")
                   for d in model.get("data") or [] if isinstance(d, dict)}

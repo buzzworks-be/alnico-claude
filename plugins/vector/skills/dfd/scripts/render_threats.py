@@ -9,7 +9,7 @@ A pure function of the enumeration, as render_dfd.py is of the model.
 Regenerate rather than hand-editing: the YAML stays the source of truth.
 
 Findings come first. The coverage a complete enumeration produces is large —
-284 verdicts for a 31-element model — and a reader who meets two hundred
+324 verdicts for a 35-element model — and a reader who meets three hundred
 dismissals before the first finding does not reach the finding.
 """
 

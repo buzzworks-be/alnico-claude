@@ -6,10 +6,10 @@ Generated from the register beside `example.threats.yaml` by `render_matrix.py`,
 
 | | Vectors |
 | :--- | ---: |
-| Tracked | 11 |
-| Mitigated | 5 |
+| Tracked | 14 |
+| Mitigated | 7 |
 | Accepted | 2 |
-| Deferred | 4 |
+| Deferred | 5 |
 | Undecided | 0 |
 | Carrying no mitigation | 3 |
 
@@ -22,6 +22,7 @@ What has been decided and not done, with who owns it and until when. A deferral 
 | **VEC-0005** Nobody could say whether the backup snapshots honour the address purge | 2026-10-31 | Ruben De Smet, platform lead | — | Nothing can be mitigated or accepted until the question is answered: whether the purge reaches the snapshots is a fact about the backup job that nobody in the room could state. The owner is finding out, and the answer decides which of the other two states this becomes. |
 | **VEC-0009** Verifying a guest collects identity documents the model does not know it holds | 2026-11-30 | Ines Verhaeghe, privacy lead | `MIT-0007` | The document is now a modelled data item with a retention and a deletion job in the specification, and the job does not exist. Until it does, the privacy inbox's own retention rule is the only control, and it was not written with identity documents in mind. |
 | **VEC-0004** The audit log keeps email past its own retention, beyond erasure's reach | 2026-12-31 | Ines Verhaeghe, privacy lead | `MIT-0003` | The decision the vector asked for has been made — audit events will carry the shopper id rather than the address, and the event itself is the stated exception to erasure — and the migration that makes it true of the existing two years of events is not done. Carried until it is. |
+| **VEC-0012** A shopper's own words reach the prompt of a process that can move money | 2027-01-31 (2027.1 — support console release) | Maya Okonkwo, support engineering lead | `MIT-0010` | The proposal flow is specified and is a product change rather than a patch: the console needs a confirmation step, the payment path needs to stop accepting a tool call, and the rejection log needs somewhere to go. It lands with the support console's next release. Until then the tool issues refunds under the EUR 50 cap and the exposure is carried here. |
 | **VEC-0001** A guest's identity is never verified, at checkout or on a data request | 2027-03-31 (2027.1 — guest path rework) | Ines Verhaeghe, privacy lead | `MIT-0001` | The control is designed and written into the specification, and it is not built: guest verification lands with the partner-onboarding work that reworks the guest path, rather than ahead of it. Until then the exposure is real on both paths and is carried under this date. |
 
 ## The matrix
@@ -32,6 +33,9 @@ What has been decided and not done, with who owns it and until when. A deferral 
 | **VEC-0011** PII scrubbing on client error reports is a filter that fails open | `checkout-web` Checkout web app | STRIDE information disclosure | mitigated | — | `MIT-0009` |
 | **VEC-0003** The order path has no throttle anywhere in the model | `checkout-api` Checkout API | STRIDE denial of service | mitigated | — | `MIT-0002` |
 | **VEC-0007** Address masking in the support console is lifted by the agent who wants it | `support-console` Support console | LINDDUN data disclosure | mitigated | — | `MIT-0004`, `MIT-0005` |
+| **VEC-0012** A shopper's own words reach the prompt of a process that can move money | `support-assistant` Support assistant | STRIDE elevation of privilege | deferred | Maya Okonkwo, support engineering lead | `MIT-0010` |
+| **VEC-0013** An assistant's draft can restate an address the console masked | `support-assistant` Support assistant | STRIDE information disclosure | mitigated | — | `MIT-0011` |
+| **VEC-0014** Nobody tells the shopper a model read their message and wrote the reply | `support-assistant` Support assistant | LINDDUN unawareness | mitigated | — | `MIT-0008` |
 | **VEC-0001** A guest's identity is never verified, at checkout or on a data request | `dsar-handler` Data request handler | STRIDE spoofing | deferred | Ines Verhaeghe, privacy lead | `MIT-0001` |
 | **VEC-0002** Gift recipients are data subjects the system cannot inform or serve | `dsar-handler` Data request handler | LINDDUN non compliance | accepted | Ines Verhaeghe, privacy lead | — |
 | **VEC-0005** Nobody could say whether the backup snapshots honour the address purge | `orders-db` Orders database | LINDDUN non compliance | deferred | Ruben De Smet, platform lead | — |
@@ -132,7 +136,7 @@ The notice states what is collected, why, on what basis and for how long, per da
 | Specified in | example.spec.md#privacy-notice |
 | Implemented in | src/checkout-web/pages/checkout.tsx |
 | Verification | code |
-| Serves | `VEC-0010` |
+| Serves | `VEC-0010`, `VEC-0014` |
 
 ### MIT-0009 — A test fails when a known PII shape reaches the error reporter
 
@@ -144,6 +148,28 @@ The client error pipeline is exercised with a page state holding an address and 
 | Implemented in | src/checkout-web/telemetry/scrub.test.ts |
 | Verification | code |
 | Serves | `VEC-0011` |
+
+### MIT-0010 — The assistant proposes a refund; an agent issues it
+
+The refund tool returns a proposal — amount, order and stated reason — which the console shows beside the draft and which settles nothing until an agent confirms it. The confirmation carries the agent identity and is what reaches the payment path. A rejected proposal is logged as a rejection with the prompt that produced it, and rejections are reviewed with the support lookup sample.
+
+| | |
+| :--- | :--- |
+| Specified in | example.spec.md#assistant-refund-proposals |
+| Implemented in | — |
+| Verification | code |
+| Serves | `VEC-0012` |
+
+### MIT-0011 — Send the assistant the address only when the agent may already see it
+
+`assist-request` carries the delivery address only where the console has unmasked it for the agent under the ticket-linked rule in MIT-0004, and the masked form otherwise, so a draft cannot restate what the console withheld. The audit event records which form was sent.
+
+| | |
+| :--- | :--- |
+| Specified in | example.spec.md#assistant-address-masking |
+| Implemented in | src/support-console/views/assistant.ts |
+| Verification | code |
+| Serves | `VEC-0013` |
 
 ## Acceptances
 
