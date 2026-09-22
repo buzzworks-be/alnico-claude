@@ -71,7 +71,7 @@ path appears in exactly one line of the workflow.
          - uses: actions/checkout@v7
            with:
              persist-credentials: false
-         - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+         - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
          - run: uv run --locked --script .vector/check_traceability.py
    ```
 
@@ -82,8 +82,8 @@ path appears in exactly one line of the workflow.
    actions** — if it pins to commit hashes, match that, and do not quietly
    introduce a looser convention than the repository already keeps.
 
-   The commit hash above is not decoration. `setup-uv` stopped publishing
-   moving major tags at v8, so `@v10` resolves to nothing and the workflow
+   The commit hash above is not decoration. `setup-uv` publishes no moving
+   major tag above `v7`, so `@v10` resolves to nothing and the workflow
    fails before it runs a line — and a tag can be repointed under you in any
    case, which is reason enough for a third-party action. It is the same pin
    this toolkit's own CI uses, and a test fails when the two stop matching, so

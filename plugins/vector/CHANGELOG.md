@@ -11,13 +11,29 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.17.2] — 2026-09-22
+
+### Changed
+
+- The pinned `astral-sh/setup-uv` commit moves from **v10.1.0 to v10.2.0**, in
+  this toolkit's own CI and in the workflow [`/vector:wire`](skills/wire/SKILL.md)
+  writes. 0.17.1 shipped a hash that resolved but was a release behind, so a
+  project already on `@v10.2.0` would have been asked to move backwards to
+  adopt it.
+
+  Also corrected, in the three places it was repeated: `setup-uv` publishes no
+  moving major tag **above `v7`**, not "stopped at v8". The conclusion was
+  right — `@v10` resolves to nothing — but the sentence explaining it named the
+  wrong version, and it is the sentence a reader uses to decide whether their
+  own pin is safe. Measured with `git ls-remote --tags` rather than recalled.
+
 ## [0.17.1] — 2026-09-22
 
 ### Fixed
 
 - **The workflow [`/vector:wire`](skills/wire/SKILL.md) writes could not run.**
-  It pinned `astral-sh/setup-uv@v10`, and that action stopped publishing moving
-  major tags at v8, so GitHub Actions failed the job before it executed a line:
+  It pinned `astral-sh/setup-uv@v10`, and that action publishes no moving major
+  tag above `v7`, so GitHub Actions failed the job before it executed a line:
   `Unable to resolve action astral-sh/setup-uv@v10, unable to find version v10`.
   Anybody who wired a repository got a build that never ran the check it was
   for. It is now the same commit hash this toolkit's own CI uses, and
@@ -597,6 +613,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.17.2]: https://github.com/buzzworks-be/vector/commit/f310d3a
 [0.17.1]: https://github.com/buzzworks-be/vector/commit/8426e9f
 [0.17.0]: https://github.com/buzzworks-be/vector/commit/8d8cb38
 [0.16.1]: https://github.com/buzzworks-be/vector/commit/6473a58
