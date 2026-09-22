@@ -8,8 +8,8 @@ description: >-
   the threats, for "the threat matrix", "disposition these", "who owns this
   risk", "we need the mitigations written down" — or when the register has
   changed and new vectors sit undispositioned or a deferral has expired. The
-  output is the same <slug>.vectors.yaml, with dispositions and mitigations
-  added, and its rendered <slug>.matrix.md.
+  output is the same ctm/<slug>.vectors.yaml, with dispositions and mitigations
+  added, and its rendered ctm/<slug>.matrix.md.
 ---
 
 # The matrix: from a threat model to decisions
@@ -37,7 +37,7 @@ is still moving, and dispositioning a moving set produces decisions about the
 wrong things. Say so and stop; finishing it is `/vector:promote`'s job.
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_vectors.py <slug>.vectors.yaml
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_vectors.py ctm/<slug>.vectors.yaml
 ```
 
 **Find out who is deciding, and who owns what.** The person in the session
@@ -52,7 +52,7 @@ team as an owner: a team accepts nothing, a person does.
    number from the first turn.
 
    ```sh
-   python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_matrix.py <slug>.vectors.yaml --json
+   python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_matrix.py ctm/<slug>.vectors.yaml --json
    ```
 
 2. **Look for the control before proposing one.** For each vector, before
@@ -110,8 +110,8 @@ team as an owner: a team accepts nothing, a person does.
 9. **Render, and hand back the limits with the document.**
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_matrix.py <slug>.vectors.yaml
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_matrix.py <slug>.vectors.yaml -o <slug>.matrix.md
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_matrix.py ctm/<slug>.vectors.yaml
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_matrix.py ctm/<slug>.vectors.yaml -o ctm/<slug>.matrix.md
 ```
 
 Both take `--as-of YYYY-MM-DD` to judge deferrals against a date other than
@@ -122,7 +122,7 @@ lockfile.
 The rendered matrix links every id and every reference it can reach: a
 mitigation id to its own section, a `specified_in` to the requirement that
 carries the control, and a vector id to that vector's own entry in
-`<slug>.vectors.md`. It links only what resolves, so render the threat model
+`ctm/<slug>.vectors.md`. It links only what resolves, so render the threat model
 view first — [`/vector:promote`](../promote/SKILL.md)'s last step — or the
 vector ids come out as plain text. Everything is relative to `-o`, so write the
 document beside the register.

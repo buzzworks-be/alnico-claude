@@ -21,11 +21,19 @@ until it is complete. "Complete" is not a feeling: it is defined by
 interview ends when that script reports no blocking gaps and the user has seen
 the rendered diagram.
 
-The output is two files, by default in the working directory:
+The output is two files, in `ctm/` at the root of the project:
 
-- `<slug>.dfd.yaml` — the model. This is the source of truth.
-- `<slug>.dfd.md` — the rendered Mermaid diagram plus element tables, generated
-  from the YAML. Never hand-edit it; regenerate it.
+- `ctm/<slug>.dfd.yaml` — the model. This is the source of truth.
+- `ctm/<slug>.dfd.md` — the rendered Mermaid diagram plus element tables,
+  generated from the YAML. Never hand-edit it; regenerate it.
+
+**Everything this toolkit writes goes in that one directory** — the model, the
+enumeration, the register and every rendered view, for this and every later
+step. Create it if it is not there. A project that already keeps them
+elsewhere should keep doing so: nothing resolves by convention, every script
+is given the path it is to read, and `check_traceability.py` finds a model
+wherever in the tree it sits. The directory is where they go by default, not
+where they are required to be.
 
 ## Why the model is structured rather than drawn
 
@@ -174,8 +182,8 @@ it stops.
 Both scripts read the YAML model and need only Python 3 and PyYAML.
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/validate_dfd.py <slug>.dfd.yaml
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_dfd.py <slug>.dfd.yaml -o <slug>.dfd.md
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/validate_dfd.py ctm/<slug>.dfd.yaml
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_dfd.py ctm/<slug>.dfd.yaml -o ctm/<slug>.dfd.md
 ```
 
 `validate_dfd.py` exits 0 when there are no blocking gaps and 1 when there are,

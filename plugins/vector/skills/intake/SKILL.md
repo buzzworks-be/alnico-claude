@@ -8,8 +8,8 @@ description: >-
   about this CVE", "we have a scan and a threat model and nobody has compared
   them", "the build produced a SARIF file" — or when a finding lands on
   something the matrix already called mitigated. The output is the same
-  <slug>.vectors.yaml, with an `answers` section, and its rendered
-  <slug>.matrix.md.
+  ctm/<slug>.vectors.yaml, with an `answers` section, and its rendered
+  ctm/<slug>.matrix.md.
 ---
 
 # The intake: findings put to the threat model
@@ -48,7 +48,7 @@ exactly the false comfort the rest of the toolkit is written to remove.
 is still moving is argued against the wrong thing.
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_matrix.py <slug>.vectors.yaml
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_matrix.py ctm/<slug>.vectors.yaml
 ```
 
 If that does not exit 0, say so and stop. Finishing it is `/vector:matrix`'s job.
@@ -58,7 +58,7 @@ puts it. SARIF 2.1.0 is the only format read, and it is read from a file — nev
 fetched from a vendor's API, because the repository is the source of truth.
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_answers.py <scan>.sarif <slug>.vectors.yaml --json
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_answers.py <scan>.sarif ctm/<slug>.vectors.yaml --json
 ```
 
 ## The loop
@@ -168,7 +168,7 @@ Regenerate the rendered view, so the answers are legible beside the dispositions
 they argue with:
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_matrix.py <slug>.vectors.yaml -o <slug>.matrix.md
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_matrix.py ctm/<slug>.vectors.yaml -o ctm/<slug>.matrix.md
 ```
 
 Then re-run the check and report what it says, advisories included — the

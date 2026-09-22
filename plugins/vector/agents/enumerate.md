@@ -24,7 +24,7 @@ run it again. You are finished when it exits 0 — not when the findings feel
 sufficient, not when the obvious threats are written down.
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_coverage.py <slug>.threats.yaml
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_coverage.py ctm/<slug>.threats.yaml
 ```
 
 A model of 35 elements produces 324 pairings. That number is not padding: the
@@ -48,7 +48,7 @@ asked, which is exactly why a script and not a person decides which get asked.
    `model_digest`, `carried_forward`, and `verdicts: []`. An empty list is
    valid; it makes the remaining work visible from the first turn rather than
    estimated. Compute the digest from the model's bytes:
-   `sha256:$(sha256sum <slug>.dfd.yaml | cut -d' ' -f1)`.
+   `sha256:$(sha256sum ctm/<slug>.dfd.yaml | cut -d' ' -f1)`.
 4. **Work one element at a time.** One element's categories are one coherent
    thought. Hopping between a store, a flow and an actor forces a context
    switch per verdict and produces shallower reasoning.
@@ -80,7 +80,7 @@ asked, which is exactly why a script and not a person decides which get asked.
 
 ```sh
 python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_threats.py \
-  <slug>.threats.yaml -o <slug>.threats.md
+  ctm/<slug>.threats.yaml -o ctm/<slug>.threats.md
 ```
 
 ## Verdicts

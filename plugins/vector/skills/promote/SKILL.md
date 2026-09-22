@@ -8,8 +8,8 @@ description: >-
   .threats.yaml is complete and someone asks which threats matter, what to
   track, how to get from findings to a threat model, or for "the vectors" —
   and when an enumeration has been re-run and the register beside it needs
-  reconciling. The output is <slug>.vectors.yaml and its rendered
-  <slug>.vectors.md.
+  reconciling. The output is ctm/<slug>.vectors.yaml and its rendered
+  ctm/<slug>.vectors.md.
 ---
 
 # Promotion: from findings to a threat model
@@ -35,7 +35,7 @@ wrong things. Say so and stop; the enumeration is `vector:enumerate`'s to
 finish.
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_coverage.py <slug>.threats.yaml
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_coverage.py ctm/<slug>.threats.yaml
 ```
 
 **Find out who is deciding.** The person in the session is the threat model's
@@ -48,7 +48,7 @@ anything on your own; present, ask, record.
 1. **Write the skeleton immediately and run the check.** `threats`,
    `threats_digest`, `vectors: []`, `dismissed: []`, `retired: []`. Compute the
    digest from the enumeration's bytes:
-   `sha256:$(sha256sum <slug>.threats.yaml | cut -d' ' -f1)`. The check then
+   `sha256:$(sha256sum ctm/<slug>.threats.yaml | cut -d' ' -f1)`. The check then
    reports every finding as undecided, which makes the remaining work a number
    from the first turn rather than an estimate.
 
@@ -99,9 +99,9 @@ anything on your own; present, ask, record.
 9. **Render, and hand back the limits with the document.**
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_vectors.py <slug>.vectors.yaml
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_vectors.py <slug>.vectors.yaml --json
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_vectors.py <slug>.vectors.yaml -o <slug>.vectors.md
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_vectors.py ctm/<slug>.vectors.yaml
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_vectors.py ctm/<slug>.vectors.yaml --json
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_vectors.py ctm/<slug>.vectors.yaml -o ctm/<slug>.vectors.md
 ```
 
 `uv run --script` in place of `python3` works too — each script carries

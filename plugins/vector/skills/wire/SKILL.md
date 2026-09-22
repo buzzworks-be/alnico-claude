@@ -32,7 +32,7 @@ Undispositioned vectors mean the register is still being decided, and wiring a
 build to fail on an unfinished document teaches people to ignore the build.
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_matrix.py <slug>.vectors.yaml
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_matrix.py ctm/<slug>.vectors.yaml
 ```
 
 **Ask where the files should go.** `.vector/` is the default and nothing more
@@ -141,7 +141,7 @@ path appears in exactly one line of the workflow.
 
    ```sh
    python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_matrix.py \
-     <slug>.vectors.yaml -o <slug>.matrix.md
+     ctm/<slug>.vectors.yaml -o ctm/<slug>.matrix.md
    ```
 
    After that the build fails on a register edited without a re-render, which

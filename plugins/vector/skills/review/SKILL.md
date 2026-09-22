@@ -8,8 +8,8 @@ description: >-
   since, for "is the threat model still current", "we just merged an ADR",
   "review the model", "the build says a document is unreviewed" — or when
   adopting the currency check for the first time. The output is the same
-  <slug>.dfd.yaml, with system.design_sources and system.reviewed filled in,
-  and its regenerated <slug>.dfd.md.
+  ctm/<slug>.dfd.yaml, with system.design_sources and system.reviewed filled in,
+  and its regenerated ctm/<slug>.dfd.md.
 ---
 
 # The review: keeping the model current with the design
@@ -47,7 +47,7 @@ somebody would go to check.
 against anything.
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/validate_dfd.py <slug>.dfd.yaml
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/validate_dfd.py ctm/<slug>.dfd.yaml
 ```
 
 **Find out whether this project has opted in.** If the model has no
@@ -55,7 +55,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/validate_dfd.py <slug>.dfd.ya
 runs differently — see below. If it has them, run the check and work the list.
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_reviews.py <slug>.dfd.yaml --json
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_reviews.py ctm/<slug>.dfd.yaml --json
 ```
 
 ## Adopting, on a model that has never been reviewed
@@ -158,7 +158,7 @@ Regenerate the rendered view, so the model's age is legible to somebody who
 reads Markdown rather than YAML:
 
 ```sh
-python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_dfd.py <slug>.dfd.yaml -o <slug>.dfd.md
+python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_dfd.py ctm/<slug>.dfd.yaml -o ctm/<slug>.dfd.md
 ```
 
 Then run the check once more and report what it says, advisories included,

@@ -11,6 +11,34 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.18.0] — 2026-09-22
+
+### Changed
+
+- **Everything the toolkit writes now goes in `ctm/`** at the root of the
+  project — model, enumeration, register and every rendered view, for every
+  step — instead of scattering eight files across the repository root. Each
+  skill and the enumerate agent name that directory in the commands they run.
+
+  **Nothing breaks if your files are elsewhere.** No path resolves by
+  convention: every script is handed the path it is to read, and
+  `check_traceability.py` walks the tree for models and registers wherever
+  they sit. An existing project can move its files and change one line in its
+  workflow, or leave them where they are. The directory is where new work goes
+  by default, not where anything is required to be.
+
+  Moving them is safe in the ways that matter, which was measured rather than
+  assumed: an enumeration's `model` and a register's `threats` are relative to
+  the file naming them, so a chain in one directory is self-contained; a
+  `specified_in` is tried against the register's directory and then the
+  repository root; and `design_sources` is repository-root-relative. The
+  worked example was run from a subdirectory and reported `Current` before any
+  instruction changed.
+
+  `.vector/`, where `/vector:wire` vendors the check, is deliberately left
+  alone: it holds a copy of a script rather than anything generated, and
+  moving it would break the workflow line in every repository already wired.
+
 ## [0.17.2] — 2026-09-22
 
 ### Changed
@@ -613,6 +641,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.18.0]: https://github.com/buzzworks-be/vector/commit/359a00a
 [0.17.2]: https://github.com/buzzworks-be/vector/commit/f310d3a
 [0.17.1]: https://github.com/buzzworks-be/vector/commit/8426e9f
 [0.17.0]: https://github.com/buzzworks-be/vector/commit/8d8cb38
