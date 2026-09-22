@@ -13,6 +13,16 @@
       "license": "Apache-2.0",
       "version": "0.18.1",
       "source": "./plugins/heimdall"
+    },
+    {
+      "name": "vector",
+      "description": "Continuous Threat Modeling with STRIDE for security and LINDDUN for privacy",
+      "author": {
+        "name": "Jan Van Coppenolle"
+      },
+      "license": "Apache-2.0",
+      "version": "0.15.0",
+      "source": "./plugins/vector"
     }
   ]
 }
