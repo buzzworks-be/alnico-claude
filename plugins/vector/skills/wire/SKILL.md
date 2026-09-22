@@ -68,10 +68,10 @@ path appears in exactly one line of the workflow.
      traceability:
        runs-on: ubuntu-latest
        steps:
-         - uses: actions/checkout@v4
+         - uses: actions/checkout@v7
            with:
              persist-credentials: false
-         - uses: astral-sh/setup-uv@v10
+         - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
          - run: uv run --locked --script .vector/check_traceability.py
    ```
 
@@ -81,6 +81,14 @@ path appears in exactly one line of the workflow.
    pre-commit hook, or GitLab CI. **Pin the actions the way the project pins
    actions** — if it pins to commit hashes, match that, and do not quietly
    introduce a looser convention than the repository already keeps.
+
+   The commit hash above is not decoration. `setup-uv` stopped publishing
+   moving major tags at v8, so `@v10` resolves to nothing and the workflow
+   fails before it runs a line — and a tag can be repointed under you in any
+   case, which is reason enough for a third-party action. It is the same pin
+   this toolkit's own CI uses, and a test fails when the two stop matching, so
+   what is written here is a reference that something proves resolves on every
+   push.
 
 3. **Seed the digests, showing each document first.** Every mitigation that
    names a `specified_in` needs a `specified_digest` beside it, and this is the

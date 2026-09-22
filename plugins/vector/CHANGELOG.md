@@ -11,6 +11,26 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.17.1] — 2026-09-22
+
+### Fixed
+
+- **The workflow [`/vector:wire`](skills/wire/SKILL.md) writes could not run.**
+  It pinned `astral-sh/setup-uv@v10`, and that action stopped publishing moving
+  major tags at v8, so GitHub Actions failed the job before it executed a line:
+  `Unable to resolve action astral-sh/setup-uv@v10, unable to find version v10`.
+  Anybody who wired a repository got a build that never ran the check it was
+  for. It is now the same commit hash this toolkit's own CI uses, and
+  `actions/checkout` moved from `@v4` to `@v7` with it.
+
+  Re-run the skill, or change the one line by hand — the workflow is the
+  project's file, not the toolkit's, and nothing here rewrites it.
+
+  A test now holds the shipped pin equal to the one in this repository's own
+  workflow, which CI proves resolves on every push. Nothing that runs here runs
+  the workflow a skill writes, so it was the one piece of shipped CI that no
+  test could reach; tying it to a string that is exercised is what closes that.
+
 ## [0.17.0] — 2026-09-22
 
 ### Added
@@ -577,6 +597,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.17.1]: https://github.com/buzzworks-be/vector/commit/8426e9f
 [0.17.0]: https://github.com/buzzworks-be/vector/commit/8d8cb38
 [0.16.1]: https://github.com/buzzworks-be/vector/commit/6473a58
 [0.16.0]: https://github.com/buzzworks-be/vector/commit/805a6c5
