@@ -11,6 +11,30 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.18.1] — 2026-09-22
+
+### Fixed
+
+- The chain table [`/vector:recap`](skills/recap/SKILL.md) prints still named
+  `<slug>.dfd.yaml` and the two paths beside it, without the `ctm/` 0.18.0 had
+  just moved everything into. It is the first screen somebody new sees, and it
+  disagreed with every command they were about to run.
+
+  The purpose column is now computed from the rows rather than written down as
+  a number, because adding four characters to two paths pushed them past the
+  intended width and nothing noticed — a table is only wrong to look at. Two
+  tests now do notice: one fails when a row outgrows the line, the other when
+  a path in that table stops naming the directory the skills write to.
+
+- **The recap is pasted into the reply, not pointed at.**
+  [`skills/recap/SKILL.md`](skills/recap/SKILL.md) said "show the output and
+  stop", which reads as satisfied by the command's own output block — and that
+  block is collapsed by default in most clients, so the answer to *where does
+  this repository stand* was a sentence about the recap with the recap folded
+  away behind it. The skill now says to reproduce it verbatim in a fenced code
+  block, and says why the fence matters: the tables are held apart by runs of
+  spaces that Markdown collapses outside one.
+
 ## [0.18.0] — 2026-09-22
 
 ### Changed
@@ -641,6 +665,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.18.1]: https://github.com/buzzworks-be/vector/commit/5f21a8e
 [0.18.0]: https://github.com/buzzworks-be/vector/commit/359a00a
 [0.17.2]: https://github.com/buzzworks-be/vector/commit/f310d3a
 [0.17.1]: https://github.com/buzzworks-be/vector/commit/8426e9f

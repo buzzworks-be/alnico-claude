@@ -27,10 +27,21 @@ model rather than every model in the tree. `--root` chooses the directory,
 `--as-of` the date deferrals are judged against, and `--exclude` a glob to leave
 out, repeatably.
 
-## Then show what it printed
+## Then paste what it printed, into the reply
 
-**Show the output and stop.** Do not summarise it, re-order it, rank it, or
-soften any line of it.
+**Reproduce the output verbatim in your reply, inside a fenced code block, and
+stop.** Do not summarise it, re-order it, rank it, or soften any line of it.
+
+Not "the output is above". Not "as shown". In most clients the block holding a
+command's output is **collapsed by default**, so a reply that points at it
+leaves the reader looking at one sentence *about* the recap instead of the
+recap — which is the summary this skill exists to prevent, arrived at by
+gesture rather than by paraphrase. The person asked for a screen. Give them
+the screen.
+
+The fence is not decoration either: the chain table and the per-model block are
+aligned in columns, and Markdown outside a fence collapses the runs of spaces
+that hold them apart.
 
 That is the whole of this skill, and it is not a style preference. Every state
 the script prints is a sentence some other check wrote about its own subject,
@@ -39,6 +50,10 @@ Everything else in this toolkit derives from something and breaks loudly when
 that something moves; a recap derives from a repository at one instant and has
 nothing to break against. A summary of a summary is where a confident falsehood
 gets in, and nothing downstream would catch it.
+
+Afterwards you may add something the script could not know — that a version
+just shipped, that a path moved — as long as it is plainly your own and comes
+after the block rather than instead of a line in it.
 
 If a line looks wrong, the answer is to run the check it came from and read the
 whole thing, not to adjust the wording.

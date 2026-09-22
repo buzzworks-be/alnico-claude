@@ -68,14 +68,25 @@ def limit_of(script):
 # this ordering is written down; tests/test_recap.py is what stops it becoming
 # the stale one, by failing when a skill ships that is not named here.
 CHAIN = (
-    ("1", "/vector:dfd", "interview until the model is complete", "<slug>.dfd.yaml"),
-    ("2", "vector:enumerate", "a verdict for every applicable pairing", "<slug>.threats.yaml"),
-    ("3", "/vector:promote", "findings become vectors, or dismissals", "<slug>.vectors.yaml"),
+    ("1", "/vector:dfd", "interview until the model is complete", "ctm/<slug>.dfd.yaml"),
+    ("2", "vector:enumerate", "a verdict for every applicable pairing", "ctm/<slug>.threats.yaml"),
+    ("3", "/vector:promote", "findings become vectors, or dismissals", "ctm/<slug>.vectors.yaml"),
     ("4", "/vector:matrix", "every vector gets a disposition and an owner", "the register"),
     ("5", "/vector:review", "the model read against design documents", "the model"),
     ("6", "/vector:intake", "a scanner finding meets the register", "the register"),
     ("", "/vector:wire", "the chain checked in CI, where no session exists", "a workflow"),
 )
+
+# Derived rather than written down, because the one time it was a literal the
+# table silently outgrew it: prefixing the paths with their directory pushed two
+# rows one character past WIDTH. A column computed from the rows cannot.
+STEP, COMMAND = 2, 18
+PURPOSE = max(len(purpose) for _, _, purpose, _ in CHAIN)
+
+
+def chain_row(step, command, purpose, writes):
+    return f"  {step:<{STEP}} {command:<{COMMAND}} {purpose:<{PURPOSE}} {writes}"
+
 
 HEADLINE = ("vector — continuous threat modelling, "
             "STRIDE for security and LINDDUN for privacy")
@@ -210,8 +221,8 @@ def whole_chain(root, as_of, excludes):
 
 def render(root, slug, as_of, excludes=()):
     out = [HEADLINE, ""]
-    for step, command, purpose, writes in CHAIN:
-        out.append(f"  {step:<2} {command:<18} {purpose:<49} {writes}")
+    for row in CHAIN:
+        out.append(chain_row(*row))
     out += ["", PREMISE, ""]
 
     models, body = survey(root, slug, as_of, excludes)
