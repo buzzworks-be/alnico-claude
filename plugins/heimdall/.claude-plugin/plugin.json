@@ -1,7 +1,7 @@
 {
   "name": "heimdall",
   "version": "0.18.1",
-  "description": "Read a repository you do not touch, and write a case file about how the work in it was produced.",
+  "description": "Heimdall is a process telemeter that assembles a case file with observations of how software was produced",
   "author": {
     "name": "Jan Van Coppenolle"
   },
