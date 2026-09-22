@@ -11,6 +11,35 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.16.0] — 2026-09-22
+
+### Added
+
+- **`/vector:recap`** — one screen saying what this toolkit is, the
+  capabilities in the order a chain runs, and where the repository you are in
+  currently stands: every model it holds, how far each has got, and the first
+  thing that would move it. In a repository with no model it says so and names
+  where to start.
+
+  It decides nothing. Every state it prints is a sentence one of the existing
+  checks wrote about its own subject, run as a subprocess and relayed
+  verbatim — which is the only protection available to the one artefact here
+  that derives from nothing and so breaks against nothing. It writes no file,
+  caches nothing, and **always exits 0**: orientation does not belong in a
+  build, and the chain already has a check that fails one.
+
+  `recap.py acme-checkout` narrows to a single model; `--root`, `--as-of` and a
+  repeatable `--exclude` behave as they do elsewhere.
+
+### Changed
+
+- `check_reviews.py`'s standing limit — *a claim about documents, never about
+  the system* — is now a named `LIMIT` constant, as the two other checks that
+  print one already had. Nothing about its output changes. It is named so that
+  exactly one thing reads it back: three checks close with a limit rather than
+  a verdict, and a recap that relayed one where a verdict belongs would be
+  wrong in the way a recap can most easily be wrong.
+
 ## [0.15.0] — 2026-09-22
 
 ### Changed
@@ -493,6 +522,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.16.0]: https://github.com/buzzworks-be/vector/commit/805a6c5
 [0.15.0]: https://github.com/buzzworks-be/vector/commit/ea26d59
 [0.14.1]: https://github.com/buzzworks-be/vector/commit/7dccaae
 [0.14.0]: https://github.com/buzzworks-be/vector/commit/665d6d4

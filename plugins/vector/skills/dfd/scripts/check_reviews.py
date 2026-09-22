@@ -69,6 +69,12 @@ as_date = traceability.as_date
 digest = traceability.digest
 repository_root = traceability.repository_root
 
+# The standing limit, printed last on every run. Named rather than inlined so
+# that one thing reads it back: recap.py relays a check's last line, and a
+# limit is not a verdict.
+LIMIT = ("A claim about documents, never about the system: a design change made "
+         "without one is invisible here.")
+
 ASKING = {
     "UNREVIEWED_DOC": "read it, and say what it means for the model",
     "CHANGED_DOC": "read the change, then revise the model or re-record the digest",
@@ -182,8 +188,7 @@ def main(argv=None):
               f"{len(report.advisory)} advisory item(s).")
     else:
         print("Reviewed through every design document.")
-    print("A claim about documents, never about the system: a design change made "
-          "without one is invisible here.")
+    print(LIMIT)
     return 0
 
 
