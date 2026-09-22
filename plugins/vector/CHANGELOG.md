@@ -11,6 +11,61 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.17.0] — 2026-09-22
+
+### Added
+
+- **A rendered document now says what it was rendered from, and CI fails when
+  that has changed.** Every renderer stamps a provenance marker on the file it
+  writes, and `check_traceability.py` compares it against the source's current
+  bytes. Edit a register, commit without re-rendering, and the build goes red
+  naming the document and the repair — which is the one link nothing could see
+  before: the register was checked against everything above and below it, while
+  the Markdown people actually read was checked against nothing.
+
+  It needs no renderer in CI, which is the point — a repository running the
+  vendored check has no plugin in it. A project that renders nothing is not
+  incomplete, so an absent document still says nothing at all.
+
+  **Existing documents report as an advisory, not a failure.** Anything
+  rendered before this carries no marker, so re-run your renderers once and
+  commit what changes. Nothing turns red on upgrade.
+
+  **It cannot see a renderer change.** Upgrade the plugin and every document is
+  a version behind while its marker still matches, because a digest of the
+  source says nothing about what rendered it. Catching that would need the
+  renderer in CI, which is the dependency this avoids.
+
+### Changed
+
+- `render_matrix.py --open-only`, `render_vectors.py --tracked-only` and
+  `render_dfd.py --mermaid-only` are unstamped: a partial view is not the
+  document the check is asking about.
+
+## [0.16.1] — 2026-09-22
+
+### Changed
+
+- **The rendered `<slug>.matrix.md` links what it names.** A mitigation id in
+  the matrix, in the deferrals table or in the orphan list reaches that
+  mitigation's own section; a `specified_in` reaches the requirement the
+  control is written into, and an `implemented_in` the file it lives in; a
+  vector id reaches that vector's own entry in `<slug>.vectors.md`. Before
+  this the whole document was plain text, and following a `MIT-0007` to the
+  control it names meant scrolling and searching for it.
+
+- **Each vector is a heading in `<slug>.vectors.md`** rather than a bold line,
+  so it has a fragment the matrix can point at and shows up in a document
+  outline. Regenerate both views after updating: the matrix links to headings
+  the threat model view has to have written first.
+
+  It links **only what resolves**, so a mitigation naming a specification that
+  is not there still reads as plain text — a dead link reads as a working
+  reference until somebody follows it. Render the threat model view before the
+  matrix, or the vector ids have nowhere to point and stay as text. Paths are
+  relative to `-o`, so write the document beside the register as the skill
+  already does.
+
 ## [0.16.0] — 2026-09-22
 
 ### Added
@@ -522,6 +577,8 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.17.0]: https://github.com/buzzworks-be/vector/commit/8d8cb38
+[0.16.1]: https://github.com/buzzworks-be/vector/commit/6473a58
 [0.16.0]: https://github.com/buzzworks-be/vector/commit/805a6c5
 [0.15.0]: https://github.com/buzzworks-be/vector/commit/ea26d59
 [0.14.1]: https://github.com/buzzworks-be/vector/commit/7dccaae

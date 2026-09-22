@@ -109,6 +109,65 @@ def digest(path):
         return "sha256:" + hashlib.sha256(handle.read()).hexdigest()
 
 
+# The line a renderer stamps on the document it writes, and the only thing that
+# makes a rendered view checkable from a repository with no plugin in it. Both
+# halves live here rather than in the renderers, because two spellings of one
+# format drift and the one that drifts is the one nobody is watching.
+RENDERED = re.compile(r"<!-- vector: rendered from (\S+) (sha256:[0-9a-f]{64}) -->")
+
+
+def marker_for(source_path):
+    return (f"<!-- vector: rendered from {os.path.basename(source_path)} "
+            f"{digest(source_path)} -->")
+
+
+def stamp(document, source_path):
+    """A rendered document with its provenance on the end."""
+    return document.rstrip("\n") + "\n\n" + marker_for(source_path) + "\n"
+
+
+def check_rendered(source_path, document_path, what, report):
+    """Whether a rendered view still describes what it was rendered from.
+
+    A view is optional — a project that renders nothing is not incomplete — so
+    an absent document says nothing. One that is there and carries no marker
+    was written before this existed or by hand, which is a re-render away from
+    being checkable and is therefore advisory. One whose marker disagrees with
+    the source's current bytes is a document people read that no longer
+    describes the register, and that is blocking.
+
+    **It says nothing about the renderer.** Upgrade the plugin and every
+    document is a version behind while its digest still matches, because a
+    digest of the source cannot see that. Detecting it would need the renderer
+    itself, which is exactly what a repository running this check does not
+    have.
+    """
+    if not os.path.exists(document_path):
+        return
+    where = f"<{what} {os.path.basename(document_path)}>"
+    try:
+        with open(document_path, encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError:
+        return
+    found = RENDERED.search(text)
+    if not found:
+        report.add(ADVISORY, "UNSTAMPED", where,
+                   "carries no provenance marker, so nothing can tell whether it is current; "
+                   "regenerate it once to stamp it")
+        return
+    named, stored = found.group(1), found.group(2)
+    if named != os.path.basename(source_path):
+        report.add(BLOCKING, "WRONG_SOURCE", where,
+                   f"stamped as rendered from {named}, which is not "
+                   f"{os.path.basename(source_path)}; regenerate it from the right file")
+        return
+    if stored != digest(source_path):
+        report.add(BLOCKING, "STALE_DOCUMENT", where,
+                   f"rendered from a {what} that has since changed; what a reader sees here "
+                   f"is not what {os.path.basename(source_path)} now says, so regenerate it")
+
+
 def answered(item, field):
     value = item.get(field)
     if value is None:
@@ -952,6 +1011,7 @@ def check_repository(root, as_of, excludes=()):
         entry = check_reviews(model, path, root, report, as_of, files=files)
         if entry is not None:
             pulse.append(entry)
+        check_rendered(path, path[: -len(".yaml")] + ".md", "model", report)
 
     for path in paths:
         slug = os.path.basename(path)[: -len(".vectors.yaml")]
@@ -960,10 +1020,17 @@ def check_repository(root, as_of, excludes=()):
         register = load(path, "register")
         registers[slug] = register
 
+        check_rendered(path, path[: -len(".vectors.yaml")] + ".vectors.md",
+                       "register", report)
+        check_rendered(path, path[: -len(".vectors.yaml")] + ".matrix.md",
+                       "register", report)
+
         reference = register.get("threats")
         threats_path = os.path.join(here, reference) if reference else None
         enumeration, model_path = None, None
         if threats_path and os.path.exists(threats_path):
+            check_rendered(threats_path, threats_path[: -len(".yaml")] + ".md",
+                           "enumeration", report)
             enumeration = load(threats_path, "enumeration")
             model = enumeration.get("model")
             if model:

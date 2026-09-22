@@ -525,3 +525,5 @@ One line each. The reasons are the point: a dismissal a reader cannot disagree w
 **Coverage is mechanically checkable; seriousness is not.** Every pairing here has a verdict, which is what the script can prove. That any of them was answered seriously is not something a script can establish, and a complete enumeration of shallow dismissals would satisfy every check that produced this document.
 
 **This is analysis of a model, not of a system.** Every finding rests on the model being an accurate description, and on the assumptions carried forward above. Where the system and the model differ, this document describes the model.
+
+<!-- vector: rendered from example.threats.yaml sha256:8a2b5c57d38b549367f75fcb8e74cd2c18afe54d32bb2f5d915290253c326279 -->

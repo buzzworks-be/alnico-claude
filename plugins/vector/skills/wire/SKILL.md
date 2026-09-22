@@ -124,7 +124,30 @@ path appears in exactly one line of the workflow.
    it. This toolkit's own repository needs both, which is the clearest evidence
    that a project will.
 
-7. **Hand back what the build will now do**, including that it reports coverage
+7. **Stamp the rendered views once.** The check now also asks whether each
+   rendered `.md` still describes the file it came from, which it can only do
+   if a renderer wrote the provenance marker on it. A document rendered before
+   this existed carries none, and reports as an advisory until it is
+   regenerated once. Re-run whichever renderers the project uses, from the
+   plugin, and commit what changes:
+
+   ```sh
+   python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/render_matrix.py \
+     <slug>.vectors.yaml -o <slug>.matrix.md
+   ```
+
+   After that the build fails on a register edited without a re-render, which
+   is the one link nothing else could see: everything else in the chain is
+   checked against the register, while the documents people actually read were
+   checked against nothing.
+
+   **It cannot see a renderer change.** Upgrade the plugin and every document
+   is a version behind while its marker still matches, because a digest of the
+   source says nothing about what rendered it. Catching that would need the
+   renderer in CI, which is the dependency this whole arrangement exists to
+   avoid.
+
+8. **Hand back what the build will now do**, including that it reports coverage
    rather than proof, and that a green build means the paperwork is consistent
    and current — never that any control works.
 

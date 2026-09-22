@@ -119,6 +119,14 @@ today, which is what a test or a fixture needs. `uv run --script` in place of
 `python3` works too — each script carries inline dependency metadata and a
 lockfile.
 
+The rendered matrix links every id and every reference it can reach: a
+mitigation id to its own section, a `specified_in` to the requirement that
+carries the control, and a vector id to that vector's own entry in
+`<slug>.vectors.md`. It links only what resolves, so render the threat model
+view first — [`/vector:promote`](../promote/SKILL.md)'s last step — or the
+vector ids come out as plain text. Everything is relative to `-o`, so write the
+document beside the register.
+
 ## What the fields look like
 
 ```yaml

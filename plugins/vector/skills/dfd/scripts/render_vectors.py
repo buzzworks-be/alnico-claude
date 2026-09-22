@@ -60,6 +60,23 @@ def name_of(model, element):
     return element, "unknown"
 
 
+def element_heading(element, display):
+    return f"`{element}` — {display}"
+
+
+def vector_heading(vector, orphaned=()):
+    """The heading this document gives a vector, as one function.
+
+    A heading rather than bold text because this is the one place every vector
+    is written out in full, so it is what everything else points at — and only
+    a heading has a fragment to point at. render_matrix.py derives its links
+    from this string rather than from a copy of the format, so a change here
+    moves them with it instead of breaking them silently.
+    """
+    flag = " · **orphaned**" if vector.get("id") in orphaned else ""
+    return f"{vector.get('id')} — {cell(vector.get('title'))}{flag}"
+
+
 def cited(nodes, catalogue):
     return [f"`{n}` {catalogue[n][1]}" if n in catalogue else f"`{n}`" for n in nodes]
 
@@ -107,10 +124,9 @@ def render(register, enumeration, model, catalogue, report, tracked_only=False):
             lines += [f"### {section.title()}", ""]
             for element in dict.fromkeys(v.get("element") for v in here):
                 display, _ = name_of(model, element)
-                lines += [f"#### `{element}` — {display}", ""]
+                lines += [f"#### {element_heading(element, display)}", ""]
                 for vector in [v for v in here if v.get("element") == element]:
-                    flag = " · **orphaned**" if vector.get("id") in orphaned else ""
-                    lines += [f"**{vector.get('id')} — {cell(vector.get('title'))}**{flag}", "",
+                    lines += [f"##### {vector_heading(vector, orphaned)}", "",
                               f"{label(vector.get('category'))} · "
                               f"promoted {cell(vector.get('promoted'))}"
                               + (" · from the open question"
@@ -242,6 +258,8 @@ def main(argv=None):
     report, _ = check_vectors.check(register, enumeration, threats_path, catalogue=catalogue)
     document = render(register, enumeration, model, catalogue, report,
                       tracked_only=args.tracked_only)
+    if not args.tracked_only:
+        document = sibling("check_traceability").stamp(document, args.register)
     if args.output:
         with open(args.output, "w") as handle:
             handle.write(document)

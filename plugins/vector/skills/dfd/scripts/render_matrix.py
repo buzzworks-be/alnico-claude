@@ -19,6 +19,7 @@ import argparse
 import datetime
 import importlib.util
 import os
+import re
 import sys
 
 try:
@@ -68,12 +69,75 @@ def name_of(model, element):
     return element, "unknown"
 
 
-def ids(values):
+def ids(values, target=None):
     if not values:
         return "—"
     if not isinstance(values, list):
         values = [values]
-    return ", ".join(f"`{v}`" for v in values)
+    return ", ".join(linked(f"`{v}`", target(v) if target else None) for v in values)
+
+
+# A heading's own fragment, by GitHub's rule: lower-cased, everything that is
+# not a word character, a hyphen or a space dropped, spaces hyphenated.
+NOT_IN_ANCHOR = re.compile(r"[^\w\- ]")
+
+
+def anchor(heading):
+    """The fragment a heading answers to, derived from the heading itself.
+
+    Derived rather than written down twice: every link in this document is
+    built from the same string that builds the heading it points at, so the two
+    cannot drift apart.
+    """
+    return NOT_IN_ANCHOR.sub("", heading.lower()).replace(" ", "-")
+
+
+def linked(text, target):
+    return f"[{text}]({target})" if target else text
+
+
+def paths(value, resolve):
+    """A specified_in or implemented_in cell: a link where the path is real."""
+    if not value:
+        return "—"
+    items = value if isinstance(value, list) else [value]
+    return ", ".join(linked(f"`{cell(item)}`", resolve(item)) for item in items)
+
+
+class Links:
+    """Where this document's ids and references point, or nothing where there
+    is nothing to point at.
+
+    One rule throughout: **link what resolves, print what does not.** A dead
+    link reads as a working reference until somebody follows it, which is worse
+    than the plain text it replaced — and this file is walked by the
+    repository's link check like any other Markdown, so a fabricated target
+    fails a test rather than misleading a reader.
+
+    Only what leaves the document is here. Whether a path exists is a fact
+    about a repository rather than about the register, so it is supplied by the
+    caller that knows one, and render() without it produces the same words with
+    the outward links dropped. A link to a section of this document depends on
+    nothing outside it and is therefore never conditional — render() builds
+    those from the headings it is writing as it goes.
+    """
+
+    def __init__(self, vectors=None, resolve=None):
+        self._vectors = vectors or {}
+        self._resolve = resolve or (lambda reference: None)
+
+    def vector(self, ident):
+        """The vector itself, in the other view of the same register.
+
+        The matrix says what is being done about a vector; the attack, the cost
+        and what is already true of the system are written out under that
+        vector's own heading in the threat model document, which is what this
+        points at.
+        """
+        return self._vectors.get(str(ident))
+
+    def reference(self, value):
+        return self._resolve(value) if value else None
 
 
 def in_order(vectors, model):
@@ -86,13 +150,30 @@ def in_order(vectors, model):
     return sorted(vectors, key=lambda v: rank.get(v.get("element"), (len(SECTIONS), 0)))
 
 
-def render(register, model, report, as_of, open_only=False):
+def render(register, model, report, as_of, open_only=False, links=None):
     vectors = [v for v in register.get("vectors") or [] if isinstance(v, dict)]
     mitigations = [m for m in register.get("mitigations") or [] if isinstance(m, dict)]
     retired = [r for r in register.get("retired") or [] if isinstance(r, dict)]
+    links = links or Links()
     flagged = {}
     for gap in report.gaps:
         flagged.setdefault(gap["element"], []).append(gap["code"])
+
+    # Each mitigation's heading, built once and used twice: as the heading, and
+    # as the fragment every mention of that id links to. A heading therefore
+    # cannot move without taking its links with it. This one needs no
+    # repository — a section of this document is always there to point at — so
+    # it is not conditional the way the outward links are.
+    headings, section_of = {}, {}
+    for entry in mitigations:
+        ident = str(entry.get("id"))
+        orphaned = "ORPHAN_MITIGATION" in flagged.get(f"mitigations/{ident}", [])
+        headings[ident] = (f"{entry.get('id')} — {cell(entry.get('title'))}"
+                           + (" · **orphaned**" if orphaned else ""))
+        section_of[ident] = "#" + anchor(headings[ident])
+
+    def mitigation_at(ident):
+        return section_of.get(str(ident))
 
     def state(vector):
         disposition = vector.get("disposition")
@@ -110,7 +191,8 @@ def render(register, model, report, as_of, open_only=False):
 
     lines = [f"# Threat matrix — {model.get('system', {}).get('name', 'unnamed')}",
              "",
-             f"Generated from the register beside `{register.get('threats')}` by "
+             f"Generated from the register beside "
+             f"{paths(register.get('threats'), links.reference)} by "
              f"`render_matrix.py`, as of {as_of.isoformat()}. Do not edit; regenerate.",
              ""]
 
@@ -130,7 +212,9 @@ def render(register, model, report, as_of, open_only=False):
                   f"| Carrying no mitigation | {len(without)} |",
                   ""]
         if undecided:
-            lines += ["Undecided: " + ", ".join(f"**{v.get('id')}**" for v in undecided)
+            lines += ["Undecided: "
+                      + ", ".join(linked(f"**{v.get('id')}**", links.vector(v.get("id")))
+                                  for v in undecided)
                       + ". The matrix is not finished while one remains.", ""]
 
     # --- 2. deferrals -------------------------------------------------------
@@ -162,8 +246,11 @@ def render(register, model, report, as_of, open_only=False):
                       if isinstance(h, dict) and h.get("state") == "deferred" and h.get("until")]
             if pushed:
                 until += " · previously " + ", ".join(date(h["until"]) for h in pushed)
-            lines.append(f"| **{vector.get('id')}** {cell(vector.get('title'))} | {until} | "
-                         f"{cell(d.get('owner'))} | {ids(d.get('mitigations'))} | "
+            ident = vector.get("id")
+            shown_id = linked(f"**{ident}**", links.vector(ident))
+            lines.append(f"| {shown_id} {cell(vector.get('title'))} | {until} | "
+                         f"{cell(d.get('owner'))} | "
+                         f"{ids(d.get('mitigations'), mitigation_at)} | "
                          f"{cell(d.get('reason'))} |")
         lines.append("")
 
@@ -189,10 +276,13 @@ def render(register, model, report, as_of, open_only=False):
                 shown = f"**{cell(d.get('state'))}** — not a disposition"
             if d.get("history"):
                 shown += f" · changed {len(d['history'])}×"
-            lines.append(f"| **{vector.get('id')}** {cell(vector.get('title'))} | "
+            ident = vector.get("id")
+            shown_id = linked(f"**{ident}**", links.vector(ident))
+            lines.append(f"| {shown_id} {cell(vector.get('title'))} | "
                          f"`{vector.get('element')}` {cell(display)} | "
                          f"{label(vector.get('category'))} | {shown} | "
-                         f"{cell(d.get('owner'))} | {ids(d.get('mitigations'))} |")
+                         f"{cell(d.get('owner'))} | "
+                         f"{ids(d.get('mitigations'), mitigation_at)} |")
         lines.append("")
 
     # --- 4. mitigations -----------------------------------------------------
@@ -206,18 +296,17 @@ def render(register, model, report, as_of, open_only=False):
                   "and no specification was found in the code rather than required of it.",
                   ""]
         for entry in mitigations:
-            where = f"mitigations/{entry.get('id')}"
-            flags = [c for c in flagged.get(where, []) if c == "ORPHAN_MITIGATION"]
-            lines += [f"### {entry.get('id')} — {cell(entry.get('title'))}"
-                      + (" · **orphaned**" if flags else ""), "",
+            lines += [f"### {headings[str(entry.get('id'))]}", "",
                       cell(entry.get("control")), "",
                       "| | |", "| :--- | :--- |",
-                      f"| Specified in | {cell(entry.get('specified_in'))} |",
-                      f"| Implemented in | {cell(entry.get('implemented_in'))} |",
+                      f"| Specified in | "
+                      f"{paths(entry.get('specified_in'), links.reference)} |",
+                      f"| Implemented in | "
+                      f"{paths(entry.get('implemented_in'), links.reference)} |",
                       f"| Verification | {cell(entry.get('verification'))} |"]
             if entry.get("evidence") or entry.get("verification") == "manual":
                 lines.append(f"| Evidence | {cell(entry.get('evidence'))} |")
-            lines += [f"| Serves | {ids(entry.get('vectors'))} |", ""]
+            lines += [f"| Serves | {ids(entry.get('vectors'), links.vector)} |", ""]
 
     # --- 5. acceptances -----------------------------------------------------
     accepted = [v for v in in_order(vectors, model) if state(v) == "accepted"]
@@ -248,7 +337,10 @@ def render(register, model, report, as_of, open_only=False):
         lines += ["Mitigations serving no live vector. Each stays, blocking, until a person "
                   "retires it with a reason: it may be real code that now protects nothing "
                   "anyone tracks, and that is a decision rather than a tidy-up.", ""]
-        lines += [f"- **{g['element'].split('/', 1)[1]}** — {cell(g['message'])}" for g in orphans]
+        for gap in orphans:
+            ident = gap["element"].split("/", 1)[1]
+            shown_id = linked(f"**{ident}**", mitigation_at(ident))
+            lines.append(f"- {shown_id} — {cell(gap['message'])}")
         lines.append("")
     if not retired_mitigations:
         lines += ["No mitigation has been retired.", ""]
@@ -301,7 +393,8 @@ def render(register, model, report, as_of, open_only=False):
             lines += [f"| Scope | `{where}` |", "| :--- | :--- |",
                       f"| Answer | {answer or '—'} |"]
             if entry.get("vector"):
-                lines.append(f"| Vector | {cell(entry.get('vector'))} |")
+                routed = entry.get("vector")
+                lines.append(f"| Vector | {linked(cell(routed), links.vector(routed))} |")
             lines += [f"| Answered | {date(entry.get('answered'))} |",
                       f"| Why | {cell(entry.get('reason'))} |", ""]
             if ident in lapsed:
@@ -320,10 +413,12 @@ def render(register, model, report, as_of, open_only=False):
         "| Accept | `accepted`, an owner and a reason | this matrix |",
         f"| Transfer | the third party is an **element** in the model, with its own flows "
         f"and threats; the disposition here is `mitigated` where they operate the control "
-        f"and `accepted` where only the loss is financed | `{slug}.dfd.yaml`, this matrix |",
+        f"and `accepted` where only the loss is financed | "
+        f"{paths(slug + '.dfd.yaml', links.reference)}, this matrix |",
         f"| Avoid | **not a vector at all** — a threat found not to apply, with a reason, "
         f"or a finding not promoted, with a reason, or a vector retired because the "
-        f"exposure was designed out | `{cell(register.get('threats'))}` (its "
+        f"exposure was designed out | "
+        f"{paths(register.get('threats'), links.reference)} (its "
         f"`controlled` and `not_applicable` verdicts), the register's `dismissed` and "
         f"`retired` sections |",
         "",
@@ -348,6 +443,55 @@ def render(register, model, report, as_of, open_only=False):
         "",
     ]
     return "\n".join(lines).rstrip() + "\n"
+
+
+def links_for(register, model, register_path, bases, beside, orphaned=()):
+    """What this document can point at, from the repository it is rendered in.
+
+    Two kinds, both outward. A vector is written out in the threat model
+    document beside this one — the attack, the cost, what is already true — so
+    its link is that file at that vector's own heading, built by that
+    renderer's own function rather than by a copy of its format. A
+    specified_in, an implemented_in or a named model file is a path, resolved
+    the way the check resolves it: the register's own directory first, then the
+    repository root.
+
+    orphaned is the set of vector ids the threat model document flags, which is
+    part of the heading there and therefore part of the fragment.
+
+    Anything that does not resolve gets no link, which is the rule the whole
+    document follows. An anchor is carried through untouched and never
+    verified, exactly as SDD-0003 has it for the check.
+    """
+    traceability = sibling("check_matrix").traceability
+    vectors = [v for v in register.get("vectors") or [] if isinstance(v, dict)]
+
+    def target(reference):
+        text = str(reference).strip()
+        if traceability.URL.match(text):
+            return text
+        found = traceability.reference_path(text, bases)
+        if found is None:
+            return None
+        where = os.path.relpath(found, beside).replace(os.sep, "/")
+        fragment = text.split("#", 1)
+        return f"{where}#{fragment[1]}" if len(fragment) > 1 else where
+
+    places = {}
+    # The threat model document is the register's other view, written beside it
+    # under the register's own name. Derived from the path rather than from the
+    # model's slug, which is not obliged to match the file it was written to.
+    document = re.sub(r"\.ya?ml$", ".md", os.path.abspath(register_path))
+    if document.endswith(".md") and os.path.exists(document):
+        # An orphaned vector's heading carries the flag there, as a mitigation's
+        # does here, so the caller's orphan set is part of the fragment.
+        vector_heading = sibling("render_vectors").vector_heading
+        relative = os.path.relpath(document, beside).replace(os.sep, "/")
+        for vector in vectors:
+            fragment = anchor(vector_heading(vector, orphaned))
+            places[str(vector.get("id"))] = f"{relative}#{fragment}"
+
+    return Links(vectors=places, resolve=target)
 
 
 def main(argv=None):
@@ -390,7 +534,14 @@ def main(argv=None):
     bases = (here, args.root or check_matrix.repository_root(here))
     report, _ = check_matrix.check(register, threats_path, as_of, bases=bases,
                                    model_path=model_path)
-    document = render(register, model, report, as_of, open_only=args.open_only)
+    beside = os.path.dirname(os.path.abspath(args.output)) if args.output else here
+    orphaned = {g["element"].split("/", 1)[1] for g in report.gaps
+                if g["code"] == "ORPHAN_VECTOR"}
+    document = render(register, model, report, as_of, open_only=args.open_only,
+                      links=links_for(register, model, args.register, bases, beside,
+                                      orphaned=orphaned))
+    if not args.open_only:
+        document = check_matrix.traceability.stamp(document, args.register)
     if args.output:
         with open(args.output, "w") as handle:
             handle.write(document)

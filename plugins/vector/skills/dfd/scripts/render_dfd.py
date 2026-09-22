@@ -10,12 +10,29 @@ to the model rather than hand-editing the output.
 """
 
 import argparse
+import importlib.util
+import os
 import sys
 
 try:
     import yaml
 except ImportError:
     sys.exit("PyYAML is required: pip install pyyaml")
+
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def sibling(name):
+    """A sibling script, imported rather than reimplemented.
+
+    The provenance marker is written here and read by check_traceability.py, so
+    it is spelled once, there, where the check that depends on it lives.
+    """
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, f"{name}.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 SHAPES = {
     # External entities are squared off, processes rounded, stores are
@@ -267,7 +284,10 @@ def main():
     if not isinstance(model, dict):
         sys.exit(f"{args.model} should be a mapping with system/actors/processes/... keys")
 
-    text = mermaid(model) + "\n" if args.mermaid_only else render(model)
+    if args.mermaid_only:
+        text = mermaid(model) + "\n"
+    else:
+        text = sibling("check_traceability").stamp(render(model), args.model)
 
     if args.output:
         with open(args.output, "w") as handle:

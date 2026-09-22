@@ -10,7 +10,7 @@ Generated from `example.threats.yaml` and the register beside it by `render_vect
 
 #### `dsar-handler` — Data request handler
 
-**VEC-0001 — A guest's identity is never verified, at checkout or on a data request**
+##### VEC-0001 — A guest's identity is never verified, at checkout or on a data request
 
 STRIDE spoofing · promoted 2026-09-13
 
@@ -24,7 +24,7 @@ Chains: `shopper` STRIDE spoofing, `dsar-handler` STRIDE spoofing, `dsar-handler
 
 **Context.** Account holders prove control of the login and are not affected. The model records that guest verification is "harder" and stops there — who judges the documents, against what, and what happens on refusal are all unrecorded, so this is a decision that has not been made rather than one that was made badly.
 
-**VEC-0002 — Gift recipients are data subjects the system cannot inform or serve**
+##### VEC-0002 — Gift recipients are data subjects the system cannot inform or serve
 
 LINDDUN non compliance · promoted 2026-09-13
 
@@ -40,7 +40,7 @@ Chains: `shopper` LINDDUN unawareness, `dsar-handler` LINDDUN non compliance
 
 #### `checkout-api` — Checkout API
 
-**VEC-0003 — The order path has no throttle anywhere in the model**
+##### VEC-0003 — The order path has no throttle anywhere in the model
 
 STRIDE denial of service · promoted 2026-09-13
 
@@ -56,7 +56,7 @@ Chains: `checkout-api` STRIDE denial of service, `submit-order` STRIDE denial of
 
 #### `support-console` — Support console
 
-**VEC-0007 — Address masking in the support console is lifted by the agent who wants it**
+##### VEC-0007 — Address masking in the support console is lifted by the agent who wants it
 
 LINDDUN data disclosure · promoted 2026-09-13
 
@@ -70,7 +70,7 @@ LINDDUN data disclosure · promoted 2026-09-13
 
 #### `checkout-web` — Checkout web app
 
-**VEC-0010 — Nothing in the model tells a shopper what is collected or on what basis**
+##### VEC-0010 — Nothing in the model tells a shopper what is collected or on what basis
 
 LINDDUN unawareness · promoted 2026-09-13
 
@@ -82,7 +82,7 @@ LINDDUN unawareness · promoted 2026-09-13
 
 **Context.** A notice almost certainly exists on the real site and was simply not modelled — a notice is not a flow. That is itself worth knowing: the model has no way to represent the thing this vector is about.
 
-**VEC-0011 — PII scrubbing on client error reports is a filter that fails open**
+##### VEC-0011 — PII scrubbing on client error reports is a filter that fails open
 
 STRIDE information disclosure · promoted 2026-09-13
 
@@ -96,7 +96,7 @@ STRIDE information disclosure · promoted 2026-09-13
 
 #### `support-assistant` — Support assistant
 
-**VEC-0012 — A shopper's own words reach the prompt of a process that can move money**
+##### VEC-0012 — A shopper's own words reach the prompt of a process that can move money
 
 STRIDE elevation of privilege · promoted 2026-09-13
 
@@ -108,7 +108,7 @@ STRIDE elevation of privilege · promoted 2026-09-13
 
 **Context.** Everything else about this process is tight — `system_prompt` is shipped with the service and never assembled from shopper input, `authority` scopes the tool to one order, and `logging` records every call. What is missing is not a boundary around the model but a person between the tool call and the money, and that is what the mitigation adds.
 
-**VEC-0013 — An assistant's draft can restate an address the console masked**
+##### VEC-0013 — An assistant's draft can restate an address the console masked
 
 STRIDE information disclosure · promoted 2026-09-13
 
@@ -120,7 +120,7 @@ STRIDE information disclosure · promoted 2026-09-13
 
 **Context.** This is the cost of adding an element beside a control rather than inside it. VEC-0007 and `MIT-0004` bought the ticket-linked rule; a second reader of the same data was added later and nobody carried the rule across. The mitigation is to send the assistant what the agent is allowed to see, and no more.
 
-**VEC-0014 — Nobody tells the shopper a model read their message and wrote the reply**
+##### VEC-0014 — Nobody tells the shopper a model read their message and wrote the reply
 
 LINDDUN unawareness · promoted 2026-09-13
 
@@ -136,7 +136,7 @@ LINDDUN unawareness · promoted 2026-09-13
 
 #### `audit-log` — Audit log
 
-**VEC-0004 — The audit log keeps email past its own retention, beyond erasure's reach**
+##### VEC-0004 — The audit log keeps email past its own retention, beyond erasure's reach
 
 LINDDUN non compliance · promoted 2026-09-13
 
@@ -152,7 +152,7 @@ Chains: `audit-log` LINDDUN data disclosure, `audit-log` LINDDUN non compliance
 
 #### `orders-db` — Orders database
 
-**VEC-0005 — Nobody could say whether the backup snapshots honour the address purge**
+##### VEC-0005 — Nobody could say whether the backup snapshots honour the address purge
 
 LINDDUN non compliance · promoted 2026-09-13 · from the open question
 
@@ -164,7 +164,7 @@ LINDDUN non compliance · promoted 2026-09-13 · from the open question
 
 **Context.** This started life as the interview's one unanswerable question and was carried forward unchanged. The enumeration found the same concern on `orders-db` as a non-compliance finding, which is dismissed below in favour of tracking it here, where it began: the vector's first job is to get the question answered.
 
-**VEC-0006 — Backups add no isolation from the compromise that matters**
+##### VEC-0006 — Backups add no isolation from the compromise that matters
 
 STRIDE information disclosure · promoted 2026-09-13
 
@@ -180,7 +180,7 @@ STRIDE information disclosure · promoted 2026-09-13
 
 #### `support-render` — Show order to agent
 
-**VEC-0008 — The full order record lands on a laptop in a zone the model calls untrusted**
+##### VEC-0008 — The full order record lands on a laptop in a zone the model calls untrusted
 
 STRIDE information disclosure · promoted 2026-09-13
 
@@ -194,7 +194,7 @@ STRIDE information disclosure · promoted 2026-09-13
 
 #### `dsar-request` — Data subject access or erasure request
 
-**VEC-0009 — Verifying a guest collects identity documents the model does not know it holds**
+##### VEC-0009 — Verifying a guest collects identity documents the model does not know it holds
 
 LINDDUN data disclosure · promoted 2026-09-13
 
@@ -235,3 +235,5 @@ None.
 **Every finding was decided; nothing proves the right ones were promoted.** The script can show that each threat verdict and each open question ended up as a vector, in a chain, or dismissed with a reason. Whether those were the right calls is the judgement this step exists for, and no check reaches it.
 
 **A vector is a decision to track, not a decision to act.** What is being done about each is the matrix, rendered separately from the same register.
+
+<!-- vector: rendered from example.vectors.yaml sha256:484b3fe103aa936959d3cd607d953b573470bd945eae4cf6ce8bde3ce05c54db -->

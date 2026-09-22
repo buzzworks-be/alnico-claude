@@ -178,3 +178,5 @@ This model has been read against the documents below. It is a claim about docume
 ---
 
 _Generated from the model by `render_dfd.py`. Edit the `.dfd.yaml` and regenerate; changes made here will be lost._
+
+<!-- vector: rendered from example.dfd.yaml sha256:31e0f0518615ca45413bbfb9ee597bb66a3e0bd496d918785996c4c8c289d9d8 -->

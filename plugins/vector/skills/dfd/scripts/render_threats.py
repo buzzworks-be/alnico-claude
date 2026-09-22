@@ -37,8 +37,12 @@ def coverage():
     taxonomy are each stated once, and a renderer that computed either of them
     a second way could disagree with the check that gates the document.
     """
-    spec = importlib.util.spec_from_file_location(
-        "check_coverage", os.path.join(HERE, "check_coverage.py"))
+    return sibling("check_coverage")
+
+
+def sibling(name):
+    """A sibling script, imported rather than reimplemented."""
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, f"{name}.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -209,6 +213,8 @@ def main(argv=None):
     document = render(enumeration, model, check.catalogue(check.CATALOGUES), grid,
                       findings_only=args.findings_only)
 
+    if not args.findings_only:
+        document = sibling("check_traceability").stamp(document, args.enumeration)
     if args.output:
         with open(args.output, "w") as handle:
             handle.write(document)
