@@ -1,4 +1,4 @@
-name: Sync marketplace.json
+name: Sync marketplace.json and README
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
     paths:
       - 'plugins/*/.claude-plugin/plugin.json'
       - '.claude-plugin/marketplace.json'
+      - 'README.md'
       - '.github/scripts/sync_marketplace.py'
   workflow_dispatch:
 
@@ -26,13 +27,14 @@ jobs:
 
       - name: Commit if changed
         run: |
-          if git diff --quiet; then
-            echo "marketplace.json already in sync"
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "marketplace.json and README.md already in sync"
             exit 0
           fi
-          git diff
+          git add .claude-plugin/marketplace.json README.md
+          git diff --cached
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Sync marketplace.json from plugin manifests"
+          git commit -m "Sync marketplace.json and README from plugin manifests"
           git pull --rebase origin main
           git push origin HEAD:main
