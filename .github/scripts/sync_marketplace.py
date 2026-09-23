@@ -39,7 +39,7 @@ def license_line(entry):
 sections = []
 for entry in plugins:
     sections.append(
-        f"### [{entry['name']}]({pathlib.Path(entry['source']).as_posix()})\n\n"
+        f"### {entry['name']} \n\n"
         f"**Version:** {entry.get('version', 'unversioned')}  \n"
         f"{entry.get('description', '')}  \n"
         f"{license_line(entry)}\n"
