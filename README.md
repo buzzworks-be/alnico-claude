@@ -10,7 +10,7 @@ License: [Apache-2.0](plugins/heimdall/LICENSE)
 
 ### vector 
 
-**Version:** 0.20.0  
+**Version:** 0.21.0  
 Vector is a Continuous Threat Modeling mechanism using STRIDE for security and LINDDUN for privacy  
 License: [Apache-2.0](plugins/vector/LICENSE)
 
