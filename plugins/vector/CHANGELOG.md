@@ -11,6 +11,17 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.19.1] — 2026-09-23
+
+### Changed
+
+- The marketplace listing says what Vector is in its own words — *a Continuous
+  Threat Modeling mechanism using STRIDE for security and LINDDUN for privacy*
+  — gains the keyword `governance`, and links to the marketplace repository
+  itself rather than to this plugin's folder inside it. Nothing about how the
+  plugin behaves changes; this release exists so the listing can be updated,
+  since a republish under the same version is refused.
+
 ## [0.19.0] — 2026-09-23
 
 ### Added
@@ -703,6 +714,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.19.1]: https://github.com/buzzworks-be/vector/commit/d9dc50b
 [0.19.0]: https://github.com/buzzworks-be/vector/commit/bb5f877
 [0.18.1]: https://github.com/buzzworks-be/vector/commit/5f21a8e
 [0.18.0]: https://github.com/buzzworks-be/vector/commit/359a00a
