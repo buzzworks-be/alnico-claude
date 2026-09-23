@@ -11,6 +11,49 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.20.0] — 2026-09-23
+
+### Added
+
+- **Every vector is rated.** [`/vector:matrix`](skills/matrix/SKILL.md) now asks
+  for a likelihood and an impact on each vector, as levels from 1 to 5, each
+  with a sentence saying why. The risk level is looked up from the two in a
+  five-by-five matrix rather than typed, so it can't disagree with them. A
+  mitigated vector is rated twice, before its control and after, which is the
+  one place the toolkit now says what a control bought.
+
+  **You rate, not the model.** The skill shows the scale's definitions and the
+  vector's own description, then asks. It won't suggest a level, because
+  agreeing with a suggested number is an invented score with your signature
+  on it.
+
+  Impact is defined both for the organisation and for the people the data is
+  about, and a vector is rated at whichever is worse. Otherwise privacy risks
+  rate low by default, since the harm falls on people who aren't in the room.
+
+- **The default scale is `vector-5x5-v1`**, and `check_matrix.py --scale` prints
+  it. If your organisation already has a risk matrix, declare it in full in the
+  register and rate in its terms. The check refuses a partial one, or one where
+  more likelihood could mean less risk.
+
+- **The rendered matrix opens with where the risk sits**: two five-by-five
+  grids, *now* and *with nothing done*, whose difference is what your controls
+  moved. It lists vectors worst first, shows the risk that was accepted beside
+  each acceptance, and states the scale every level was given on. No score,
+  product or total appears anywhere; the levels are positions on a scale, not
+  quantities.
+
+### Changed
+
+- **Your register is unfinished until it is rated.** The matrix check reports
+  a register with no `risk_scale`, and each unrated vector, as blocking. Run
+  `/vector:matrix` to rate it.
+
+- **Your CI does not change until you update the vendored check**, and it
+  stays green if you **rate first, then update**. The copy already in your
+  repository ignores the rating fields, so a rated register passes it.
+  `/vector:wire` checks this for you before offering the update.
+
 ## [0.19.1] — 2026-09-23
 
 ### Changed
@@ -714,6 +757,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.20.0]: https://github.com/buzzworks-be/vector/commit/65391db
 [0.19.1]: https://github.com/buzzworks-be/vector/commit/d9dc50b
 [0.19.0]: https://github.com/buzzworks-be/vector/commit/bb5f877
 [0.18.1]: https://github.com/buzzworks-be/vector/commit/5f21a8e

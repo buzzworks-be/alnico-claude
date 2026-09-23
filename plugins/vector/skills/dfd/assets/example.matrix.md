@@ -12,37 +12,67 @@ Generated from the register beside [`example.threats.yaml`](example.threats.yaml
 | Deferred | 5 |
 | Undecided | 0 |
 | Carrying no mitigation | 3 |
+| Now 🟥 critical | 1 |
+| Now 🟧 high | 4 |
+| Now 🟨 medium | 6 |
+| Now 🟩 low | 3 |
+
+## Where the risk sits
+
+Every vector placed by its likelihood and impact. **Now** places a mitigated vector by the risk its control leaves; **with nothing done** places every vector by its inherent rating. The difference between the two is what the controls moved.
+
+**Now**
+
+| Likelihood ↓ · Impact → | 1 | 2 | 3 | 4 | 5 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **5** | 🟨 medium | 🟧 high · [VEC-0002](example.vectors.md#vec-0002--gift-recipients-are-data-subjects-the-system-cannot-inform-or-serve) | 🟧 high · [VEC-0004](example.vectors.md#vec-0004--the-audit-log-keeps-email-past-its-own-retention-beyond-erasures-reach) | 🟥 critical · [VEC-0009](example.vectors.md#vec-0009--verifying-a-guest-collects-identity-documents-the-model-does-not-know-it-holds) | 🟥 critical |
+| **4** | 🟩 low | 🟨 medium · [VEC-0014](example.vectors.md#vec-0014--nobody-tells-the-shopper-a-model-read-their-message-and-wrote-the-reply) | 🟧 high · [VEC-0012](example.vectors.md#vec-0012--a-shoppers-own-words-reach-the-prompt-of-a-process-that-can-move-money) | 🟧 high | 🟥 critical |
+| **3** | 🟩 low | 🟨 medium | 🟨 medium · [VEC-0005](example.vectors.md#vec-0005--nobody-could-say-whether-the-backup-snapshots-honour-the-address-purge) | 🟧 high · [VEC-0001](example.vectors.md#vec-0001--a-guests-identity-is-never-verified-at-checkout-or-on-a-data-request) | 🟧 high |
+| **2** | 🟩 low | 🟩 low · [VEC-0010](example.vectors.md#vec-0010--nothing-in-the-model-tells-a-shopper-what-is-collected-or-on-what-basis) | 🟨 medium · [VEC-0003](example.vectors.md#vec-0003--the-order-path-has-no-throttle-anywhere-in-the-model), [VEC-0011](example.vectors.md#vec-0011--pii-scrubbing-on-client-error-reports-is-a-filter-that-fails-open) | 🟨 medium · [VEC-0008](example.vectors.md#vec-0008--the-full-order-record-lands-on-a-laptop-in-a-zone-the-model-calls-untrusted) | 🟧 high |
+| **1** | 🟩 low | 🟩 low | 🟩 low · [VEC-0007](example.vectors.md#vec-0007--address-masking-in-the-support-console-is-lifted-by-the-agent-who-wants-it), [VEC-0013](example.vectors.md#vec-0013--an-assistants-draft-can-restate-an-address-the-console-masked) | 🟩 low | 🟨 medium · [VEC-0006](example.vectors.md#vec-0006--backups-add-no-isolation-from-the-compromise-that-matters) |
+
+**With nothing done**
+
+| Likelihood ↓ · Impact → | 1 | 2 | 3 | 4 | 5 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **5** | 🟨 medium | 🟧 high · [VEC-0002](example.vectors.md#vec-0002--gift-recipients-are-data-subjects-the-system-cannot-inform-or-serve), [VEC-0010](example.vectors.md#vec-0010--nothing-in-the-model-tells-a-shopper-what-is-collected-or-on-what-basis), [VEC-0014](example.vectors.md#vec-0014--nobody-tells-the-shopper-a-model-read-their-message-and-wrote-the-reply) | 🟧 high · [VEC-0004](example.vectors.md#vec-0004--the-audit-log-keeps-email-past-its-own-retention-beyond-erasures-reach) | 🟥 critical · [VEC-0009](example.vectors.md#vec-0009--verifying-a-guest-collects-identity-documents-the-model-does-not-know-it-holds) | 🟥 critical |
+| **4** | 🟩 low | 🟨 medium | 🟧 high · [VEC-0003](example.vectors.md#vec-0003--the-order-path-has-no-throttle-anywhere-in-the-model), [VEC-0011](example.vectors.md#vec-0011--pii-scrubbing-on-client-error-reports-is-a-filter-that-fails-open), [VEC-0012](example.vectors.md#vec-0012--a-shoppers-own-words-reach-the-prompt-of-a-process-that-can-move-money) | 🟧 high · [VEC-0008](example.vectors.md#vec-0008--the-full-order-record-lands-on-a-laptop-in-a-zone-the-model-calls-untrusted) | 🟥 critical |
+| **3** | 🟩 low | 🟨 medium | 🟨 medium · [VEC-0005](example.vectors.md#vec-0005--nobody-could-say-whether-the-backup-snapshots-honour-the-address-purge), [VEC-0007](example.vectors.md#vec-0007--address-masking-in-the-support-console-is-lifted-by-the-agent-who-wants-it), [VEC-0013](example.vectors.md#vec-0013--an-assistants-draft-can-restate-an-address-the-console-masked) | 🟧 high · [VEC-0001](example.vectors.md#vec-0001--a-guests-identity-is-never-verified-at-checkout-or-on-a-data-request) | 🟧 high |
+| **2** | 🟩 low | 🟩 low | 🟨 medium | 🟨 medium | 🟧 high |
+| **1** | 🟩 low | 🟩 low | 🟩 low | 🟩 low | 🟨 medium · [VEC-0006](example.vectors.md#vec-0006--backups-add-no-isolation-from-the-compromise-that-matters) |
 
 ## Deferrals, soonest first
 
 What has been decided and not done, with who owns it and until when. A deferral past its date fails the check; a date that has been moved shows every date it has had.
 
-| Vector | Until | Owner | Mitigation | Reason |
-| :--- | :--- | :--- | :--- | :--- |
-| [**VEC-0005**](example.vectors.md#vec-0005--nobody-could-say-whether-the-backup-snapshots-honour-the-address-purge) Nobody could say whether the backup snapshots honour the address purge | 2026-10-31 | Ruben De Smet, platform lead | — | Nothing can be mitigated or accepted until the question is answered: whether the purge reaches the snapshots is a fact about the backup job that nobody in the room could state. The owner is finding out, and the answer decides which of the other two states this becomes. |
-| [**VEC-0009**](example.vectors.md#vec-0009--verifying-a-guest-collects-identity-documents-the-model-does-not-know-it-holds) Verifying a guest collects identity documents the model does not know it holds | 2026-11-30 | Ines Verhaeghe, privacy lead | [`MIT-0007`](#mit-0007--identity-documents-are-modelled-held-once-and-deleted-thirty-days-after-the-request-closes) | The document is now a modelled data item with a retention and a deletion job in the specification, and the job does not exist. Until it does, the privacy inbox's own retention rule is the only control, and it was not written with identity documents in mind. |
-| [**VEC-0004**](example.vectors.md#vec-0004--the-audit-log-keeps-email-past-its-own-retention-beyond-erasures-reach) The audit log keeps email past its own retention, beyond erasure's reach | 2026-12-31 | Ines Verhaeghe, privacy lead | [`MIT-0003`](#mit-0003--audit-events-carry-the-shopper-id-not-the-email-address) | The decision the vector asked for has been made — audit events will carry the shopper id rather than the address, and the event itself is the stated exception to erasure — and the migration that makes it true of the existing two years of events is not done. Carried until it is. |
-| [**VEC-0012**](example.vectors.md#vec-0012--a-shoppers-own-words-reach-the-prompt-of-a-process-that-can-move-money) A shopper's own words reach the prompt of a process that can move money | 2027-01-31 (2027.1 — support console release) | Maya Okonkwo, support engineering lead | [`MIT-0010`](#mit-0010--the-assistant-proposes-a-refund-an-agent-issues-it) | The proposal flow is specified and is a product change rather than a patch: the console needs a confirmation step, the payment path needs to stop accepting a tool call, and the rejection log needs somewhere to go. It lands with the support console's next release. Until then the tool issues refunds under the EUR 50 cap and the exposure is carried here. |
-| [**VEC-0001**](example.vectors.md#vec-0001--a-guests-identity-is-never-verified-at-checkout-or-on-a-data-request) A guest's identity is never verified, at checkout or on a data request | 2027-03-31 (2027.1 — guest path rework) | Ines Verhaeghe, privacy lead | [`MIT-0001`](#mit-0001--bind-the-guest-email-before-an-order-or-a-data-request-is-accepted) | The control is designed and written into the specification, and it is not built: guest verification lands with the partner-onboarding work that reworks the guest path, rather than ahead of it. Until then the exposure is real on both paths and is carried under this date. |
+| Vector | Until | Risk | Owner | Mitigation | Reason |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| [**VEC-0005**](example.vectors.md#vec-0005--nobody-could-say-whether-the-backup-snapshots-honour-the-address-purge) Nobody could say whether the backup snapshots honour the address purge | 2026-10-31 | 🟨 medium `L3 · I3` | Ruben De Smet, platform lead | — | Nothing can be mitigated or accepted until the question is answered: whether the purge reaches the snapshots is a fact about the backup job that nobody in the room could state. The owner is finding out, and the answer decides which of the other two states this becomes. |
+| [**VEC-0009**](example.vectors.md#vec-0009--verifying-a-guest-collects-identity-documents-the-model-does-not-know-it-holds) Verifying a guest collects identity documents the model does not know it holds | 2026-11-30 | 🟥 critical `L5 · I4` | Ines Verhaeghe, privacy lead | [`MIT-0007`](#mit-0007--identity-documents-are-modelled-held-once-and-deleted-thirty-days-after-the-request-closes) | The document is now a modelled data item with a retention and a deletion job in the specification, and the job does not exist. Until it does, the privacy inbox's own retention rule is the only control, and it was not written with identity documents in mind. |
+| [**VEC-0004**](example.vectors.md#vec-0004--the-audit-log-keeps-email-past-its-own-retention-beyond-erasures-reach) The audit log keeps email past its own retention, beyond erasure's reach | 2026-12-31 | 🟧 high `L5 · I3` | Ines Verhaeghe, privacy lead | [`MIT-0003`](#mit-0003--audit-events-carry-the-shopper-id-not-the-email-address) | The decision the vector asked for has been made — audit events will carry the shopper id rather than the address, and the event itself is the stated exception to erasure — and the migration that makes it true of the existing two years of events is not done. Carried until it is. |
+| [**VEC-0012**](example.vectors.md#vec-0012--a-shoppers-own-words-reach-the-prompt-of-a-process-that-can-move-money) A shopper's own words reach the prompt of a process that can move money | 2027-01-31 (2027.1 — support console release) | 🟧 high `L4 · I3` | Maya Okonkwo, support engineering lead | [`MIT-0010`](#mit-0010--the-assistant-proposes-a-refund-an-agent-issues-it) | The proposal flow is specified and is a product change rather than a patch: the console needs a confirmation step, the payment path needs to stop accepting a tool call, and the rejection log needs somewhere to go. It lands with the support console's next release. Until then the tool issues refunds under the EUR 50 cap and the exposure is carried here. |
+| [**VEC-0001**](example.vectors.md#vec-0001--a-guests-identity-is-never-verified-at-checkout-or-on-a-data-request) A guest's identity is never verified, at checkout or on a data request | 2027-03-31 (2027.1 — guest path rework) | 🟧 high `L3 · I4` | Ines Verhaeghe, privacy lead | [`MIT-0001`](#mit-0001--bind-the-guest-email-before-an-order-or-a-data-request-is-accepted) | The control is designed and written into the specification, and it is not built: guest verification lands with the partner-onboarding work that reworks the guest path, rather than ahead of it. Until then the exposure is real on both paths and is carried under this date. |
 
 ## The matrix
 
-| Vector | Element | Category | Disposition | Owner | Mitigations |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| [**VEC-0010**](example.vectors.md#vec-0010--nothing-in-the-model-tells-a-shopper-what-is-collected-or-on-what-basis) Nothing in the model tells a shopper what is collected or on what basis | `checkout-web` Checkout web app | LINDDUN unawareness | mitigated | — | [`MIT-0008`](#mit-0008--the-checkout-page-links-a-privacy-notice-generated-from-the-models-data-entries) |
-| [**VEC-0011**](example.vectors.md#vec-0011--pii-scrubbing-on-client-error-reports-is-a-filter-that-fails-open) PII scrubbing on client error reports is a filter that fails open | `checkout-web` Checkout web app | STRIDE information disclosure | mitigated | — | [`MIT-0009`](#mit-0009--a-test-fails-when-a-known-pii-shape-reaches-the-error-reporter) |
-| [**VEC-0003**](example.vectors.md#vec-0003--the-order-path-has-no-throttle-anywhere-in-the-model) The order path has no throttle anywhere in the model | `checkout-api` Checkout API | STRIDE denial of service | mitigated | — | [`MIT-0002`](#mit-0002--rate-limit-submit-order-before-any-downstream-cost) |
-| [**VEC-0007**](example.vectors.md#vec-0007--address-masking-in-the-support-console-is-lifted-by-the-agent-who-wants-it) Address masking in the support console is lifted by the agent who wants it | `support-console` Support console | LINDDUN data disclosure | mitigated | — | [`MIT-0004`](#mit-0004--a-ticket-linked-view-needs-a-ticket-the-shopper-opened-checked-server-side), [`MIT-0005`](#mit-0005--support-lookups-are-sampled-and-reviewed-monthly) |
-| [**VEC-0012**](example.vectors.md#vec-0012--a-shoppers-own-words-reach-the-prompt-of-a-process-that-can-move-money) A shopper's own words reach the prompt of a process that can move money | `support-assistant` Support assistant | STRIDE elevation of privilege | deferred | Maya Okonkwo, support engineering lead | [`MIT-0010`](#mit-0010--the-assistant-proposes-a-refund-an-agent-issues-it) |
-| [**VEC-0013**](example.vectors.md#vec-0013--an-assistants-draft-can-restate-an-address-the-console-masked) An assistant's draft can restate an address the console masked | `support-assistant` Support assistant | STRIDE information disclosure | mitigated | — | [`MIT-0011`](#mit-0011--send-the-assistant-the-address-only-when-the-agent-may-already-see-it) |
-| [**VEC-0014**](example.vectors.md#vec-0014--nobody-tells-the-shopper-a-model-read-their-message-and-wrote-the-reply) Nobody tells the shopper a model read their message and wrote the reply | `support-assistant` Support assistant | LINDDUN unawareness | mitigated | — | [`MIT-0008`](#mit-0008--the-checkout-page-links-a-privacy-notice-generated-from-the-models-data-entries) |
-| [**VEC-0001**](example.vectors.md#vec-0001--a-guests-identity-is-never-verified-at-checkout-or-on-a-data-request) A guest's identity is never verified, at checkout or on a data request | `dsar-handler` Data request handler | STRIDE spoofing | deferred | Ines Verhaeghe, privacy lead | [`MIT-0001`](#mit-0001--bind-the-guest-email-before-an-order-or-a-data-request-is-accepted) |
-| [**VEC-0002**](example.vectors.md#vec-0002--gift-recipients-are-data-subjects-the-system-cannot-inform-or-serve) Gift recipients are data subjects the system cannot inform or serve | `dsar-handler` Data request handler | LINDDUN non compliance | accepted | Ines Verhaeghe, privacy lead | — |
-| [**VEC-0005**](example.vectors.md#vec-0005--nobody-could-say-whether-the-backup-snapshots-honour-the-address-purge) Nobody could say whether the backup snapshots honour the address purge | `orders-db` Orders database | LINDDUN non compliance | deferred | Ruben De Smet, platform lead | — |
-| [**VEC-0006**](example.vectors.md#vec-0006--backups-add-no-isolation-from-the-compromise-that-matters) Backups add no isolation from the compromise that matters | `orders-db` Orders database | STRIDE information disclosure | accepted | Ruben De Smet, platform lead | — |
-| [**VEC-0004**](example.vectors.md#vec-0004--the-audit-log-keeps-email-past-its-own-retention-beyond-erasures-reach) The audit log keeps email past its own retention, beyond erasure's reach | `audit-log` Audit log | LINDDUN non compliance | deferred | Ines Verhaeghe, privacy lead | [`MIT-0003`](#mit-0003--audit-events-carry-the-shopper-id-not-the-email-address) |
-| [**VEC-0008**](example.vectors.md#vec-0008--the-full-order-record-lands-on-a-laptop-in-a-zone-the-model-calls-untrusted) The full order record lands on a laptop in a zone the model calls untrusted | `support-render` Show order to agent | STRIDE information disclosure | mitigated | — | [`MIT-0006`](#mit-0006--only-managed-compliant-devices-can-open-the-support-console) |
-| [**VEC-0009**](example.vectors.md#vec-0009--verifying-a-guest-collects-identity-documents-the-model-does-not-know-it-holds) Verifying a guest collects identity documents the model does not know it holds | `dsar-request` Data subject access or erasure request | LINDDUN data disclosure | deferred | Ines Verhaeghe, privacy lead | [`MIT-0007`](#mit-0007--identity-documents-are-modelled-held-once-and-deleted-thirty-days-after-the-request-closes) |
+Worst first: by the risk as it stands, then by the risk with nothing done, then in the model's order.
+
+| Vector | Element | Category | Risk now | Inherent | Disposition | Owner | Mitigations |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| [**VEC-0009**](example.vectors.md#vec-0009--verifying-a-guest-collects-identity-documents-the-model-does-not-know-it-holds) Verifying a guest collects identity documents the model does not know it holds | `dsar-request` Data subject access or erasure request | LINDDUN data disclosure | 🟥 critical `L5 · I4` | 🟥 critical `L5 · I4` | deferred | Ines Verhaeghe, privacy lead | [`MIT-0007`](#mit-0007--identity-documents-are-modelled-held-once-and-deleted-thirty-days-after-the-request-closes) |
+| [**VEC-0012**](example.vectors.md#vec-0012--a-shoppers-own-words-reach-the-prompt-of-a-process-that-can-move-money) A shopper's own words reach the prompt of a process that can move money | `support-assistant` Support assistant | STRIDE elevation of privilege | 🟧 high `L4 · I3` | 🟧 high `L4 · I3` | deferred | Maya Okonkwo, support engineering lead | [`MIT-0010`](#mit-0010--the-assistant-proposes-a-refund-an-agent-issues-it) |
+| [**VEC-0001**](example.vectors.md#vec-0001--a-guests-identity-is-never-verified-at-checkout-or-on-a-data-request) A guest's identity is never verified, at checkout or on a data request | `dsar-handler` Data request handler | STRIDE spoofing | 🟧 high `L3 · I4` | 🟧 high `L3 · I4` | deferred | Ines Verhaeghe, privacy lead | [`MIT-0001`](#mit-0001--bind-the-guest-email-before-an-order-or-a-data-request-is-accepted) |
+| [**VEC-0002**](example.vectors.md#vec-0002--gift-recipients-are-data-subjects-the-system-cannot-inform-or-serve) Gift recipients are data subjects the system cannot inform or serve | `dsar-handler` Data request handler | LINDDUN non compliance | 🟧 high `L5 · I2` | 🟧 high `L5 · I2` | accepted | Ines Verhaeghe, privacy lead | — |
+| [**VEC-0004**](example.vectors.md#vec-0004--the-audit-log-keeps-email-past-its-own-retention-beyond-erasures-reach) The audit log keeps email past its own retention, beyond erasure's reach | `audit-log` Audit log | LINDDUN non compliance | 🟧 high `L5 · I3` | 🟧 high `L5 · I3` | deferred | Ines Verhaeghe, privacy lead | [`MIT-0003`](#mit-0003--audit-events-carry-the-shopper-id-not-the-email-address) |
+| [**VEC-0011**](example.vectors.md#vec-0011--pii-scrubbing-on-client-error-reports-is-a-filter-that-fails-open) PII scrubbing on client error reports is a filter that fails open | `checkout-web` Checkout web app | STRIDE information disclosure | 🟨 medium `L2 · I3` | 🟧 high `L4 · I3` | mitigated | — | [`MIT-0009`](#mit-0009--a-test-fails-when-a-known-pii-shape-reaches-the-error-reporter) |
+| [**VEC-0003**](example.vectors.md#vec-0003--the-order-path-has-no-throttle-anywhere-in-the-model) The order path has no throttle anywhere in the model | `checkout-api` Checkout API | STRIDE denial of service | 🟨 medium `L2 · I3` | 🟧 high `L4 · I3` | mitigated | — | [`MIT-0002`](#mit-0002--rate-limit-submit-order-before-any-downstream-cost) |
+| [**VEC-0014**](example.vectors.md#vec-0014--nobody-tells-the-shopper-a-model-read-their-message-and-wrote-the-reply) Nobody tells the shopper a model read their message and wrote the reply | `support-assistant` Support assistant | LINDDUN unawareness | 🟨 medium `L4 · I2` | 🟧 high `L5 · I2` | mitigated | — | [`MIT-0008`](#mit-0008--the-checkout-page-links-a-privacy-notice-generated-from-the-models-data-entries) |
+| [**VEC-0008**](example.vectors.md#vec-0008--the-full-order-record-lands-on-a-laptop-in-a-zone-the-model-calls-untrusted) The full order record lands on a laptop in a zone the model calls untrusted | `support-render` Show order to agent | STRIDE information disclosure | 🟨 medium `L2 · I4` | 🟧 high `L4 · I4` | mitigated | — | [`MIT-0006`](#mit-0006--only-managed-compliant-devices-can-open-the-support-console) |
+| [**VEC-0005**](example.vectors.md#vec-0005--nobody-could-say-whether-the-backup-snapshots-honour-the-address-purge) Nobody could say whether the backup snapshots honour the address purge | `orders-db` Orders database | LINDDUN non compliance | 🟨 medium `L3 · I3` | 🟨 medium `L3 · I3` | deferred | Ruben De Smet, platform lead | — |
+| [**VEC-0006**](example.vectors.md#vec-0006--backups-add-no-isolation-from-the-compromise-that-matters) Backups add no isolation from the compromise that matters | `orders-db` Orders database | STRIDE information disclosure | 🟨 medium `L1 · I5` | 🟨 medium `L1 · I5` | accepted | Ruben De Smet, platform lead | — |
+| [**VEC-0010**](example.vectors.md#vec-0010--nothing-in-the-model-tells-a-shopper-what-is-collected-or-on-what-basis) Nothing in the model tells a shopper what is collected or on what basis | `checkout-web` Checkout web app | LINDDUN unawareness | 🟩 low `L2 · I2` | 🟧 high `L5 · I2` | mitigated | — | [`MIT-0008`](#mit-0008--the-checkout-page-links-a-privacy-notice-generated-from-the-models-data-entries) |
+| [**VEC-0007**](example.vectors.md#vec-0007--address-masking-in-the-support-console-is-lifted-by-the-agent-who-wants-it) Address masking in the support console is lifted by the agent who wants it | `support-console` Support console | LINDDUN data disclosure | 🟩 low `L1 · I3` | 🟨 medium `L3 · I3` | mitigated | — | [`MIT-0004`](#mit-0004--a-ticket-linked-view-needs-a-ticket-the-shopper-opened-checked-server-side), [`MIT-0005`](#mit-0005--support-lookups-are-sampled-and-reviewed-monthly) |
+| [**VEC-0013**](example.vectors.md#vec-0013--an-assistants-draft-can-restate-an-address-the-console-masked) An assistant's draft can restate an address the console masked | `support-assistant` Support assistant | STRIDE information disclosure | 🟩 low `L1 · I3` | 🟨 medium `L3 · I3` | mitigated | — | [`MIT-0011`](#mit-0011--send-the-assistant-the-address-only-when-the-agent-may-already-see-it) |
 
 ## Mitigations
 
@@ -181,11 +211,15 @@ Accepted by **Ines Verhaeghe, privacy lead** on 2026-09-13.
 
 A recipient's address is the shopper's disclosure, held for ninety days and then purged. A rights route for someone who never interacts with us needs a notion of subject the data model does not have, and no such request has ever arrived. Carried knowingly; revisited if one does, or if `address.retention` ever grows.
 
+**Risk accepted: 🟧 high.** Likelihood 5, *Almost certain*: No attacker is involved. Every gift order creates a recipient with no route into the rights process, in normal operation. Impact 2, *Minor*, for the people the data is about: An address held for at most ninety days that its subject cannot learn of or remove. The harm is real, and retention bounds it to a short one.
+
 ### VEC-0006 — Backups add no isolation from the compromise that matters
 
 Accepted by **Ruben De Smet, platform lead** on 2026-09-13.
 
 Snapshots under a separate key in a separate account is a platform programme with no date, and the compromise that reaches the live key already reaches everything the snapshots would add. Break-glass through PAM guards the credential path; the residual is blast radius once that fails, and it is carried by name rather than deferred to a date nobody can give.
+
+**Risk accepted: 🟨 medium.** Likelihood 1, *Rare*: Needs the AWS account or the KMS key, which nobody in the model has, behind break-glass through PAM. Impact 5, *Severe*, for the organisation and the people the data is about: Every shopper's orders, addresses and email, with thirty-five days of history that includes addresses the purge already removed.
 
 ## Retired
 
@@ -246,7 +280,45 @@ Three dispositions, where a reader arriving from an ISO-shaped process expects f
 | Transfer | the third party is an **element** in the model, with its own flows and threats; the disposition here is `mitigated` where they operate the control and `accepted` where only the loss is financed | `acme-checkout.dfd.yaml`, this matrix |
 | Avoid | **not a vector at all** — a threat found not to apply, with a reason, or a finding not promoted, with a reason, or a vector retired because the exposure was designed out | [`example.threats.yaml`](example.threats.yaml) (its `controlled` and `not_applicable` verdicts), the register's `dismissed` and `retired` sections |
 
+## Rating scale
+
+The scale every level above was given on. A level means what its definition says, and nothing else.
+
+Scale: `vector-5x5-v1` — bands, least severe first: low, medium, high, critical.
+
+**Likelihood**
+
+| Level | Name | Definition |
+|---:|---|---|
+| 1 | Rare | Needs access or capability nobody in the model has, or several independent controls failing at once. |
+| 2 | Unlikely | Needs insider access, a targeted effort against this system, or a precondition the model makes uncommon. |
+| 3 | Possible | Reachable by a motivated outsider with specialist skill, or by an insider in the ordinary course of their work. |
+| 4 | Likely | Reachable by an ordinary outsider with public tools or knowledge, or happens by accident in normal use. |
+| 5 | Almost certain | Happens in normal operation, or is trivially reachable by anyone who looks. |
+
+**Impact** — rated at the worse of the two columns, and says which.
+
+| Level | Name | For the organisation | For the people the data is about |
+|---:|---|---|---|
+| 1 | Negligible | No noticeable effect. | None, or an inconvenience nobody would notice. |
+| 2 | Minor | Contained disruption or cost, visible internally only. | A minor inconvenience, easily reversed — an unwanted message, a repeated step. |
+| 3 | Moderate | Disruption customers notice, and a real cost to put right. | Distress or disruption for a few people, reversible with effort. |
+| 4 | Major | Significant loss, a notifiable breach, regulatory attention. | Serious harm to some or significant harm to many — financial loss, exposure of data they would not share. |
+| 5 | Severe | Threatens the service or the organisation; major regulatory action. | Severe or irreversible harm — special-category data exposed, discrimination, identity theft, physical danger. |
+
+**Risk** — looked up, never chosen.
+
+| Likelihood ↓ · Impact → | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| **5** | medium | high | high | critical | critical |
+| **4** | low | medium | high | high | critical |
+| **3** | low | medium | medium | high | high |
+| **2** | low | low | medium | medium | high |
+| **1** | low | low | low | low | medium |
+
 ## Limits
+
+**A rating is a judgement.** The check requires every level to have a reason and the risk to be the scale's cell for the two levels beside it. It cannot tell a careful rating from a hurried one; the reasons can, to a reader.
 
 **A disposition is a claim, not a fact.** "Mitigated" means somebody said so and named a control. The check requires the control to have a place — a specification, an implementation — and stops there; whether the code honours the requirement is a code review, and an annotation on the wrong function would satisfy every check here.
 
@@ -254,4 +326,4 @@ Three dispositions, where a reader arriving from an ISO-shaped process expects f
 
 **An `until` can be pushed.** A deferral moved forward every quarter stays green forever. Every date it has had is shown above, which is the only mitigation there is.
 
-<!-- vector: rendered from example.vectors.yaml sha256:85510630c29a4adbf189b8faae8edcadbbba4439cbb00ae57cfc851658009788 -->
+<!-- vector: rendered from example.vectors.yaml sha256:ac9a8635625b08c5f9bf54307ca580a282472ba558e00be2c64388d69de7532f -->

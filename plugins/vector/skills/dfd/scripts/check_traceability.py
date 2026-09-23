@@ -467,6 +467,349 @@ def check_reviews(model, model_path, root, report, as_of, files=None):
 
 # --- the register checks, shared with check_matrix.py ------------------------
 
+# --- risk rating ---------------------------------------------------------------
+#
+# Per ADR-0014: a person gives a likelihood and an impact, each a level on a
+# declared five-point scale with a reason, and the risk level is looked up from
+# the two. Nothing here chooses a level, and nothing adds levels together — they
+# are positions on two scales, not quantities.
+#
+# A register names the scale it was rated on, even the default. The default
+# lives in this file, which is vendored, so a register that said nothing would
+# be silently re-banded the first time somebody updated a copy whose default had
+# changed. A changed default is therefore a new name added beside the old one,
+# and a name here is never removed.
+
+LEVELS = (1, 2, 3, 4, 5)
+IMPACT_ON = ("organisation", "data_subjects", "both")
+
+DEFAULT_SCALES = {
+    "vector-5x5-v1": {
+        "name": "vector-5x5-v1",
+        "bands": ["low", "medium", "high", "critical"],
+        # Written for a design rather than a running system: they ask what the
+        # model says it takes, because at design time there is no incident
+        # history to count.
+        "likelihood": [
+            {"level": 1, "name": "Rare",
+             "definition": "Needs access or capability nobody in the model has, or several "
+                           "independent controls failing at once."},
+            {"level": 2, "name": "Unlikely",
+             "definition": "Needs insider access, a targeted effort against this system, or "
+                           "a precondition the model makes uncommon."},
+            {"level": 3, "name": "Possible",
+             "definition": "Reachable by a motivated outsider with specialist skill, or by an "
+                           "insider in the ordinary course of their work."},
+            {"level": 4, "name": "Likely",
+             "definition": "Reachable by an ordinary outsider with public tools or knowledge, "
+                           "or happens by accident in normal use."},
+            {"level": 5, "name": "Almost certain",
+             "definition": "Happens in normal operation, or is trivially reachable by anyone "
+                           "who looks."},
+        ],
+        # Every level says what it means for both, and a vector is rated at the
+        # worse of the two — or the LINDDUN half rates low by default, since its
+        # harm falls on people who are not in the room.
+        "impact": [
+            {"level": 1, "name": "Negligible",
+             "organisation": "No noticeable effect.",
+             "data_subjects": "None, or an inconvenience nobody would notice."},
+            {"level": 2, "name": "Minor",
+             "organisation": "Contained disruption or cost, visible internally only.",
+             "data_subjects": "A minor inconvenience, easily reversed — an unwanted message, "
+                              "a repeated step."},
+            {"level": 3, "name": "Moderate",
+             "organisation": "Disruption customers notice, and a real cost to put right.",
+             "data_subjects": "Distress or disruption for a few people, reversible with effort."},
+            {"level": 4, "name": "Major",
+             "organisation": "Significant loss, a notifiable breach, regulatory attention.",
+             "data_subjects": "Serious harm to some or significant harm to many — financial "
+                              "loss, exposure of data they would not share."},
+            {"level": 5, "name": "Severe",
+             "organisation": "Threatens the service or the organisation; major regulatory "
+                             "action.",
+             "data_subjects": "Severe or irreversible harm — special-category data exposed, "
+                              "discrimination, identity theft, physical danger."},
+        ],
+        # One row per likelihood, 1 first; impact 1 to 5 across. Drawn from a
+        # product rule — at most 4 low, 5 to 9 medium, 10 to 16 high, 20 and
+        # above critical — which is how the table was drawn and is stored
+        # nowhere. A catastrophic impact is never low, however rare.
+        "matrix": [
+            ["low", "low", "low", "low", "medium"],
+            ["low", "low", "medium", "medium", "high"],
+            ["low", "medium", "medium", "high", "high"],
+            ["low", "medium", "high", "high", "critical"],
+            ["medium", "high", "high", "critical", "critical"],
+        ],
+    },
+}
+
+
+def scale_problems(scale, declared=True):
+    """Everything wrong with a scale, as (code, message) pairs.
+
+    The shipped default is run through this at import, by the rules a declared
+    scale is held to, so a default that failed them is the first thing anybody
+    sees rather than the last.
+    """
+    if not isinstance(scale, dict):
+        return [("BAD_SCALE", "risk_scale must be the name of a shipped scale, or a "
+                              "mapping declaring one in full")]
+    problems = []
+    name = scale.get("name")
+    if not isinstance(name, str) or not name.strip():
+        problems.append(("BAD_SCALE", "a declared scale needs a name, so a rating can say "
+                                      "which scale it was given on"))
+    elif declared and name in DEFAULT_SCALES:
+        problems.append(("BAD_SCALE", f"{name!r} is the name of a shipped scale; name it on "
+                                      "its own, or give a declared scale a name of its own"))
+
+    bands = scale.get("bands")
+    if (not isinstance(bands, list) or not 2 <= len(bands) <= 5
+            or not all(isinstance(b, str) and b.strip() for b in bands)
+            or len(set(bands)) != len(bands)):
+        problems.append(("BAD_SCALE", "bands must list two to five distinct names, least "
+                                      "severe first"))
+        bands = None
+
+    for axis, fields in (("likelihood", ("name", "definition")),
+                         ("impact", ("name", "organisation", "data_subjects"))):
+        entries = scale.get(axis)
+        if (not isinstance(entries, list) or len(entries) != 5
+                or not all(isinstance(e, dict) for e in entries)
+                or [e.get("level") for e in entries] != list(LEVELS)):
+            problems.append(("BAD_SCALE", f"{axis} must be exactly five levels, 1 to 5 in "
+                                          "order"))
+            continue
+        for entry in entries:
+            missing = [f for f in fields if not answered(entry, f)]
+            if missing:
+                problems.append(("BAD_SCALE", f"{axis} level {entry['level']} has no "
+                                              f"{' or '.join(missing)}; a level nobody has "
+                                              "defined is a number nobody can argue with"))
+
+    matrix = scale.get("matrix")
+    if (not isinstance(matrix, list) or len(matrix) != 5
+            or not all(isinstance(row, list) and len(row) == 5 for row in matrix)):
+        problems.append(("BAD_SCALE", "matrix must be five rows, one per likelihood from 1, "
+                                      "of five cells, one per impact from 1"))
+        return problems
+    if bands is None:
+        return problems
+    strays = sorted({str(c) for row in matrix for c in row if c not in bands})
+    if strays:
+        problems.append(("BAD_SCALE", f"matrix names {', '.join(strays)}, which "
+                                      f"{'is' if len(strays) == 1 else 'are'} not in bands"))
+        return problems
+
+    rank = {band: i for i, band in enumerate(bands)}
+    for li in range(5):
+        for ii in range(5):
+            here = rank[matrix[li][ii]]
+            for neighbour, what in (((li - 1, ii), "likelihood"), ((li, ii - 1), "impact")):
+                ln, in_ = neighbour
+                if ln >= 0 and in_ >= 0 and here < rank[matrix[ln][in_]]:
+                    problems.append(("NON_MONOTONIC_SCALE",
+                                     f"likelihood {li + 1}, impact {ii + 1} is "
+                                     f"{matrix[li][ii]}, below the cell with one less "
+                                     f"{what}; more {what} cannot mean less risk"))
+    return problems
+
+
+for _name, _scale in DEFAULT_SCALES.items():
+    if _name != _scale.get("name") or scale_problems(_scale, declared=False):
+        raise RuntimeError(f"the shipped scale {_name} fails its own rules: "
+                           f"{scale_problems(_scale, declared=False)}")
+
+
+def resolve_scale(register):
+    """The scale a register is rated on, and what stops it being usable."""
+    raw = register.get("risk_scale")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None, [("NO_SCALE", "no risk_scale; a rating means nothing until the scale "
+                                   "it was given on is named — vector-5x5-v1 is the default")]
+    if isinstance(raw, str):
+        if raw in DEFAULT_SCALES:
+            return DEFAULT_SCALES[raw], []
+        return None, [("UNKNOWN_SCALE", f"{raw!r} is not a scale this check ships; it knows "
+                                        f"{', '.join(sorted(DEFAULT_SCALES))}")]
+    problems = scale_problems(raw)
+    return (None if problems else raw), problems
+
+
+
+def scale_markdown(scale):
+    """The scale as three tables, in the words it was declared with.
+
+    What the matrix interview shows before it asks, and what the rendered
+    matrix states before its limits — one spelling for both, so the definitions
+    a person rates against are the ones a reader is shown.
+    """
+    def cell(text):
+        return " ".join(str(text).split()).replace("|", "\\|")
+
+    lines = [f"Scale: `{scale['name']}` — bands, least severe first: "
+             + ", ".join(scale["bands"]) + ".", "",
+             "**Likelihood**", "", "| Level | Name | Definition |", "|---:|---|---|"]
+    lines += [f"| {e['level']} | {cell(e['name'])} | {cell(e['definition'])} |"
+              for e in scale["likelihood"]]
+    lines += ["", "**Impact** — rated at the worse of the two columns, and says which.", "",
+              "| Level | Name | For the organisation | For the people the data is about |",
+              "|---:|---|---|---|"]
+    lines += [f"| {e['level']} | {cell(e['name'])} | {cell(e['organisation'])} | "
+              f"{cell(e['data_subjects'])} |" for e in scale["impact"]]
+    lines += ["", "**Risk** — looked up, never chosen.", "",
+              "| Likelihood ↓ · Impact → | 1 | 2 | 3 | 4 | 5 |", "|---|---|---|---|---|---|"]
+    lines += [f"| **{li}** | " + " | ".join(scale["matrix"][li - 1]) + " |"
+              for li in reversed(LEVELS)]
+    return "\n".join(lines) + "\n"
+
+
+def look_up(scale, likelihood, impact):
+    return scale["matrix"][likelihood - 1][impact - 1]
+
+
+def as_level(value):
+    """A level, or None. A bool is not a level, whatever YAML thinks of 1."""
+    if isinstance(value, int) and not isinstance(value, bool) and value in LEVELS:
+        return value
+    return None
+
+
+def check_rating(report, where, rating, scale, which):
+    """One rating's shape, reasons and arithmetic; returns (likelihood, impact, band).
+
+    Nothing is inferred. A missing impact_on is not taken to be the
+    organisation, and a missing level is not filled in: the check reports and
+    the skill writes.
+    """
+    field = f"disposition.risk.{which}"
+    if not isinstance(rating, dict):
+        report.add(BLOCKING, "BAD_RATING", where, f"the {which} rating must be a mapping",
+                   field=field)
+        return None, None, None
+    levels = {}
+    for axis in ("likelihood", "impact"):
+        if not answered(rating, axis):
+            report.add(BLOCKING, "MISSING_FIELD", where, f"{which} {axis} is unanswered",
+                       field=f"{field}.{axis}")
+        elif as_level(rating[axis]) is None:
+            report.add(BLOCKING, "BAD_RATING", where,
+                       f"{which} {axis} is {rating[axis]!r}; a level is a whole number from "
+                       "1 to 5", field=f"{field}.{axis}")
+        else:
+            levels[axis] = rating[axis]
+        if not answered(rating, f"{axis}_reason"):
+            report.add(BLOCKING, "MISSING_FIELD", where,
+                       f"{which} {axis} has no reason; a level with none beside it is a "
+                       "number, and a number is nothing to disagree with",
+                       field=f"{field}.{axis}_reason")
+    if not answered(rating, "impact_on"):
+        report.add(BLOCKING, "MISSING_FIELD", where,
+                   f"{which} impact_on is unanswered; say who is harmed — organisation, "
+                   "data_subjects or both", field=f"{field}.impact_on")
+    elif rating["impact_on"] not in IMPACT_ON:
+        report.add(BLOCKING, "BAD_RATING", where,
+                   f"{which} impact_on is {rating['impact_on']!r}; expected one of "
+                   f"{', '.join(IMPACT_ON)}", field=f"{field}.impact_on")
+
+    band = None
+    if scale is not None and len(levels) == 2:
+        band = look_up(scale, levels["likelihood"], levels["impact"])
+        if not answered(rating, "level"):
+            report.add(BLOCKING, "MISSING_FIELD", where,
+                       f"{which} level is unanswered; the scale puts it at {band}",
+                       field=f"{field}.level")
+        elif rating["level"] != band:
+            report.add(BLOCKING, "RISK_MISMATCH", where,
+                       f"{which} level is {rating['level']!r}, but likelihood "
+                       f"{levels['likelihood']} and impact {levels['impact']} are {band} on "
+                       f"{scale['name']}; the level is looked up, never chosen",
+                       field=f"{field}.level")
+    return levels.get("likelihood"), levels.get("impact"), band
+
+
+
+def check_risk(report, where, state, risk, scale):
+    """Every disposition rated; a mitigated one twice, nothing else twice."""
+    if risk is not None and not isinstance(risk, dict):
+        report.add(BLOCKING, "BAD_RATING", where, "risk must be a mapping of inherent and, "
+                   "for a mitigated vector, residual", field="disposition.risk")
+        return
+    risk = risk or {}
+    if not risk:
+        # One finding for a vector nobody has rated, not one per missing half:
+        # an upgraded register should report its work once per vector.
+        twice = (" — before its control and after, since it is mitigated"
+                 if state == "mitigated" else "")
+        report.add(BLOCKING, "UNRATED", where,
+                   f"not rated{twice}; a disposition that does not say how bad the risk is "
+                   "cannot say how large a risk was decided", field="disposition.risk")
+        return
+    if risk.get("inherent") is None:
+        report.add(BLOCKING, "UNRATED", where,
+                   "no inherent rating; a disposition that does not say how bad the risk "
+                   "is cannot say how large a risk was decided", field="disposition.risk.inherent")
+        inherent = (None, None, None)
+    else:
+        inherent = check_rating(report, where, risk["inherent"], scale, "inherent")
+
+    if state != "mitigated":
+        if risk.get("residual") is not None:
+            report.add(BLOCKING, "STRAY_RESIDUAL", where,
+                       f"{state}, with a residual rating; nothing is in place for it to "
+                       "describe, so it can only repeat the inherent one",
+                       field="disposition.risk.residual")
+        return
+    if risk.get("residual") is None:
+        report.add(BLOCKING, "NO_RESIDUAL", where,
+                   "mitigated, with no residual rating; without it nothing says what the "
+                   "control bought", field="disposition.risk.residual")
+        return
+    residual = check_rating(report, where, risk["residual"], scale, "residual")
+
+    above = [axis for axis, before, after in
+             (("likelihood", inherent[0], residual[0]), ("impact", inherent[1], residual[1]))
+             if before is not None and after is not None and after > before]
+    if above:
+        report.add(BLOCKING, "RESIDUAL_ABOVE_INHERENT", where,
+                   f"residual {' and '.join(above)} above the inherent; a control that makes "
+                   "things worse is a data error", field="disposition.risk.residual")
+    elif inherent[2] is not None and inherent[2] == residual[2]:
+        report.add(ADVISORY, "NO_REDUCTION", where,
+                   f"{inherent[2]} before its control and {residual[2]} after; a control that "
+                   "buys nothing on the scale is worth one question",
+                   field="disposition.risk.residual")
+
+
+def rating_lookups(register):
+    """The band the scale gives each rating it can read, by vector id.
+
+    What the matrix skill writes into `level`, so the one value in a rating a
+    person does not choose comes from the one place that computes it.
+    """
+    scale, _ = resolve_scale(register)
+    found = {}
+    if scale is None:
+        return found
+    for entry in register.get("vectors") or []:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            continue
+        disposition = entry.get("disposition")
+        risk = disposition.get("risk") if isinstance(disposition, dict) else None
+        if not isinstance(risk, dict):
+            continue
+        for which in ("inherent", "residual"):
+            rating = risk.get(which)
+            if not isinstance(rating, dict):
+                continue
+            likelihood, impact = as_level(rating.get("likelihood")), as_level(rating.get("impact"))
+            if likelihood and impact:
+                found.setdefault(str(entry["id"]), {})[which] = look_up(scale, likelihood, impact)
+    return found
+
+
 def check_register(register, threats_path, as_of, bases=(), model_path=None):
     """Everything that must be true of a register on its own.
 
@@ -494,6 +837,12 @@ def check_register(register, threats_path, as_of, bases=(), model_path=None):
     for entry in mitigations:
         if isinstance(entry, dict) and entry.get("id"):
             live_mitigations.setdefault(str(entry["id"]), entry)
+
+    scale = None
+    if vectors:
+        scale, problems = resolve_scale(register)
+        for code, message in problems:
+            report.add(BLOCKING, code, "<file>", message, field="risk_scale")
 
     # --- dispositions -----------------------------------------------------
     state_of = {}
@@ -546,6 +895,8 @@ def check_register(register, threats_path, as_of, bases=(), model_path=None):
                 report.add(BLOCKING, "MISSING_REASON", where,
                            f"{state} for no stated reason; a decision nobody can disagree "
                            "with is not a decision", field="disposition.reason")
+
+        check_risk(report, where, state, disposition.get("risk"), scale)
 
         if state == "deferred":
             if not answered(disposition, "until"):

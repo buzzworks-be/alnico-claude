@@ -169,6 +169,14 @@ the file, then show the diff. That is the whole update mechanism, and it works
 only because somebody is present — which is why the skill does it before
 anything else.
 
+**An update from before 0.20.0 brings risk ratings with it**, and the new check
+reports every register without a named `risk_scale`, and every vector without
+a rating, as blocking. Before rewriting the file, run the plugin's own matrix
+check over each register. If it reports `NO_SCALE` or `UNRATED`, say so and
+offer to run [`/vector:matrix`](../matrix/SKILL.md) first. The copy already in
+the repository ignores the rating fields, so rating first and updating second
+keeps CI green throughout; the other order turns it red until somebody rates.
+
 ## What the check reports
 
 - **Stale** — a referenced requirement has changed since the mitigation was

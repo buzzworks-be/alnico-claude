@@ -71,7 +71,7 @@ CHAIN = (
     ("1", "/vector:dfd", "interview until the model is complete", "ctm/<slug>.dfd.yaml"),
     ("2", "vector:enumerate", "a verdict for every applicable pairing", "ctm/<slug>.threats.yaml"),
     ("3", "/vector:promote", "findings become vectors, or dismissals", "ctm/<slug>.vectors.yaml"),
-    ("4", "/vector:matrix", "every vector gets a disposition and an owner", "the register"),
+    ("4", "/vector:matrix", "every vector decided, owned and rated", "the register"),
     ("5", "/vector:review", "the model read against design documents", "the model"),
     ("6", "/vector:intake", "a scanner finding meets the register", "the register"),
     ("", "/vector:wire", "the chain checked in CI, where no session exists", "a workflow"),

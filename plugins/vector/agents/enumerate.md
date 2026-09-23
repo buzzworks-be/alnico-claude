@@ -106,6 +106,7 @@ nothing can — so say it in the document rather than letting a green check impl
 otherwise. The rendered output states this limit, and you should state it again
 when you hand the work back.
 
-Do not score, rank or rate. STRIDE and LINDDUN classify threats; neither
-supplies a likelihood or impact model, and a severity attached without one is
-decoration that invites false confidence.
+Do not score, rank or rate. A severity attached by the agent that walked the
+grid measures nothing and invites false confidence. Rating happens later, at
+the matrix, where a person gives each vector a likelihood and an impact on a
+declared scale, with a reason for each.

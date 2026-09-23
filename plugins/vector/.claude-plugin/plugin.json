@@ -1,7 +1,7 @@
 {
   "name": "vector",
   "description": "Vector is a Continuous Threat Modeling mechanism using STRIDE for security and LINDDUN for privacy",
-  "version": "0.19.1",
+  "version": "0.20.0",
   "license": "Apache-2.0",
   "author": {
     "name": "Jan Van Coppenolle"

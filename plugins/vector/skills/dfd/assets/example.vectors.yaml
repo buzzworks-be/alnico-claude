@@ -20,6 +20,7 @@
 
 threats: example.threats.yaml
 threats_digest: sha256:cf8b4556a633e7f0795cf81dab375d0f83b340b2ba7a34cf5cc65eb6945e2f7c
+risk_scale: vector-5x5-v1
 
 vectors:
 
@@ -55,6 +56,19 @@ vectors:
       that was made badly.
     disposition:
       state: deferred
+      risk:
+        inherent:
+          likelihood: 3
+          likelihood_reason: >-
+            A motivated outsider who knows a guest's email and can produce a document
+            that a reviewer, with no account to compare it against, will accept.
+            Targeted, but it needs no specialist tooling.
+          impact: 4
+          impact_on: both
+          impact_reason: >-
+            A complete export of one person's orders, addresses and email delivered to
+            a stranger: serious harm to that person, and a notifiable breach.
+          level: high
       owner: Ines Verhaeghe, privacy lead
       reason: >-
         The control is designed and written into the specification, and it is
@@ -92,6 +106,18 @@ vectors:
       an absence rather than a weak control.
     disposition:
       state: accepted
+      risk:
+        inherent:
+          likelihood: 5
+          likelihood_reason: >-
+            No attacker is involved. Every gift order creates a recipient with no
+            route into the rights process, in normal operation.
+          impact: 2
+          impact_on: data_subjects
+          impact_reason: >-
+            An address held for at most ninety days that its subject cannot learn of
+            or remove. The harm is real, and retention bounds it to a short one.
+          level: high
       owner: Ines Verhaeghe, privacy lead
       reason: >-
         A recipient's address is the shopper's disclosure, held for ninety days
@@ -127,6 +153,30 @@ vectors:
       the model says there is none.
     disposition:
       state: mitigated
+      risk:
+        inherent:
+          likelihood: 4
+          likelihood_reason: >-
+            An ordinary outsider with a script and no account can reach submit-order,
+            and the model records nothing in front of it.
+          impact: 3
+          impact_on: organisation
+          impact_reason: >-
+            Checkout unavailable to paying shoppers while it lasts, and database and
+            Stripe cost for every request. Customers notice, and it costs to put
+            right.
+          level: high
+        residual:
+          likelihood: 2
+          likelihood_reason: >-
+            Sixty orders per source address per hour at the gateway means a flood
+            needs many sources at once, which is a targeted effort.
+          impact: 3
+          impact_on: organisation
+          impact_reason: >-
+            If it does get through, the effect is the one the rate limit exists to
+            prevent, at the same size.
+          level: medium
       decided: 2026-09-13
       mitigations: [MIT-0002]
 
@@ -159,6 +209,19 @@ vectors:
       mitigation.
     disposition:
       state: deferred
+      risk:
+        inherent:
+          likelihood: 5
+          likelihood_reason: >-
+            Every support lookup writes an address into the log, and every erasure
+            leaves it there. This is normal operation.
+          impact: 3
+          impact_on: organisation
+          impact_reason: >-
+            An erasure claim a regulator would be shown to be untrue. For the shopper,
+            the log is readable only by the security team, which is why the
+            organisation's column sets the level.
+          level: high
       owner: Ines Verhaeghe, privacy lead
       reason: >-
         The decision the vector asked for has been made — audit events will
@@ -197,6 +260,20 @@ vectors:
       to get the question answered.
     disposition:
       state: deferred
+      risk:
+        inherent:
+          likelihood: 3
+          likelihood_reason: >-
+            Nobody present could say whether the purge reaches the snapshots. If it
+            does not, it happens every night, and possible is the level anybody here
+            would defend.
+          impact: 3
+          impact_on: organisation
+          impact_reason: >-
+            A stated retention false by up to thirty-five days for every address,
+            which is a storage-limitation commitment a regulator would be shown. For
+            the shopper, the snapshot sits inside the same encrypted store.
+          level: medium
       owner: Ruben De Smet, platform lead
       reason: >-
         Nothing can be mitigated or accepted until the question is answered:
@@ -229,6 +306,18 @@ vectors:
       guard fails, not about how likely it is to.
     disposition:
       state: accepted
+      risk:
+        inherent:
+          likelihood: 1
+          likelihood_reason: >-
+            Needs the AWS account or the KMS key, which nobody in the model has,
+            behind break-glass through PAM.
+          impact: 5
+          impact_on: both
+          impact_reason: >-
+            Every shopper's orders, addresses and email, with thirty-five days of
+            history that includes addresses the purge already removed.
+          level: medium
       owner: Ruben De Smet, platform lead
       reason: >-
         Snapshots under a separate key in a separate account is a platform
@@ -260,6 +349,30 @@ vectors:
       has a two-person rule for a comparable read.
     disposition:
       state: mitigated
+      risk:
+        inherent:
+          likelihood: 3
+          likelihood_reason: >-
+            Any agent can do it in the ordinary course of their work. It needs no
+            skill and no intent beyond curiosity.
+          impact: 3
+          impact_on: data_subjects
+          impact_reason: >-
+            A shopper's delivery address read by somebody with no reason to. That is
+            distress for the few it happens to, and for someone avoiding a person,
+            hard to undo.
+          level: medium
+        residual:
+          likelihood: 1
+          likelihood_reason: >-
+            The console now unmasks only against a ticket the shopper opened, checked
+            on the server, and a monthly sample reviews the lookups. Both would have
+            to fail at once.
+          impact: 3
+          impact_on: data_subjects
+          impact_reason: >-
+            An address that does get read is exactly as exposed as before.
+          level: low
       decided: 2026-09-13
       mitigations: [MIT-0004, MIT-0005]
 
@@ -286,6 +399,30 @@ vectors:
       to find out.
     disposition:
       state: mitigated
+      risk:
+        inherent:
+          likelihood: 4
+          likelihood_reason: >-
+            A lost, stolen or photographed laptop is an ordinary accident, and the
+            model records nothing about what is on it.
+          impact: 4
+          impact_on: both
+          impact_reason: >-
+            Every shopper an agent has looked up, on a device outside the
+            organisation's control. That is a notifiable breach, and serious for the
+            people on it.
+          level: high
+        residual:
+          likelihood: 2
+          likelihood_reason: >-
+            A lost device is now encrypted, locked within five minutes and unable to
+            export. Reading it needs a targeted effort against one that is still
+            unlocked.
+          impact: 4
+          impact_on: both
+          impact_reason: >-
+            If that effort succeeds, the data on the device is the same.
+          level: medium
       decided: 2026-09-13
       mitigations: [MIT-0006]
 
@@ -312,6 +449,19 @@ vectors:
       delete on schedule, regardless of how verification is strengthened.
     disposition:
       state: deferred
+      risk:
+        inherent:
+          likelihood: 5
+          likelihood_reason: >-
+            Every guest who verifies sends a document, and nothing deletes it. This is
+            normal operation.
+          impact: 4
+          impact_on: data_subjects
+          impact_reason: >-
+            Identity documents, among the most sensitive data the system touches, held
+            with no classification, no retention and no known place. If exposed, that
+            is serious harm to the person.
+          level: critical
       owner: Ines Verhaeghe, privacy lead
       reason: >-
         The document is now a modelled data item with a retention and a
@@ -344,6 +494,29 @@ vectors:
       model has no way to represent the thing this vector is about.
     disposition:
       state: mitigated
+      risk:
+        inherent:
+          likelihood: 5
+          likelihood_reason: >-
+            Every shopper is asked for an address with nothing telling them why. This
+            is normal operation.
+          impact: 2
+          impact_on: data_subjects
+          impact_reason: >-
+            Collection that is likely lawful, done without telling the person it is
+            about: a transparency failure rather than a loss.
+          level: high
+        residual:
+          likelihood: 2
+          likelihood_reason: >-
+            A notice is linked from the step that first asks for an address. A shopper
+            can still skip it, but the information now exists where they meet the
+            collection.
+          impact: 2
+          impact_on: data_subjects
+          impact_reason: >-
+            For a shopper who does not read it, the harm is the same.
+          level: low
       decided: 2026-09-13
       mitigations: [MIT-0008]
 
@@ -370,6 +543,28 @@ vectors:
       tracked rather than dismissed as theoretical.
     disposition:
       state: mitigated
+      risk:
+        inherent:
+          likelihood: 4
+          likelihood_reason: >-
+            A new field, a nested object or a captured variable defeats pattern
+            scrubbing without anybody intending it. That is an accident in normal use.
+          impact: 3
+          impact_on: both
+          impact_reason: >-
+            Addresses and email in a third party's tracker, under its retention and
+            access, with nothing that would notice.
+          level: high
+        residual:
+          likelihood: 2
+          likelihood_reason: >-
+            A known shape reaching the tracker now fails the build. Only a shape the
+            test does not hold gets through, and that needs a change nobody tested.
+          impact: 3
+          impact_on: both
+          impact_reason: >-
+            What does get through lands in the same place.
+          level: medium
       decided: 2026-09-13
       mitigations: [MIT-0009]
 
@@ -397,6 +592,18 @@ vectors:
       call and the money, and that is what the mitigation adds.
     disposition:
       state: deferred
+      risk:
+        inherent:
+          likelihood: 4
+          likelihood_reason: >-
+            An ordinary outsider writes a delivery note and opens a ticket. Injection
+            techniques are public.
+          impact: 3
+          impact_on: organisation
+          impact_reason: >-
+            A refund of up to fifty euros per order, repeatable once per order placed.
+            The cost is real and bounded per order, and every call is logged.
+          level: high
       owner: Maya Okonkwo, support engineering lead
       reason: >-
         The proposal flow is specified and is a product change rather than a
@@ -433,6 +640,28 @@ vectors:
       no more.
     disposition:
       state: mitigated
+      risk:
+        inherent:
+          likelihood: 3
+          likelihood_reason: >-
+            Any agent can ask the assistant, in the ordinary course of their work, for
+            an answer the console would have masked.
+          impact: 3
+          impact_on: data_subjects
+          impact_reason: >-
+            The same exposure as reading the address directly, and kept for two years
+            in the audit log as part of the prompt.
+          level: medium
+        residual:
+          likelihood: 1
+          likelihood_reason: >-
+            The assistant is sent the masked form unless the console has already
+            unmasked it, so this needs the ticket rule itself to fail first.
+          impact: 3
+          impact_on: data_subjects
+          impact_reason: >-
+            An address that does get through is exposed exactly as before.
+          level: low
       decided: 2026-09-13
       mitigations: [MIT-0011]
 
@@ -460,6 +689,28 @@ vectors:
       itself, because a notice nobody opens is not what makes this one visible.
     disposition:
       state: mitigated
+      risk:
+        inherent:
+          likelihood: 5
+          likelihood_reason: >-
+            Every assisted reply goes out under an agent's name with nothing saying a
+            model wrote it. This is normal operation.
+          impact: 2
+          impact_on: data_subjects
+          impact_reason: >-
+            A shopper who cannot know a model read their message, and so cannot know
+            to doubt what it wrote.
+          level: high
+        residual:
+          likelihood: 4
+          likelihood_reason: >-
+            The notice now says a model is used, but a reply still carries no sign of
+            it. Most shoppers reading one will not know.
+          impact: 2
+          impact_on: data_subjects
+          impact_reason: >-
+            Unchanged for the shopper who never opens the notice.
+          level: medium
       decided: 2026-09-13
       mitigations: [MIT-0008]
 

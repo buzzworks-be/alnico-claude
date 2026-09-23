@@ -178,5 +178,6 @@ walking a grid — and it means a register can be complete and wrong. Say so
 when you hand the document back, and let the rendered limits say it again.
 
 Do not score, rank or rate. Promotion says *this is real and we are tracking
-it*; what to do about it, and in what order, is the matrix's question, where
-the cost of acting is also known.
+it*; how bad it is, what to do about it and in what order are the matrix's
+questions, where a person rates each vector on a declared scale and the cost of
+acting is also known.

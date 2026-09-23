@@ -104,6 +104,10 @@ def guidance_for(register, as_of):
         "undispositioned_by_element": undispositioned,
         "deferrals": sorted(deferrals, key=lambda d: d["until"]),
         "next_id": f"MIT-{(max(numbers) + 1 if numbers else 1):04d}",
+        # The band the scale gives each rating it can read. The skill writes
+        # `level` from here and nowhere else, so the one value in a rating a
+        # person does not choose is never chosen.
+        "ratings": traceability.rating_lookups(register),
     }
 
 
@@ -116,6 +120,27 @@ def check(register, threats_path, as_of, bases=(), model_path=None):
     report = traceability.check_register(register, threats_path, as_of, bases=bases,
                                          model_path=model_path)
     return report, guidance_for(register, as_of)
+
+
+
+def show_scale(register):
+    """The scale in force, in its own words — what the interview shows before
+    it asks, so the definitions a person rates against are the ones the check
+    will hold them to rather than a paraphrase of them."""
+    scale, problems = traceability.resolve_scale(register)
+    if scale is not None:
+        print(traceability.scale_markdown(scale), end="")
+        return 0
+    codes = {code for code, _ in problems}
+    if codes == {"NO_SCALE"}:
+        default = traceability.DEFAULT_SCALES["vector-5x5-v1"]
+        print("This register names no scale yet. Unless the organisation has a risk "
+              "matrix of its own, it will be:\n")
+        print(traceability.scale_markdown(default), end="")
+        return 0
+    for _, message in problems:
+        print(message, file=sys.stderr)
+    return 1
 
 
 def load(path, what):
@@ -132,6 +157,8 @@ def main(argv=None):
     parser.add_argument("--root", metavar="DIR",
                         help="the repository root specified_in paths are relative to "
                              "(default: the nearest .git above the register)")
+    parser.add_argument("--scale", action="store_true",
+                        help="print the risk scale this register is rated on, and stop")
     args = parser.parse_args(argv)
 
     as_of = datetime.date.today()
@@ -155,6 +182,9 @@ def main(argv=None):
             print(exit_.code[1], file=sys.stderr)
             return exit_.code[0]
         raise
+
+    if args.scale:
+        return show_scale(register)
 
     bases = (here, args.root or repository_root(here))
     report, guidance = check(register, threats_path, as_of, bases=bases)
@@ -192,9 +222,10 @@ def main(argv=None):
               f"Next id: {guidance['next_id']}.")
         return 1
     if report.advisory:
-        print(f"Every vector is dispositioned. {len(report.advisory)} advisory item(s).")
+        print(f"Every vector is dispositioned and rated. {len(report.advisory)} advisory "
+              "item(s).")
     else:
-        print("Every vector is dispositioned.")
+        print("Every vector is dispositioned and rated.")
     return 0
 
 

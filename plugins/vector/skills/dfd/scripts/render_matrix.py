@@ -29,6 +29,14 @@ except ImportError:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SECTIONS = ("actors", "processes", "stores", "flows")
+
+# GitHub renders no cell colour, so a band is its word with a square before it,
+# assigned least severe first by position. The word carries the meaning; the
+# square is for finding it.
+SQUARES = ("🟩", "🟨", "🟧", "🟥", "🟪")
+HARMED = {"organisation": "for the organisation",
+          "data_subjects": "for the people the data is about",
+          "both": "for the organisation and the people the data is about"}
 FRAMEWORKS = {"stride": "STRIDE", "linddun": "LINDDUN"}
 
 
@@ -189,6 +197,39 @@ def render(register, model, report, as_of, open_only=False, links=None):
               for s in ("mitigated", "accepted", "deferred")}
     without = [v for v in vectors if state(v) and not disposition(v).get("mitigations")]
 
+    # --- ratings, per ADR-0014 ---------------------------------------------
+    # Levels and a band, looked up from the scale the register names; never a
+    # product, never a total. A rating the scale cannot place is shown as
+    # unrated rather than guessed at — the check has already said why.
+    traceability = sibling("check_traceability")
+    scale, _ = traceability.resolve_scale(register)
+    bands = list(scale["bands"]) if scale else []
+
+    def rating(vector, which):
+        risk = disposition(vector).get("risk")
+        entry = risk.get(which) if isinstance(risk, dict) else None
+        if scale is None or not isinstance(entry, dict):
+            return None
+        likelihood = traceability.as_level(entry.get("likelihood"))
+        impact = traceability.as_level(entry.get("impact"))
+        if likelihood is None or impact is None:
+            return None
+        return {"likelihood": likelihood, "impact": impact, "entry": entry,
+                "band": traceability.look_up(scale, likelihood, impact)}
+
+    def now(vector):
+        return ((state(vector) == "mitigated" and rating(vector, "residual"))
+                or rating(vector, "inherent"))
+
+    def rank(found):
+        return bands.index(found["band"]) if found else -1
+
+    def shown_risk(found):
+        if not found:
+            return "unrated"
+        return (f"{SQUARES[rank(found)]} {found['band']} "
+                f"`L{found['likelihood']} · I{found['impact']}`")
+
     lines = [f"# Threat matrix — {model.get('system', {}).get('name', 'unnamed')}",
              "",
              f"Generated from the register beside "
@@ -209,13 +250,53 @@ def render(register, model, report, as_of, open_only=False, links=None):
                   f"| Deferred | {counts['deferred']} |",
                   f"| **Undecided** | **{len(undecided)}** |" if undecided
                   else f"| Undecided | {len(undecided)} |",
-                  f"| Carrying no mitigation | {len(without)} |",
-                  ""]
+                  f"| Carrying no mitigation | {len(without)} |"]
+        if scale:
+            for index in reversed(range(len(bands))):
+                count = sum(1 for v in vectors if rank(now(v)) == index)
+                lines.append(f"| Now {SQUARES[index]} {bands[index]} | {count} |")
+            unrated = sum(1 for v in vectors if not rating(v, "inherent"))
+            if unrated:
+                lines.append(f"| **Not rated** | **{unrated}** |")
+        lines.append("")
         if undecided:
             lines += ["Undecided: "
                       + ", ".join(linked(f"**{v.get('id')}**", links.vector(v.get("id")))
                                   for v in undecided)
                       + ". The matrix is not finished while one remains.", ""]
+
+    # --- 1b. where the risk sits --------------------------------------------
+    if vectors and scale and not open_only:
+        lines += ["## Where the risk sits", "",
+                  "Every vector placed by its likelihood and impact. **Now** places a "
+                  "mitigated vector by the risk its control leaves; **with nothing done** "
+                  "places every vector by its inherent rating. The difference between the "
+                  "two is what the controls moved.", ""]
+        for title, place in (("Now", now),
+                             ("With nothing done", lambda v: rating(v, "inherent"))):
+            cells = {}
+            for vector in vectors:
+                found = place(vector)
+                if found:
+                    cells.setdefault((found["likelihood"], found["impact"]), []).append(
+                        linked(str(vector.get("id")), links.vector(vector.get("id"))))
+            lines += [f"**{title}**", "",
+                      "| Likelihood ↓ · Impact → | 1 | 2 | 3 | 4 | 5 |",
+                      "| :--- | :--- | :--- | :--- | :--- | :--- |"]
+            for likelihood in reversed(traceability.LEVELS):
+                row = []
+                for impact in traceability.LEVELS:
+                    band = traceability.look_up(scale, likelihood, impact)
+                    here = cells.get((likelihood, impact))
+                    text = f"{SQUARES[bands.index(band)]} {band}"
+                    row.append(f"{text} · {', '.join(here)}" if here else text)
+                lines.append(f"| **{likelihood}** | " + " | ".join(row) + " |")
+            lines.append("")
+        missing = [v for v in vectors if not rating(v, "inherent")]
+        if missing:
+            lines += ["Not rated, and so on neither grid: "
+                      + ", ".join(linked(f"**{v.get('id')}**", links.vector(v.get("id")))
+                                  for v in missing) + ".", ""]
 
     # --- 2. deferrals -------------------------------------------------------
     deferred = []
@@ -232,8 +313,8 @@ def render(register, model, report, as_of, open_only=False, links=None):
         lines += ["What has been decided and not done, with who owns it and until when. "
                   "A deferral past its date fails the check; a date that has been moved "
                   "shows every date it has had.", "",
-                  "| Vector | Until | Owner | Mitigation | Reason |",
-                  "| :--- | :--- | :--- | :--- | :--- |"]
+                  "| Vector | Until | Risk | Owner | Mitigation | Reason |",
+                  "| :--- | :--- | :--- | :--- | :--- | :--- |"]
         for _, vector in deferred:
             d = disposition(vector)
             until = date(d.get("until")) if d.get("until") is not None else "—"
@@ -249,7 +330,7 @@ def render(register, model, report, as_of, open_only=False, links=None):
             ident = vector.get("id")
             shown_id = linked(f"**{ident}**", links.vector(ident))
             lines.append(f"| {shown_id} {cell(vector.get('title'))} | {until} | "
-                         f"{cell(d.get('owner'))} | "
+                         f"{shown_risk(now(vector))} | {cell(d.get('owner'))} | "
                          f"{ids(d.get('mitigations'), mitigation_at)} | "
                          f"{cell(d.get('reason'))} |")
         lines.append("")
@@ -262,9 +343,17 @@ def render(register, model, report, as_of, open_only=False, links=None):
     if not vectors:
         lines += ["None.", ""]
     else:
-        lines += ["| Vector | Element | Category | Disposition | Owner | Mitigations |",
-                  "| :--- | :--- | :--- | :--- | :--- | :--- |"]
-        for vector in in_order(vectors, model):
+        lines += ["Worst first: by the risk as it stands, then by the risk with nothing "
+                  "done, then in the model's order.", "",
+                  "| Vector | Element | Category | Risk now | Inherent | Disposition | Owner "
+                  "| Mitigations |",
+                  "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"]
+        ordered = in_order(vectors, model)
+        position = {id(v): i for i, v in enumerate(ordered)}
+        worst_first = sorted(ordered, key=lambda v: (-rank(now(v)),
+                                                     -rank(rating(v, "inherent")),
+                                                     position[id(v)]))
+        for vector in worst_first:
             d = disposition(vector)
             s = state(vector)
             display, _ = name_of(model, vector.get("element"))
@@ -280,7 +369,9 @@ def render(register, model, report, as_of, open_only=False, links=None):
             shown_id = linked(f"**{ident}**", links.vector(ident))
             lines.append(f"| {shown_id} {cell(vector.get('title'))} | "
                          f"`{vector.get('element')}` {cell(display)} | "
-                         f"{label(vector.get('category'))} | {shown} | "
+                         f"{label(vector.get('category'))} | "
+                         f"{shown_risk(now(vector))} | "
+                         f"{shown_risk(rating(vector, 'inherent'))} | {shown} | "
                          f"{cell(d.get('owner'))} | "
                          f"{ids(d.get('mitigations'), mitigation_at)} |")
         lines.append("")
@@ -321,6 +412,17 @@ def render(register, model, report, as_of, open_only=False, links=None):
             lines += [f"### {vector.get('id')} — {cell(vector.get('title'))}", "",
                       f"Accepted by **{cell(d.get('owner'))}** on {date(d.get('decided'))}.", "",
                       cell(d.get("reason")), ""]
+            found = rating(vector, "inherent")
+            if found:
+                entry = found["entry"]
+                likely = scale["likelihood"][found["likelihood"] - 1]["name"]
+                harm = scale["impact"][found["impact"] - 1]["name"]
+                lines += [f"**Risk accepted: {SQUARES[rank(found)]} {found['band']}.** "
+                          f"Likelihood {found['likelihood']}, *{cell(likely)}*: "
+                          f"{cell(entry.get('likelihood_reason'))} "
+                          f"Impact {found['impact']}, *{cell(harm)}*, "
+                          f"{HARMED.get(entry.get('impact_on'), 'for nobody named')}: "
+                          f"{cell(entry.get('impact_reason'))}", ""]
             for previous in d.get("history") or []:
                 if isinstance(previous, dict):
                     until = f", until {date(previous['until'])}" if previous.get("until") else ""
@@ -424,9 +526,23 @@ def render(register, model, report, as_of, open_only=False, links=None):
         "",
     ]
 
+    # --- 7b. the scale -------------------------------------------------------
+    lines += ["## Rating scale", ""]
+    if scale:
+        lines += ["The scale every level above was given on. A level means what its "
+                  "definition says, and nothing else.", "",
+                  traceability.scale_markdown(scale)]
+    else:
+        lines += ["No usable scale is named, so no level above can be read. The check "
+                  "says why.", ""]
+
     # --- 8. limits ----------------------------------------------------------
     lines += [
         "## Limits", "",
+        "**A rating is a judgement.** The check requires every level to have a reason "
+        "and the risk to be the scale's cell for the two levels beside it. It cannot "
+        "tell a careful rating from a hurried one; the reasons can, to a reader.",
+        "",
         "**A disposition is a claim, not a fact.** \"Mitigated\" means somebody said so "
         "and named a control. The check requires the control to have a place — a "
         "specification, an implementation — and stops there; whether the code honours "
