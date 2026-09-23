@@ -47,8 +47,16 @@ asked, which is exactly why a script and not a person decides which get asked.
 3. **Write the skeleton immediately and run the check.** Header,
    `model_digest`, `carried_forward`, and `verdicts: []`. An empty list is
    valid; it makes the remaining work visible from the first turn rather than
-   estimated. Compute the digest from the model's bytes:
-   `sha256:$(sha256sum ctm/<slug>.dfd.yaml | cut -d' ' -f1)`.
+   estimated. Take the digest from the check, never from `sha256sum`: it
+   covers what the model says and leaves out the record of design reviews, so
+   a reading that changed nothing does not make this enumeration stale.
+   `python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_coverage.py --model-digest ctm/<slug>.dfd.yaml`
+
+   If the project has a vendored check — `.vector/check_traceability.py` — whose
+   `VENDORED_FROM` is older than `0.21.0`, say before you finish that its CI
+   will read this digest as stale until the copy is updated with
+   [`/vector:wire`](../skills/wire/SKILL.md). The older copy digests the raw
+   bytes and cannot read this form.
 4. **Work one element at a time.** One element's categories are one coherent
    thought. Hopping between a store, a flow and an actor forces a context
    switch per verdict and produces shallower reasoning.

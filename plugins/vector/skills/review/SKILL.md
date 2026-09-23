@@ -138,10 +138,17 @@ python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_reviews.py ctm/<slug>.d
 
 ## When the model changes
 
-Say what went stale, and to whom. A changed model breaks `model_digest`, which
-makes the enumeration stale, which makes the register stale, which makes the
-matrix stale. Nothing here repairs that, and nothing should: each step has its
-own judgement in it.
+**Recording a reading changes nothing downstream.** `system.reviewed`,
+`system.design_sources` and `system.review_cycle` are left out of the model's
+digest, so a review whose every entry is `impact: none` leaves the enumeration,
+the register and the matrix exactly as current as they were. Recording a
+review is never the thing that turns a build red.
+
+A review that is `modelled` is different, because it edited what the model
+describes. Say what went stale, and to whom. That edit breaks `model_digest`,
+which makes the enumeration stale, which makes the register stale, which makes
+the matrix stale. Nothing here repairs that, and nothing should: each step has
+its own judgement in it.
 
 ```
 /vector:enumerate → the enumeration     (a new element has threats nobody has judged)

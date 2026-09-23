@@ -19,7 +19,7 @@ here, so the documents stay the one place the taxonomy is stated.
 """
 
 import argparse
-import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -145,9 +145,18 @@ class Report:
         return [g for g in self.gaps if g["severity"] == ADVISORY]
 
 
-def digest(path):
-    with open(path, "rb") as handle:
-        return "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+def sibling(name):
+    """A sibling script, imported rather than reimplemented. What a model's
+    digest covers is decided once, in the check CI vendors, so the enumeration
+    and the build can never disagree about whether a model moved."""
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{name}.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+traceability = sibling("check_traceability")
 
 
 def personal(item, data_index):
@@ -224,9 +233,10 @@ def check(enumeration, model, model_path, nodes=None):
                        f"{field} is not carried forward from the model; "
                        "an empty list is an answer, an absent key is not")
 
-    if enumeration.get("model_digest") and enumeration["model_digest"] != digest(model_path):
+    if (enumeration.get("model_digest")
+            and not traceability.model_is_current(enumeration["model_digest"], model_path)):
         report.add(BLOCKING, "STALE_MODEL", "<file>",
-                   "model_digest does not match the model's current bytes; "
+                   "model_digest does not match what the model now says; "
                    "the enumeration describes a model that has since changed")
 
     analysis = enumeration.get("analysis") or []
@@ -364,9 +374,22 @@ def load(path, what):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("enumeration", help="path to the .threats.yaml enumeration")
+    parser.add_argument("enumeration", nargs="?",
+                        help="path to the .threats.yaml enumeration")
     parser.add_argument("--json", action="store_true", help="emit gaps as JSON")
+    parser.add_argument("--model-digest", metavar="MODEL",
+                        help="print the digest to record as model_digest for this model, "
+                             "and stop")
     args = parser.parse_args(argv)
+
+    if args.model_digest:
+        if not os.path.exists(args.model_digest):
+            print(f"no such model: {args.model_digest}", file=sys.stderr)
+            return 2
+        print(traceability.model_digest(args.model_digest))
+        return 0
+    if not args.enumeration:
+        parser.error("an enumeration is required, unless --model-digest is given")
 
     try:
         enumeration = load(args.enumeration, "enumeration")

@@ -11,6 +11,47 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.21.0] — 2026-09-23
+
+### Fixed
+
+- **Recording a design review no longer makes the whole chain stale.**
+  [`/vector:review`](skills/review/SKILL.md) writes what it read into the
+  model, and the enumeration pinned the model by its raw bytes. So every
+  review failed the enumeration — and the register and matrix beneath it —
+  even when every document was `impact: none` and nothing had moved. The
+  repair was a full re-enumeration to reproduce the same verdicts, on every
+  review.
+
+  The model's digest now covers what the model says and leaves out
+  `system.reviewed`, `system.design_sources` and `system.review_cycle`. A
+  review that records readings changes nothing downstream. A review that is
+  `impact: modelled` edited the model itself, and still makes the chain stale,
+  as it should. A comment or a reflowed paragraph no longer counts as a change
+  either.
+
+### Changed
+
+- **The digest is no longer `sha256sum` of the file.** Record it from
+  `check_coverage.py --model-digest ctm/<slug>.dfd.yaml`; the enumerate agent
+  and [`/vector:intake`](skills/intake/SKILL.md) now do. Your existing
+  enumerations stay current: a raw-bytes digest is still accepted, since a
+  raw match means the file is unchanged.
+
+- **If a review already made your enumeration stale**, the old digest cannot
+  tell a reading from an edit, so it needs one re-stamp. If `git diff` on the
+  model since the enumeration shows only `system.reviewed`,
+  `system.design_sources` or `system.review_cycle`, replace `model_digest` with
+  the output of `--model-digest`. Anything else changed means re-run the
+  enumeration.
+
+- **Update your vendored check before re-running anything that writes a
+  digest.** The copy in your repository from before 0.21.0 digests raw bytes
+  and reads the new form as stale. The new copy reads both. So run
+  [`/vector:wire`](skills/wire/SKILL.md) to update it first — the opposite
+  order to 0.20.0's — and the enumerate agent will say so if it finds an older
+  copy.
+
 ## [0.20.0] — 2026-09-23
 
 ### Added
@@ -757,6 +798,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.21.0]: https://github.com/buzzworks-be/vector/commit/d68bc64
 [0.20.0]: https://github.com/buzzworks-be/vector/commit/65391db
 [0.19.1]: https://github.com/buzzworks-be/vector/commit/d9dc50b
 [0.19.0]: https://github.com/buzzworks-be/vector/commit/bb5f877

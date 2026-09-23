@@ -177,6 +177,14 @@ offer to run [`/vector:matrix`](../matrix/SKILL.md) first. The copy already in
 the repository ignores the rating fields, so rating first and updating second
 keeps CI green throughout; the other order turns it red until somebody rates.
 
+**An update from before 0.21.0 goes the other way round.** From 0.21.0 a
+model's digest covers what the model says and leaves out its record of design
+reviews, and the plugin writes that form. An older vendored copy digests the
+raw bytes and reads the new form as stale. The new copy accepts both. So update
+the vendored copy **first**, and only then re-run anything that writes a
+`model_digest` — the enumeration, or an answer from
+[`/vector:intake`](../intake/SKILL.md).
+
 ## What the check reports
 
 - **Stale** — a referenced requirement has changed since the mitigation was

@@ -109,6 +109,62 @@ def digest(path):
         return "sha256:" + hashlib.sha256(handle.read()).hexdigest()
 
 
+# The parts of a model that record somebody reading the design, rather than
+# anything the design describes. /vector:review writes them, and they stay out
+# of the model's digest: per ADR-0008, *unreviewed* and *stale* are different
+# words, and a reading that moved nothing must not make everything derived from
+# the model stale. A review that does move something edits a field outside
+# these three, and the digest moves with it.
+REVIEW_RECORD = ("reviewed", "design_sources", "review_cycle")
+
+
+def _canonical(value):
+    """Keys as text, recursively, so any mapping YAML can produce sorts."""
+    if isinstance(value, dict):
+        return {str(key): _canonical(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_canonical(item) for item in value]
+    return value
+
+
+def model_digest(path):
+    """What a model says, digested — with its review record left out.
+
+    Parsed and re-serialised with sorted keys, so a comment or a reflowed
+    paragraph moves nothing either; only content does. Every other artefact is
+    digested by its bytes, because nothing else records readings of itself.
+
+    A file that does not parse falls back to its bytes, which match no
+    canonical digest and so read as changed; the validator says why.
+    """
+    try:
+        with open(path) as handle:
+            model = yaml.safe_load(handle)
+    except yaml.YAMLError:
+        return digest(path)
+    if not isinstance(model, dict):
+        return digest(path)
+    model = dict(model)
+    if isinstance(model.get("system"), dict):
+        model["system"] = {key: item for key, item in model["system"].items()
+                           if key not in REVIEW_RECORD}
+    text = json.dumps(_canonical(model), sort_keys=True, ensure_ascii=False,
+                      separators=(",", ":"), default=str)
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def model_is_current(stored, path):
+    """True when a stored model digest still describes the model at path.
+
+    Either form counts: the content digest this check writes, or the raw-bytes
+    digest every release before 0.21.0 wrote. A raw match means the file is
+    byte-identical, so accepting it can never pass a model that moved — which
+    is why it needs no expiry.
+    """
+    stored = str(stored or "")
+    return stored in (model_digest(path), digest(path))
+
+
 # The line a renderer stamps on the document it writes, and the only thing that
 # makes a rendered view checkable from a repository with no plugin in it. Both
 # halves live here rather than in the renderers, because two spellings of one
@@ -1100,7 +1156,8 @@ def check_answer_records(register, report, state_of, live_vectors, model_path=No
                 report.add(BLOCKING, "MISSING_FIELD", where,
                            f"answers {answer!r} but records no model_digest; the argument was "
                            "made against a model, so say which one", field="model_digest")
-            elif model_path and os.path.exists(model_path) and stored != digest(model_path):
+            elif (model_path and os.path.exists(model_path)
+                  and not model_is_current(stored, model_path)):
                 report.add(ADVISORY, "LAPSED_ANSWER", where,
                            "argued against a model that has since changed; read the change, "
                            "then re-argue it or record the new digest to say you have",
@@ -1130,10 +1187,10 @@ def check_currency(register, report, bases, enumeration=None, model_path=None,
 
     if enumeration is not None and model_path is not None:
         stored = enumeration.get("model_digest")
-        if stored and os.path.exists(model_path) and stored != digest(model_path):
+        if stored and os.path.exists(model_path) and not model_is_current(stored, model_path):
             where = f"<enumeration {os.path.basename(threats_path or '')}>"
             report.add(BLOCKING, "STALE_MODEL", where,
-                       "model_digest does not match the model's current bytes; the enumeration "
+                       "model_digest does not match what the model now says; the enumeration "
                        "was run against a model that has since changed, so re-run it",
                        field="model_digest")
 

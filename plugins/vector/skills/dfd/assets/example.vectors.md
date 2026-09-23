@@ -236,4 +236,4 @@ None.
 
 **A vector is a decision to track, not a decision to act.** What is being done about each is the matrix, rendered separately from the same register.
 
-<!-- vector: rendered from example.vectors.yaml sha256:ac9a8635625b08c5f9bf54307ca580a282472ba558e00be2c64388d69de7532f -->
+<!-- vector: rendered from example.vectors.yaml sha256:86c909e5cb68329449bcb5736021775e272a188577a2efa52595320d64fd188f -->

@@ -526,4 +526,4 @@ One line each. The reasons are the point: a dismissal a reader cannot disagree w
 
 **This is analysis of a model, not of a system.** Every finding rests on the model being an accurate description, and on the assumptions carried forward above. Where the system and the model differ, this document describes the model.
 
-<!-- vector: rendered from example.threats.yaml sha256:cf8b4556a633e7f0795cf81dab375d0f83b340b2ba7a34cf5cc65eb6945e2f7c -->
+<!-- vector: rendered from example.threats.yaml sha256:bb75b14e00c571f724b9539975dd7de10a3ac6f0983bccaf4d59d9f00d81ccf9 -->

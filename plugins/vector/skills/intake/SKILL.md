@@ -132,7 +132,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}"/skills/dfd/scripts/check_answers.py <scan>.sarif
    finding carried — copy it so a later reader can find the original, and know
    that nothing matches on it. A dismissal and a model gap record
    `model_digest`, because the argument was made against a model and lapses when
-   that model moves.
+   that model moves. Take it from the check, not from `sha256sum`:
+   `check_coverage.py --model-digest ctm/<slug>.dfd.yaml` prints the digest of
+   what the model says, leaving out its record of design reviews.
 
 ## When a finding lands on something called `mitigated`
 

@@ -326,4 +326,4 @@ Scale: `vector-5x5-v1` — bands, least severe first: low, medium, high, critica
 
 **An `until` can be pushed.** A deferral moved forward every quarter stays green forever. Every date it has had is shown above, which is the only mitigation there is.
 
-<!-- vector: rendered from example.vectors.yaml sha256:ac9a8635625b08c5f9bf54307ca580a282472ba558e00be2c64388d69de7532f -->
+<!-- vector: rendered from example.vectors.yaml sha256:86c909e5cb68329449bcb5736021775e272a188577a2efa52595320d64fd188f -->
