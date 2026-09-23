@@ -254,4 +254,4 @@ Three dispositions, where a reader arriving from an ISO-shaped process expects f
 
 **An `until` can be pushed.** A deferral moved forward every quarter stays green forever. Every date it has had is shown above, which is the only mitigation there is.
 
-<!-- vector: rendered from example.vectors.yaml sha256:484b3fe103aa936959d3cd607d953b573470bd945eae4cf6ce8bde3ce05c54db -->
+<!-- vector: rendered from example.vectors.yaml sha256:85510630c29a4adbf189b8faae8edcadbbba4439cbb00ae57cfc851658009788 -->

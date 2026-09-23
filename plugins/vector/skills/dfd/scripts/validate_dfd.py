@@ -259,7 +259,8 @@ def validate(model):
     privacy_sev = BLOCKING if privacy else ADVISORY
 
     sections = {name: (model.get(name) or []) for name in
-                ("trust_zones", "actors", "processes", "stores", "data", "flows")}
+                ("trust_zones", "subsystems", "actors", "processes", "stores",
+                 "data", "flows")}
     for name, items in sections.items():
         if not isinstance(items, list):
             report.add(BLOCKING, "BAD_SECTION", name, f"{name} must be a list")
@@ -340,6 +341,39 @@ def validate(model):
                              "third_party, or unknown?",
         })
     check_enums(report, "trust_zones", sections["trust_zones"])
+
+    # A subsystem is a name for a group of elements, so it carries no fact about
+    # the system and gets none of the fields an element does. It is also absent
+    # from every loop below that walks ("actors", "processes", "stores"), which
+    # is what keeps it out of the coverage grid, the orphan check and
+    # reachability without any of them being told about it.
+    for sub in sections["subsystems"]:
+        require(report, BLOCKING, "subsystems", sub, ["name", "description"], {
+            "description": "What is this part of the system, in a sentence?",
+        })
+        if sub.get("parent") is not None:
+            report.add(BLOCKING, "BAD_FIELD", f"subsystems/{sub.get('id') or '<unnamed>'}",
+                       "a subsystem has no parent; the model has two levels, not a hierarchy",
+                       "Should this be a subsystem of its own, or do its elements "
+                       "belong directly in the other one?",
+                       field="parent")
+
+    # Two levels is what makes this a one-hop lookup with no cycle to check for:
+    # a subsystem may not carry a parent, and anything else either names a
+    # subsystem or is already UNRESOLVED_REF.
+    for name in ("processes", "stores"):
+        for item in sections[name]:
+            if item.get("parent") is not None:
+                ref_ok(report, item["parent"], f"{name}/{item.get('id') or '<unnamed>'}",
+                       "parent", ("subsystems",))
+    for actor in sections["actors"]:
+        if actor.get("parent") is not None:
+            report.add(BLOCKING, "BAD_FIELD", f"actors/{actor.get('id') or '<unnamed>'}",
+                       "an actor is outside the system, so it cannot be inside "
+                       "one of the system's parts",
+                       "Is this actually external, or is it a process that belongs "
+                       "in that subsystem?",
+                       field="parent")
 
     for actor in sections["actors"]:
         fields = ["name", "type", "description", "trust_zone", "authenticates_how"]
@@ -512,6 +546,14 @@ def validate(model):
             report.add(ADVISORY, "UNUSED_DATA", f"data/{datum['id']}",
                        "declared but no store or flow references it",
                        "Where does this data live and how does it move?")
+    used_parents = {item.get("parent") for name in ("processes", "stores")
+                    for item in sections[name] if item.get("parent")}
+    for sub in sections["subsystems"]:
+        if sub.get("id") and sub["id"] not in used_parents:
+            report.add(ADVISORY, "UNUSED_SUBSYSTEM", f"subsystems/{sub['id']}",
+                       "no process or store names this subsystem as its parent",
+                       "Does something belong in this part that has not been "
+                       "modelled yet?")
     used_zones = {z for z in zone_of.values() if z}
     for zone in sections["trust_zones"]:
         if zone.get("id") and zone["id"] not in used_zones:

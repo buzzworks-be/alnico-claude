@@ -11,6 +11,44 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.19.0] — 2026-09-23
+
+### Added
+
+- A model can name its **subsystems** — the system's large parts — and give
+  each process and store a `parent`. The rendered `<slug>.dfd.md` then opens
+  with an overview diagram and takes one part at a time below it: that part's
+  own diagram, its own processes and its own stores. The worked example goes
+  from a single picture of 12 nodes and 23 edges to an overview of 7 and 12,
+  with everything else a heading further down.
+
+  Nothing is removed to do that. The overview is computed from the complete
+  model rather than stored beside it, so the enumeration, the coverage grid and
+  every check downstream see exactly what they saw before — the example's grid
+  is still 324 pairings. There are two levels and no third: a subsystem has no
+  parent of its own.
+
+  An element that belongs to no part keeps no `parent`, and gets a section
+  headed *Not in a subsystem*. That heading is meant to read as a question: a
+  database both halves of a system read and write is honestly at level 0, and a
+  model where most elements are there is one worth looking at again.
+
+- [`/vector:dfd`](skills/dfd/SKILL.md) now says where to start and when to go
+  deeper. The first model it writes is a level 0 — the external actors, the
+  flows that cross, and three or four processes standing for the large parts —
+  and each of those is refined until every single-valued field on it holds one
+  answer. A process you can only give `authn: varies by entry point` is two
+  processes; a process whose one `authn` is true of it is finished however
+  small the system is.
+
+### Changed
+
+- **Your existing models and their rendered views do not move.** A model that
+  declares no subsystems renders exactly what it rendered before, which is
+  asserted against a committed document rather than a fixture. Adding
+  subsystems to a model already enumerated will change `model_digest` and
+  report the enumeration as stale, which is the chain working and is a re-run.
+
 ## [0.18.1] — 2026-09-22
 
 ### Fixed
@@ -665,6 +703,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.19.0]: https://github.com/buzzworks-be/vector/commit/bb5f877
 [0.18.1]: https://github.com/buzzworks-be/vector/commit/5f21a8e
 [0.18.0]: https://github.com/buzzworks-be/vector/commit/359a00a
 [0.17.2]: https://github.com/buzzworks-be/vector/commit/f310d3a

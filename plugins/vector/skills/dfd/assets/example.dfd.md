@@ -19,56 +19,40 @@ Takes an order from a shopper, charges their card through Stripe, and hands the 
 - The marketing site, which shares no data with checkout
 
 
-## Diagram
+## Overview
 
 ```mermaid
 flowchart TB
   subgraph browser["Shopper's browser"]
     shopper["Shopper"]
-    checkout-web("Checkout web app")
   end
   subgraph corp-net["Corporate network"]
     support-agent["Support agent"]
   end
   subgraph prod-vpc["Production VPC"]
-    checkout-api("Checkout API")
-    fulfilment-worker("Fulfilment worker")
-    support-console("Support console")
-    support-assistant("Support assistant")
-    dsar-handler("Data request handler")
     orders-db[("Orders database")]
     audit-log[("Audit log")]
-    session-cache[("Session cache")]
+    back-office[["Back office"]]
   end
   subgraph stripe["Stripe"]
     stripe-api["Stripe API"]
   end
-  shopper -->|"Cart contents"| checkout-web
-  checkout-web ==>|"Stripe card token"| stripe-api
-  checkout-web ==>|"Cart contents, Delivery address, Email address, Stripe card token"| checkout-api
-  checkout-api ==>|"Stripe card token, Order record"| stripe-api
-  stripe-api ==>|"Order record"| checkout-api
-  checkout-api -->|"Order record, Delivery address, Email address"| orders-db
-  checkout-api -->|"Session identifier, Cart contents"| session-cache
-  session-cache -->|"Session identifier, Cart contents"| checkout-api
-  checkout-api -->|"Audit event"| audit-log
-  checkout-api ==>|"Order record"| checkout-web
-  checkout-web -->|"Order record"| shopper
-  orders-db -->|"Order record, Delivery address"| fulfilment-worker
-  fulfilment-worker -->|"Audit event"| audit-log
-  support-agent ==>|"Email address"| support-console
-  orders-db -->|"Order record, Delivery address, Email address"| support-console
-  support-console ==>|"Order record, Delivery address, Email address"| support-agent
-  support-console -->|"Audit event, Email address"| audit-log
-  support-console -->|"Order record, Delivery address, Shopper's message"| support-assistant
-  support-assistant -->|"Drafted reply"| support-console
-  support-assistant -->|"Audit event"| audit-log
-  shopper ==>|"Email address"| dsar-handler
-  orders-db -->|"Order record, Delivery address, Email address"| dsar-handler
-  dsar-handler ==>|"Order record, Delivery address, Email address"| shopper
+  storefront[["Storefront"]]
+  shopper -->|"Cart contents"| storefront
+  storefront ==>|"Stripe card token, Order record"| stripe-api
+  stripe-api ==>|"Order record"| storefront
+  storefront -->|"Order record, Delivery address, Email address"| orders-db
+  storefront -->|"Audit event"| audit-log
+  storefront -->|"Order record"| shopper
+  orders-db -->|"Order record, Delivery address, Email address"| back-office
+  back-office -->|"Audit event, Email address"| audit-log
+  support-agent ==>|"Email address"| back-office
+  back-office ==>|"Order record, Delivery address, Email address"| support-agent
+  shopper ==>|"Email address"| back-office
+  back-office ==>|"Order record, Delivery address, Email address"| shopper
 ```
 
-Rectangles are external entities, rounded boxes are processes, cylinders are data stores, and boxed groups are trust zones. A thick arrow crosses a trust boundary.
+Rectangles are external entities, rounded boxes are processes, cylinders are data stores, double-edged boxes stand for a whole subsystem, and boxed groups are trust zones. A thick arrow crosses a trust boundary. Each subsystem is drawn in full in its own section below; a subsystem drawn outside every zone spans more than one of them.
 
 
 ## Trust zones
@@ -90,25 +74,108 @@ Rectangles are external entities, rounded boxes are processes, cylinders are dat
 | Stripe API | third_party_service | Stripe | Publishable key in-browser; restricted secret key server-side. | no |
 
 
-## Processes
+## Storefront
+
+Everything a shopper touches: the browser app, the checkout API behind it and the session cache that carries a cart between requests.
+
+```mermaid
+flowchart TB
+  subgraph browser["Shopper's browser"]
+    shopper["Shopper"]
+    checkout-web("Checkout web app")
+  end
+  subgraph prod-vpc["Production VPC"]
+    checkout-api("Checkout API")
+    orders-db[("Orders database")]
+    audit-log[("Audit log")]
+    session-cache[("Session cache")]
+  end
+  subgraph stripe["Stripe"]
+    stripe-api["Stripe API"]
+  end
+  shopper -->|"Cart contents"| checkout-web
+  checkout-web ==>|"Stripe card token"| stripe-api
+  checkout-web ==>|"Cart contents, Delivery address, Email address, Stripe card token"| checkout-api
+  checkout-api ==>|"Stripe card token, Order record"| stripe-api
+  stripe-api ==>|"Order record"| checkout-api
+  checkout-api -->|"Order record, Delivery address, Email address"| orders-db
+  checkout-api -->|"Session identifier, Cart contents"| session-cache
+  session-cache -->|"Session identifier, Cart contents"| checkout-api
+  checkout-api -->|"Audit event"| audit-log
+  checkout-api ==>|"Order record"| checkout-web
+  checkout-web -->|"Order record"| shopper
+```
+
+
+**Processes**
 
 | Process | Zone | Owner | Authn | Authz | Logging |
 |---|---|---|---|---|---|
 | Checkout web app | Shopper's browser | Storefront team | Session cookie issued by the API; no credentials held in the page. | None — every decision is re-made server-side. | Client errors to Sentry with PII scrubbing on; no order contents. |
 | Checkout API | Production VPC | Payments team | mTLS from the edge proxy, plus the shopper's session cookie for user context. | Row-level ownership checks on every order read or write. | Structured audit events to the audit log; request logs without bodies. |
+
+
+**Data stores**
+
+| Store | Kind | Zone | Holds | At rest | Access | Retention | Backups |
+|---|---|---|---|---|---|---|---|
+| Session cache | cache | Production VPC | Session identifier, Cart contents | In-memory only, encrypted volume; no persistence to disk. | Checkout API service role only. | 30-minute TTL; nothing survives a restart. | — |
+
+
+## Back office
+
+The internal side. Fulfilment, the support console and its assistant, and the handler that answers data subject requests.
+
+```mermaid
+flowchart TB
+  subgraph browser["Shopper's browser"]
+    shopper["Shopper"]
+  end
+  subgraph corp-net["Corporate network"]
+    support-agent["Support agent"]
+  end
+  subgraph prod-vpc["Production VPC"]
+    fulfilment-worker("Fulfilment worker")
+    support-console("Support console")
+    support-assistant("Support assistant")
+    dsar-handler("Data request handler")
+    orders-db[("Orders database")]
+    audit-log[("Audit log")]
+  end
+  orders-db -->|"Order record, Delivery address"| fulfilment-worker
+  fulfilment-worker -->|"Audit event"| audit-log
+  support-agent ==>|"Email address"| support-console
+  orders-db -->|"Order record, Delivery address, Email address"| support-console
+  support-console ==>|"Order record, Delivery address, Email address"| support-agent
+  support-console -->|"Audit event, Email address"| audit-log
+  support-console -->|"Order record, Delivery address, Shopper's message"| support-assistant
+  support-assistant -->|"Drafted reply"| support-console
+  support-assistant -->|"Audit event"| audit-log
+  shopper ==>|"Email address"| dsar-handler
+  orders-db -->|"Order record, Delivery address, Email address"| dsar-handler
+  dsar-handler ==>|"Order record, Delivery address, Email address"| shopper
+```
+
+
+**Processes**
+
+| Process | Zone | Owner | Authn | Authz | Logging |
+|---|---|---|---|---|---|
 | Fulfilment worker | Production VPC | Fulfilment team | IAM role; no inbound network path. | Read-only database role scoped to paid orders. | Audit event per dispatched order. |
 | Support console | Production VPC | Support engineering | Okta SSO, WebAuthn enforced, session bound to device. | Role-based; addresses are masked unless the agent opens a ticket-linked view. | Every lookup written to the audit log with the agent identity and reason. |
 | Support assistant | Production VPC | Support engineering | IAM role; reachable only from the support console, no public route. | The refund tool is capped and scoped to the order in the open ticket. | Prompt, every tool call, and every refund decision to the audit log. |
 | Data request handler | Production VPC | Privacy team | Okta SSO for the approver; IAM role for the job. | Two-person rule on erasure runs. | Full audit trail of every request, approval, and export. |
 
 
-## Data stores
+## Not in a subsystem
+
+
+**Data stores**
 
 | Store | Kind | Zone | Holds | At rest | Access | Retention | Backups |
 |---|---|---|---|---|---|---|---|
 | Orders database | database | Production VPC | Order record, Delivery address, Email address | AES-256 via AWS KMS, customer-managed key. | Service roles only. Human access is break-glass through PAM and alerts the on-call. | Orders kept 7 years for tax; addresses purged 90 days after delivery. | Nightly snapshots retained 35 days in the same account, same KMS key. |
 | Audit log | log | Production VPC | Audit event, Email address | AES-256 via AWS KMS; object lock prevents deletion before expiry. | Write-only for services. Read requires a security team role. | 2 years, then hard delete. | Cross-region replication, same 2-year expiry. |
-| Session cache | cache | Production VPC | Session identifier, Cart contents | In-memory only, encrypted volume; no persistence to disk. | Checkout API service role only. | 30-minute TTL; nothing survives a restart. | — |
 
 
 ## Data dictionary
@@ -179,4 +246,4 @@ This model has been read against the documents below. It is a claim about docume
 
 _Generated from the model by `render_dfd.py`. Edit the `.dfd.yaml` and regenerate; changes made here will be lost._
 
-<!-- vector: rendered from example.dfd.yaml sha256:31e0f0518615ca45413bbfb9ee597bb66a3e0bd496d918785996c4c8c289d9d8 -->
+<!-- vector: rendered from example.dfd.yaml sha256:d35a88cf8ef2b1db4c89f9fcbe1355712986663c9846ccd97be1f175943db0dd -->

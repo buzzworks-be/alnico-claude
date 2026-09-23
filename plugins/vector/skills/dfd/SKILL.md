@@ -78,13 +78,21 @@ interrogation. Ask for:
 If `$ARGUMENTS` names a system, use it as the subject and skip asking what the
 system is.
 
-**3. Write a first model immediately.**
+**3. Write a first model immediately, as a level 0.**
 
 Do not interview to completion before writing anything. Write the YAML from the
 opening batch — sparse, with `null` wherever you do not yet know — and run the
 validator. A visible skeleton changes the conversation: the user starts
 correcting a concrete artifact instead of answering questions in the abstract,
 which surfaces the things they would never have thought to mention.
+
+Write that first model at the boundary: the external actors, a handful of
+processes standing for the system's large parts, and the flows that cross
+between them. Three or four inside processes, not thirty — this is the picture
+somebody would draw on a whiteboard to explain what the system is, and it is
+what makes the first render worth showing. A model built the other way round,
+by writing down every component as it comes up in conversation, ends as a flat
+list with no shape, and there is no later step that recovers one.
 
 Prefer explicit `null` over an omitted field. Omission is ambiguous — it can
 mean "not asked yet" or "not applicable" — and the validator cannot tell the
@@ -145,7 +153,37 @@ left rather than guessing.
 Report progress in the user's terms, not the validator's: "six flows mapped,
 three still missing what actually travels over them" beats a dump of gap codes.
 
-**5. Chase the things people leave out.**
+**5. Refine each part until its fields hold one answer.**
+
+A level 0 process stands for several things. Take each one and ask whether
+every single-valued field on it — `authn`, `authz`, `trust_zone`, `owner` — can
+be filled with one true sentence. The tell is a hedge: a process you can only
+give `authn: varies by entry point` is not one process, and no amount of
+careful wording makes it one.
+
+Where it is several, make it a subsystem:
+
+- add a `subsystems` entry with that id, name and a one-line description;
+- add its parts as processes and stores, each with `parent:` naming it;
+- re-point its flows at whichever part actually carries them;
+- move each field down to whichever part it is true of.
+
+That last step is the interview, not bookkeeping. *The storefront's `authn` was
+a session cookie — which of its three parts actually does that?* is the
+question worth asking, and the rewrite is only how the answer gets recorded.
+
+**Stop when the fields resolve, not at a number of elements.** A process whose
+one `authn` is true of it is finished however small the system is; a
+single-process tool has no subsystems and needs none. There are two levels and
+no third: a part with parts of its own is a system that has outgrown one
+diagram, and the honest answer there is a second model rather than a deeper
+one.
+
+An element that belongs to no part — a database both halves read and write —
+keeps no `parent` at all. The rendered document gives those their own section
+rather than making you choose.
+
+**6. Chase the things people leave out.**
 
 The validator catches structural holes. It cannot catch what the user never
 mentioned, and there are recurring blind spots worth probing directly. Read
@@ -159,14 +197,16 @@ Ask about these even when the user seems finished. Framing them as "most
 systems have X — does yours?" makes it easy to say no, which is a real answer,
 and easy to say "oh, right" when it isn't.
 
-**6. Render, show, and let them correct it.**
+**7. Render, show, and let them correct it.**
 
-Generate the diagram and put it in front of the user well before you think the
-model is done. People find errors in a picture that they read straight past in
+Generate the document and put it in front of the user well before you think the
+model is done. Where the model declares subsystems it opens with an overview
+and then takes one part at a time, so it is worth showing from the level 0
+onwards rather than only once the detail is in. People find errors in a picture that they read straight past in
 a list of questions — a flow pointing the wrong way is obvious visually and
 invisible in prose. Render at least once mid-interview, not only at the end.
 
-**7. Finish deliberately.**
+**8. Finish deliberately.**
 
 When the validator reports no blocking gaps, do not just stop. Advisory gaps
 are judgment calls, not noise: walk through them and let the user dismiss each
@@ -203,7 +243,7 @@ diagram block, which is useful when the user wants to paste it elsewhere.
 
 ## What the validator checks, and why it is worth satisfying
 
-Beyond obvious things like unresolved references, three checks catch real
+Beyond obvious things like unresolved references, four checks catch real
 modeling errors rather than clerical ones, and they are worth understanding so
 you can explain a gap rather than just relay it:
 

@@ -71,6 +71,18 @@ trust_zones:
     description: Payment processor. We see tokens and outcomes, never card numbers.
     controlled_by: third_party
 
+subsystems:
+  - id: storefront
+    name: Storefront
+    description: >-
+      Everything a shopper touches: the browser app, the checkout API behind it
+      and the session cache that carries a cart between requests.
+  - id: back-office
+    name: Back office
+    description: >-
+      The internal side. Fulfilment, the support console and its assistant, and
+      the handler that answers data subject requests.
+
 actors:
   - id: shopper
     name: Shopper
@@ -99,6 +111,7 @@ processes:
     name: Checkout web app
     description: Renders the cart, collects the address, and hands the card to Stripe Elements.
     trust_zone: browser
+    parent: storefront
     kind: service
     owner: Storefront team
     tech: React SPA
@@ -109,6 +122,7 @@ processes:
     name: Checkout API
     description: Validates carts, creates orders, and calls Stripe to settle payment.
     trust_zone: prod-vpc
+    parent: storefront
     kind: service
     owner: Payments team
     tech: Go service on ECS
@@ -119,6 +133,7 @@ processes:
     name: Fulfilment worker
     description: Polls for paid orders and pushes picking instructions to the warehouse.
     trust_zone: prod-vpc
+    parent: back-office
     kind: job
     owner: Fulfilment team
     tech: Python worker on ECS
@@ -129,6 +144,7 @@ processes:
     name: Support console
     description: Internal tool for looking up an order by email or order number.
     trust_zone: prod-vpc
+    parent: back-office
     kind: service
     owner: Support engineering
     tech: Rails app behind the SSO proxy
@@ -141,6 +157,7 @@ processes:
       Drafts a reply to a shopper's message from the order it is shown, and
       issues the refund itself when the amount is under EUR 50.
     trust_zone: prod-vpc
+    parent: back-office
     kind: agent
     owner: Support engineering
     tech: >-
@@ -167,6 +184,7 @@ processes:
       Assembles a copy of everything held about a shopper, or erases it. Runs
       semi-automatically; a privacy team member approves each run.
     trust_zone: prod-vpc
+    parent: back-office
     kind: job
     owner: Privacy team
     tech: Scheduled job plus a manual approval step
@@ -199,6 +217,7 @@ stores:
     name: Session cache
     description: Redis. Session ids mapped to shopper ids and cart state.
     trust_zone: prod-vpc
+    parent: storefront
     kind: cache
     data: [session-id, cart]
     encryption_at_rest: In-memory only, encrypted volume; no persistence to disk.

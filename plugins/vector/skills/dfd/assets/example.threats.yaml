@@ -9,7 +9,7 @@
 # whole capability exists to avoid.
 
 model: example.dfd.yaml
-model_digest: sha256:31e0f0518615ca45413bbfb9ee597bb66a3e0bd496d918785996c4c8c289d9d8
+model_digest: sha256:d35a88cf8ef2b1db4c89f9fcbe1355712986663c9846ccd97be1f175943db0dd
 analysis: [stride, linddun]
 
 carried_forward:

@@ -23,6 +23,7 @@ stores interchangeably.
 
 - [`system`](#system) — scope and intent
 - [`trust_zones`](#trust_zones) — the boundaries everything else is placed in
+- [`subsystems`](#subsystems) — the system's large parts, for the overview
 - [`actors`](#actors) — external entities
 - [`processes`](#processes) — things that transform data
 - [`stores`](#stores) — things that hold data at rest
@@ -92,6 +93,58 @@ trust_zones:
 Model the user's own device as its own zone. It is the most common omission and
 the source of a large fraction of real findings.
 
+## subsystems
+
+Optional, and only about how the model is read. A subsystem is one of the
+system's large parts — the thing you would point at when somebody asks what
+this system is made of. Declaring them gives `render_dfd.py` an overview
+diagram to draw and a way to take the model one part at a time, instead of
+putting every element in one picture.
+
+```yaml
+subsystems:
+  - id: storefront
+    name: Storefront
+    description: >-
+      Everything a shopper touches, from the browser app through the checkout
+      API to the session cache behind it.
+  - id: back-office
+    name: Back office
+    description: >-
+      The internal side: fulfilment, the support tooling and its assistant, and
+      the data request handler.
+```
+
+That is every field there is. A subsystem has no `trust_zone`, no `owner` and
+no `authn`, because it is not a thing in the system — it is a name for a group
+of things, and every fact stays on the element it is true of. It is also not an
+element to the enumeration: a subsystem attracts no threat categories and adds
+no questions to the grid.
+
+**There are two levels and no third.** A subsystem has no `parent` of its own,
+so an element is either in a subsystem or at level 0. A part with parts of its
+own is a system that has outgrown one rendered document.
+
+**Nothing requires this section.** A model without it is a model of a system
+that does not need it, and renders exactly as it did before the field existed.
+
+### parent
+
+On a process or a store, naming the subsystem it belongs to:
+
+```yaml
+processes:
+  - id: checkout-api
+    parent: storefront
+```
+
+Leave it off for an element that belongs to no part — a database both halves of
+the system read and write is honestly at level 0, and the rendered document
+gives those their own section rather than forcing a choice.
+
+**Not on an actor.** An actor is outside the system's boundary by definition,
+so it cannot be inside one of the system's parts.
+
 ## actors
 
 External entities: anything that talks to the system but is not part of it.
@@ -126,6 +179,7 @@ processes:
     name: Checkout API
     description: Validates carts, creates orders, calls the payment provider.
     trust_zone: prod-vpc
+    parent: storefront            # optional; see subsystems
     owner: Payments team          # who is accountable, not who wrote it
     kind: service                 # service | job | lambda | manual | llm | agent
     tech: Go service on ECS
@@ -189,6 +243,7 @@ stores:
     name: Orders database
     description: Postgres; orders, line items, addresses.
     trust_zone: prod-vpc
+    parent: storefront            # optional; see subsystems
     kind: database                # database | object_store | queue | cache | file | log | third_party | paper
     data: [order, address, email]
     encryption_at_rest: AES-256, AWS-managed KMS key.

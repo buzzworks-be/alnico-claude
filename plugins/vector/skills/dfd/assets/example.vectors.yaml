@@ -19,7 +19,7 @@
 # exercise both instead.
 
 threats: example.threats.yaml
-threats_digest: sha256:8a2b5c57d38b549367f75fcb8e74cd2c18afe54d32bb2f5d915290253c326279
+threats_digest: sha256:cf8b4556a633e7f0795cf81dab375d0f83b340b2ba7a34cf5cc65eb6945e2f7c
 
 vectors:
 
@@ -677,7 +677,7 @@ answers:
       throttle actually runs — and the diagram does not contain it, so nothing
       was ever enumerated against it. This is the most serious answer of the
       four: the repair is the model, not this register.
-    model_digest: sha256:31e0f0518615ca45413bbfb9ee597bb66a3e0bd496d918785996c4c8c289d9d8
+    model_digest: sha256:d35a88cf8ef2b1db4c89f9fcbe1355712986663c9846ccd97be1f175943db0dd
     answered: 2026-09-13
 
   - id: ANS-0004
@@ -690,5 +690,5 @@ answers:
       checkout — no flow connects them and it holds nothing about a shopper.
       The same advisory on `checkout-web` would not get this answer, which is
       the whole reason a scanner finding is worth putting to a threat model.
-    model_digest: sha256:31e0f0518615ca45413bbfb9ee597bb66a3e0bd496d918785996c4c8c289d9d8
+    model_digest: sha256:d35a88cf8ef2b1db4c89f9fcbe1355712986663c9846ccd97be1f175943db0dd
     answered: 2026-09-13
