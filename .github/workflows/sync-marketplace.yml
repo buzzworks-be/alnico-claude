@@ -1,0 +1,38 @@
+name: Sync marketplace.json
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/*/.claude-plugin/plugin.json'
+      - '.claude-plugin/marketplace.json'
+      - '.github/scripts/sync_marketplace.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-marketplace
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: python .github/scripts/sync_marketplace.py
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet; then
+            echo "marketplace.json already in sync"
+            exit 0
+          fi
+          git diff
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Sync marketplace.json from plugin manifests"
+          git pull --rebase origin main
+          git push origin HEAD:main
