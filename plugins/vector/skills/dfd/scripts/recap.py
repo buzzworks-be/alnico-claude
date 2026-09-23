@@ -199,6 +199,36 @@ def survey(root, slug, as_of, excludes):
     return models, lines
 
 
+def has_matrix(root):
+    """Whether any register carries a decision yet.
+
+    The whole-chain check is about what a matrix claims — the specifications
+    its mitigations name, the annotations in code, the deferrals that expire.
+    Before any disposition exists it has nothing of its own to say, and what it
+    says anyway is wrong in both directions: with a model alone it reports the
+    chain current, which is an all-clear for a chain that is not there, and
+    with an undecided register it repeats every not-started line above as a
+    blocking one, which reports a chain in progress as a chain in trouble.
+
+    Asking this is the question every link above already asks — does the
+    artefact exist — and it judges nothing. Registers are found exactly the way
+    that check finds them, which does not apply --exclude to registers, so the
+    two cannot disagree about whether there is a matrix to check.
+    """
+    for path in traceability.find_registers(root):
+        try:
+            with open(path) as handle:
+                register = traceability.yaml.safe_load(handle)
+        except (OSError, traceability.yaml.YAMLError):
+            # Its own link above already says it could not be read.
+            continue
+        vectors = register.get("vectors") if isinstance(register, dict) else None
+        if any(isinstance(v, dict) and isinstance(v.get("disposition"), dict)
+               and v["disposition"] for v in vectors or []):
+            return True
+    return False
+
+
 def whole_chain(root, as_of, excludes):
     """The repository-wide questions no per-model check asks: the digests
     between artefacts, and the annotation scan over tracked files.
@@ -240,8 +270,12 @@ def render(root, slug, as_of, excludes=()):
     out += [where, "=" * len(where)]
     out += body
     out += ["", "The chain, across this repository"]
-    for line in whole_chain(root, as_of, excludes):
-        out += fold("", line, gutter=2)
+    if has_matrix(root):
+        for line in whole_chain(root, as_of, excludes):
+            out += fold("", line, gutter=2)
+    else:
+        out += fold("", f"{NOT_STARTED} — this checks what a matrix claims, and no register "
+                        "has a disposition yet", gutter=2)
     out += ["", LIMIT]
     return "\n".join(out)
 

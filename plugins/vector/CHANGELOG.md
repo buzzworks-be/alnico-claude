@@ -11,6 +11,21 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.21.1] — 2026-09-23
+
+### Fixed
+
+- [`/vector:recap`](skills/recap/SKILL.md)'s last section — *the chain, across
+  this repository*, the same check CI runs — now runs only once a register
+  holds a decision. Before that it said the wrong thing in both directions: a
+  repository with just a model was reported **Current**, an all-clear for a
+  chain that did not exist yet, and a register nobody had decided about was
+  reported as blocking failures that only repeated the *not started* lines
+  above it. Until there is a matrix it now says *not started*.
+
+  If you never wired CI, this is also the way to see what CI would say: once
+  you have a matrix, the recap runs that check for you.
+
 ## [0.21.0] — 2026-09-23
 
 ### Fixed
@@ -798,6 +813,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.21.1]: https://github.com/buzzworks-be/vector/commit/28650af
 [0.21.0]: https://github.com/buzzworks-be/vector/commit/d68bc64
 [0.20.0]: https://github.com/buzzworks-be/vector/commit/65391db
 [0.19.1]: https://github.com/buzzworks-be/vector/commit/d9dc50b
