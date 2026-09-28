@@ -10,8 +10,7 @@ on:
       - '.github/scripts/sync_marketplace.py'
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: sync-marketplace
@@ -20,12 +19,19 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The sync script runs with no token in reach; only the push step gets one.
+          persist-credentials: false
 
       - run: python .github/scripts/sync_marketplace.py
 
       - name: Commit if changed
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$(git status --porcelain)" ]; then
             echo "marketplace.json and README.md already in sync"
@@ -36,5 +42,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git commit -m "Sync marketplace.json and README from plugin manifests"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="$auth" pull --rebase origin main
+          git -c http.https://github.com/.extraheader="$auth" push origin HEAD:main
