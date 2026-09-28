@@ -41,7 +41,12 @@ try:
     # somebody running this script gets a sentence instead of a traceback.
     import yaml  # noqa: F401
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -147,7 +152,7 @@ def load(path, what):
     return traceability.load(path, what)
 
 
-def main(argv=None):
+def arguments():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("register", help="path to the .vectors.yaml register")
@@ -159,7 +164,33 @@ def main(argv=None):
                              "(default: the nearest .git above the register)")
     parser.add_argument("--scale", action="store_true",
                         help="print the risk scale this register is rated on, and stop")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def print_gaps(report, guidance, as_of):
+    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
+        if not gaps:
+            continue
+        groups = {}
+        for gap in gaps:
+            groups.setdefault(gap["element"], []).append(gap)
+        print(f"\n{severity} — {len(gaps)} gap(s) across {len(groups)} place(s)")
+        print("=" * 60)
+        for element, items in groups.items():
+            print(f"\n  {element}")
+            for gap in items:
+                where = f"{gap['field']}: " if gap["field"] else ""
+                print(f"    - {where}{gap['message']}")
+    if guidance["deferrals"]:
+        print(f"\nDeferrals, soonest first (as of {as_of.isoformat()}):")
+        for entry in guidance["deferrals"]:
+            label = f" ({entry['label']})" if entry.get("label") else ""
+            print(f"  {entry['id']}: until {entry['until']}{label}, {entry['days_left']} day(s), "
+                  f"owner {entry.get('owner') or 'unnamed'}")
+
+
+def main(argv=None):
+    args = arguments().parse_args(argv)
 
     as_of = datetime.date.today()
     if args.as_of:
@@ -197,25 +228,7 @@ def main(argv=None):
         }, indent=2))
         return 0 if not report.blocking else 1
 
-    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
-        if not gaps:
-            continue
-        groups = {}
-        for gap in gaps:
-            groups.setdefault(gap["element"], []).append(gap)
-        print(f"\n{severity} — {len(gaps)} gap(s) across {len(groups)} place(s)")
-        print("=" * 60)
-        for element, items in groups.items():
-            print(f"\n  {element}")
-            for gap in items:
-                where = f"{gap['field']}: " if gap["field"] else ""
-                print(f"    - {where}{gap['message']}")
-    if guidance["deferrals"]:
-        print(f"\nDeferrals, soonest first (as of {as_of.isoformat()}):")
-        for entry in guidance["deferrals"]:
-            label = f" ({entry['label']})" if entry.get("label") else ""
-            print(f"  {entry['id']}: until {entry['until']}{label}, {entry['days_left']} day(s), "
-                  f"owner {entry.get('owner') or 'unnamed'}")
+    print_gaps(report, guidance, as_of)
     print()
     if report.blocking:
         print(f"Not decided: {len(report.blocking)} blocking, {len(report.advisory)} advisory. "

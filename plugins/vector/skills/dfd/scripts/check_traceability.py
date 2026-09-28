@@ -43,7 +43,12 @@ import sys
 try:
     import yaml
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 # Rewritten by the skill that vendors this file, so a build log says which
 # version made the claim. In the plugin's own copy it stays as it is.
@@ -395,26 +400,8 @@ def covered_by(path, source):
     return path == entry or path.startswith(entry + "/")
 
 
-def check_reviews(model, model_path, root, report, as_of, files=None):
-    """Which design documents nobody has read against this model.
-
-    The outermost link in the chain, and the only one whose input comes from
-    outside the toolkit. Returns the pulse — how many documents, how many
-    readings, and the oldest of them — which is reported whether or not
-    anything failed.
-
-    A model that declares no design_sources is opting out, so this reports
-    nothing and fails nothing.
-    """
-    system = model.get("system") or {}
-    sources = as_list(system.get("design_sources"))
-    if not sources:
-        return None
-
-    shown = os.path.relpath(model_path, root)
-    if files is None:
-        files = tracked_files(root)
-
+def review_cycle(system, report, shown):
+    """The model's review cycle in days, or None for no expiry at all."""
     cycle = system.get("review_cycle")
     if cycle is not None:
         if isinstance(cycle, bool) or not isinstance(cycle, int) or cycle < 1:
@@ -422,7 +409,11 @@ def check_reviews(model, model_path, root, report, as_of, files=None):
                        f"review_cycle is {cycle!r}; it must be a whole number of days, "
                        "or absent for no expiry at all", field="review_cycle", source=shown)
             cycle = None
+    return cycle
 
+
+def design_documents(sources, files, root, report, shown):
+    """Every tracked file the sources name, and the ones among them still live."""
     documents = set()
     for source in sources:
         matched = {name for name in files if covered_by(name, source)}
@@ -441,27 +432,17 @@ def check_reviews(model, model_path, root, report, as_of, files=None):
         status, _ = read_status(os.path.join(root, name))
         if not retired_status(status):
             live.add(name)
+    return documents, live
 
-    reviews = {}
-    for entry in as_list(system.get("reviewed")):
-        if isinstance(entry, dict) and entry.get("path"):
-            reviews[str(entry["path"]).strip().replace(os.sep, "/")] = entry
 
-    unreviewed, changed = [], []
-    for name in sorted(live):
-        entry = reviews.get(name)
-        if entry is None:
-            unreviewed.append(name)
-            continue
-        stored = str(entry.get("digest") or "")
-        if stored and stored != digest(os.path.join(root, name)):
-            changed.append(name)
+def pair_renames(unreviewed, orphans, reviews, root):
+    """Unreviewed documents that are a reviewed one under a new path.
 
-    orphans = [name for name in sorted(reviews) if name not in documents]
-
-    # A moved document would otherwise be two findings for one edit. Pair them
-    # by digest, and only where the pairing is unambiguous: a guess that looks
-    # like a mechanism is worse than a little noise.
+    A moved document would otherwise be two findings for one edit. Pair them by
+    digest, and only where the pairing is unambiguous: a guess that looks like
+    a mechanism is worse than a little noise. Each pair is taken out of both
+    lists it came from.
+    """
     renamed = []
     candidates_for = {name: digest(os.path.join(root, name)) for name in unreviewed}
     for name in list(unreviewed):
@@ -472,7 +453,10 @@ def check_reviews(model, model_path, root, report, as_of, files=None):
             renamed.append((name, candidates[0]))
             unreviewed.remove(name)
             orphans.remove(candidates[0])
+    return renamed
 
+
+def report_documents(report, shown, unreviewed, changed, renamed, orphans):
     for name in unreviewed:
         report.add(BLOCKING, "UNREVIEWED_DOC", name,
                    "nobody has said what this document means for the model; read it and "
@@ -494,6 +478,9 @@ def check_reviews(model, model_path, root, report, as_of, files=None):
                    "correct the path if it moved, otherwise drop the entry",
                    field="reviewed", source=shown)
 
+
+def oldest_review(reviews, documents, cycle, as_of, report, shown):
+    """The oldest reading of a live document, judging each against the cycle."""
     oldest = None
     for name, entry in sorted(reviews.items()):
         if name not in documents:
@@ -508,6 +495,50 @@ def check_reviews(model, model_path, root, report, as_of, files=None):
                        f"last read on {when.isoformat()}, which is more than the "
                        f"{cycle} days this model asks for; read it again and say what it "
                        "means now", field="reviewed", source=shown)
+    return oldest
+
+
+def check_reviews(model, model_path, root, report, as_of, files=None):
+    """Which design documents nobody has read against this model.
+
+    The outermost link in the chain, and the only one whose input comes from
+    outside the toolkit. Returns the pulse — how many documents, how many
+    readings, and the oldest of them — which is reported whether or not
+    anything failed.
+
+    A model that declares no design_sources is opting out, so this reports
+    nothing and fails nothing.
+    """
+    system = model.get("system") or {}
+    sources = as_list(system.get("design_sources"))
+    if not sources:
+        return None
+
+    shown = os.path.relpath(model_path, root)
+    if files is None:
+        files = tracked_files(root)
+    cycle = review_cycle(system, report, shown)
+    documents, live = design_documents(sources, files, root, report, shown)
+
+    reviews = {}
+    for entry in as_list(system.get("reviewed")):
+        if isinstance(entry, dict) and entry.get("path"):
+            reviews[str(entry["path"]).strip().replace(os.sep, "/")] = entry
+
+    unreviewed, changed = [], []
+    for name in sorted(live):
+        entry = reviews.get(name)
+        if entry is None:
+            unreviewed.append(name)
+            continue
+        stored = str(entry.get("digest") or "")
+        if stored and stored != digest(os.path.join(root, name)):
+            changed.append(name)
+
+    orphans = [name for name in sorted(reviews) if name not in documents]
+    renamed = pair_renames(unreviewed, orphans, reviews, root)
+    report_documents(report, shown, unreviewed, changed, renamed, orphans)
+    oldest = oldest_review(reviews, documents, cycle, as_of, report, shown)
 
     return {
         "model": shown,
@@ -602,6 +633,59 @@ DEFAULT_SCALES = {
 }
 
 
+def axis_problems(scale):
+    """Both axes are five defined levels, 1 to 5 in order."""
+    problems = []
+    for axis, fields in (("likelihood", ("name", "definition")),
+                         ("impact", ("name", "organisation", "data_subjects"))):
+        entries = scale.get(axis)
+        if (not isinstance(entries, list) or len(entries) != 5
+                or not all(isinstance(e, dict) for e in entries)
+                or [e.get("level") for e in entries] != list(LEVELS)):
+            problems.append(("BAD_SCALE", f"{axis} must be exactly five levels, 1 to 5 in "
+                                          "order"))
+            continue
+        for entry in entries:
+            missing = [f for f in fields if not answered(entry, f)]
+            if missing:
+                problems.append(("BAD_SCALE", f"{axis} level {entry['level']} has no "
+                                              f"{' or '.join(missing)}; a level nobody has "
+                                              "defined is a number nobody can argue with"))
+    return problems
+
+
+def monotonic_problems(matrix, bands):
+    """No cell is a lower band than the one with one less likelihood or impact."""
+    problems = []
+    rank = {band: i for i, band in enumerate(bands)}
+    for li in range(5):
+        for ii in range(5):
+            here = rank[matrix[li][ii]]
+            for neighbour, what in (((li - 1, ii), "likelihood"), ((li, ii - 1), "impact")):
+                ln, in_ = neighbour
+                if ln >= 0 and in_ >= 0 and here < rank[matrix[ln][in_]]:
+                    problems.append(("NON_MONOTONIC_SCALE",
+                                     f"likelihood {li + 1}, impact {ii + 1} is "
+                                     f"{matrix[li][ii]}, below the cell with one less "
+                                     f"{what}; more {what} cannot mean less risk"))
+    return problems
+
+
+def matrix_problems(matrix, bands):
+    """The matrix is five by five, names only bands, and never falls."""
+    if (not isinstance(matrix, list) or len(matrix) != 5
+            or not all(isinstance(row, list) and len(row) == 5 for row in matrix)):
+        return [("BAD_SCALE", "matrix must be five rows, one per likelihood from 1, "
+                              "of five cells, one per impact from 1")]
+    if bands is None:
+        return []
+    strays = sorted({str(c) for row in matrix for c in row if c not in bands})
+    if strays:
+        return [("BAD_SCALE", f"matrix names {', '.join(strays)}, which "
+                              f"{'is' if len(strays) == 1 else 'are'} not in bands")]
+    return monotonic_problems(matrix, bands)
+
+
 def scale_problems(scale, declared=True):
     """Everything wrong with a scale, as (code, message) pairs.
 
@@ -629,48 +713,7 @@ def scale_problems(scale, declared=True):
                                       "severe first"))
         bands = None
 
-    for axis, fields in (("likelihood", ("name", "definition")),
-                         ("impact", ("name", "organisation", "data_subjects"))):
-        entries = scale.get(axis)
-        if (not isinstance(entries, list) or len(entries) != 5
-                or not all(isinstance(e, dict) for e in entries)
-                or [e.get("level") for e in entries] != list(LEVELS)):
-            problems.append(("BAD_SCALE", f"{axis} must be exactly five levels, 1 to 5 in "
-                                          "order"))
-            continue
-        for entry in entries:
-            missing = [f for f in fields if not answered(entry, f)]
-            if missing:
-                problems.append(("BAD_SCALE", f"{axis} level {entry['level']} has no "
-                                              f"{' or '.join(missing)}; a level nobody has "
-                                              "defined is a number nobody can argue with"))
-
-    matrix = scale.get("matrix")
-    if (not isinstance(matrix, list) or len(matrix) != 5
-            or not all(isinstance(row, list) and len(row) == 5 for row in matrix)):
-        problems.append(("BAD_SCALE", "matrix must be five rows, one per likelihood from 1, "
-                                      "of five cells, one per impact from 1"))
-        return problems
-    if bands is None:
-        return problems
-    strays = sorted({str(c) for row in matrix for c in row if c not in bands})
-    if strays:
-        problems.append(("BAD_SCALE", f"matrix names {', '.join(strays)}, which "
-                                      f"{'is' if len(strays) == 1 else 'are'} not in bands"))
-        return problems
-
-    rank = {band: i for i, band in enumerate(bands)}
-    for li in range(5):
-        for ii in range(5):
-            here = rank[matrix[li][ii]]
-            for neighbour, what in (((li - 1, ii), "likelihood"), ((li, ii - 1), "impact")):
-                ln, in_ = neighbour
-                if ln >= 0 and in_ >= 0 and here < rank[matrix[ln][in_]]:
-                    problems.append(("NON_MONOTONIC_SCALE",
-                                     f"likelihood {li + 1}, impact {ii + 1} is "
-                                     f"{matrix[li][ii]}, below the cell with one less "
-                                     f"{what}; more {what} cannot mean less risk"))
-    return problems
+    return problems + axis_problems(scale) + matrix_problems(scale.get("matrix"), bands)
 
 
 for _name, _scale in DEFAULT_SCALES.items():
@@ -866,14 +909,30 @@ def rating_lookups(register):
     return found
 
 
-def check_register(register, threats_path, as_of, bases=(), model_path=None):
-    """Everything that must be true of a register on its own.
+class Entries:
+    """A register's sections read once, and what the dispositions say about
+    them as the checks below fill it in: each vector's state and the
+    mitigations its disposition names, and which vectors each mitigation
+    actually serves."""
 
-    Imported by check_matrix.py, which adds the guidance an interview needs.
-    Currency against the documents above and below is check_currency's.
-    """
-    report = Report()
+    def __init__(self, register):
+        self.vectors = [v for v in (register.get("vectors") or []) if isinstance(v, dict)]
+        self.mitigations = register.get("mitigations") or []
+        retired = [r for r in (register.get("retired") or []) if isinstance(r, dict)]
+        self.retired_ids = {str(r.get("id")) for r in retired}
+        self.live_vectors = {str(v.get("id")): v for v in self.vectors if v.get("id")}
+        self.live_mitigations = {}
+        for entry in self.mitigations:
+            if isinstance(entry, dict) and entry.get("id"):
+                self.live_mitigations.setdefault(str(entry["id"]), entry)
+        self.scale = None
+        self.state_of = {}
+        self.named_by_vector = {}
+        self.served_by = {}
 
+
+def check_pins(report, register, threats_path):
+    """The register names its enumeration, and the enumeration has not moved."""
     for field in ("threats", "threats_digest"):
         if not answered(register, field):
             report.add(BLOCKING, "MISSING_FIELD", "<file>", f"{field} is missing or empty",
@@ -883,203 +942,305 @@ def check_register(register, threats_path, as_of, bases=(), model_path=None):
                    "threats_digest does not match the enumeration's current bytes; the "
                    "vectors may have moved under this matrix, so reconcile the register first")
 
-    vectors = [v for v in (register.get("vectors") or []) if isinstance(v, dict)]
-    mitigations = register.get("mitigations") or []
-    retired = [r for r in (register.get("retired") or []) if isinstance(r, dict)]
-    retired_ids = {str(r.get("id")) for r in retired}
 
-    live_vectors = {str(v.get("id")): v for v in vectors if v.get("id")}
-    live_mitigations = {}
-    for entry in mitigations:
-        if isinstance(entry, dict) and entry.get("id"):
-            live_mitigations.setdefault(str(entry["id"]), entry)
+def check_named(report, entries, where, state, disposition):
+    """The mitigations a disposition names exist, and a mitigated vector names one."""
+    named = [str(m) for m in as_list(disposition.get("mitigations"))]
+    if state == "mitigated" and not named:
+        report.add(BLOCKING, "MISSING_MITIGATION", where,
+                   "mitigated by nothing; name the mitigation, or the state is a label",
+                   field="disposition.mitigations")
+    for mitigation in named:
+        if mitigation not in entries.live_mitigations:
+            why = ("is retired; a retired mitigation protects nothing"
+                   if mitigation in entries.retired_ids else "does not exist in mitigations")
+            report.add(BLOCKING, "UNRESOLVED_MITIGATION", where,
+                       f"names {mitigation}, which {why}", field="disposition.mitigations")
+    return named
 
-    scale = None
-    if vectors:
-        scale, problems = resolve_scale(register)
-        for code, message in problems:
-            report.add(BLOCKING, code, "<file>", message, field="risk_scale")
 
-    # --- dispositions -----------------------------------------------------
-    state_of = {}
-    named_by_vector = {}
-    for entry in vectors:
-        ident = str(entry.get("id") or "<unnamed>")
-        where = f"vectors/{ident}"
-        disposition = entry.get("disposition")
-        if not isinstance(disposition, dict) or not disposition:
-            report.add(BLOCKING, "NO_DISPOSITION", where,
-                       "no disposition; nothing says what is being done about this vector",
-                       field="disposition")
-            continue
+def check_deferral(report, where, disposition, as_of):
+    """A deferral has a real date, it has not passed, and it is not being
+    pushed forward every time it comes due."""
+    if not answered(disposition, "until"):
+        report.add(BLOCKING, "MISSING_UNTIL", where,
+                   "deferred with no until; a deferral that cannot expire is an "
+                   "acceptance with nobody accountable", field="disposition.until")
+        return
+    until = as_date(disposition["until"])
+    if until is None:
+        report.add(BLOCKING, "BAD_UNTIL", where,
+                   f"until {disposition['until']!r} is not a YYYY-MM-DD date; a "
+                   "milestone goes in until_label, beside a date, never instead "
+                   "of one", field="disposition.until")
+        return
+    if until < as_of:
+        report.add(BLOCKING, "EXPIRED", where,
+                   f"deferred until {until.isoformat()}, which has passed; "
+                   "decide it, or move the date with a reason in history",
+                   field="disposition.until")
+    earlier = [as_date(h.get("until")) for h in disposition.get("history") or []
+               if isinstance(h, dict) and h.get("state") == "deferred"]
+    pushes = [d for d in earlier if d is not None and d < until]
+    if len(pushes) >= 2:
+        report.add(ADVISORY, "PUSHED_UNTIL", where,
+                   f"until has been moved {len(pushes)} times "
+                   f"({', '.join(d.isoformat() for d in sorted(pushes))} → "
+                   f"{until.isoformat()}); a deferral pushed every quarter "
+                   "stays green forever", field="disposition.until")
 
-        state = disposition.get("state")
-        if state not in STATES:
-            report.add(BLOCKING, "BAD_STATE", where,
-                       f"{state!r} is not a disposition; expected one of {', '.join(STATES)}",
-                       field="disposition.state")
-            continue
-        state_of[ident] = state
 
-        if not answered(disposition, "decided"):
-            report.add(BLOCKING, "MISSING_FIELD", where, "decided is unanswered; a decision "
-                       "with no date cannot be asked 'since when'", field="disposition.decided")
-        elif as_date(disposition["decided"]) is None:
-            report.add(BLOCKING, "BAD_DATE", where,
-                       f"decided {disposition['decided']!r} is not a YYYY-MM-DD date",
-                       field="disposition.decided")
+def check_disposition(report, entries, entry, as_of):
+    ident = str(entry.get("id") or "<unnamed>")
+    where = f"vectors/{ident}"
+    disposition = entry.get("disposition")
+    if not isinstance(disposition, dict) or not disposition:
+        report.add(BLOCKING, "NO_DISPOSITION", where,
+                   "no disposition; nothing says what is being done about this vector",
+                   field="disposition")
+        return
 
-        named = [str(m) for m in as_list(disposition.get("mitigations"))]
-        named_by_vector[ident] = named
-        if state == "mitigated" and not named:
-            report.add(BLOCKING, "MISSING_MITIGATION", where,
-                       "mitigated by nothing; name the mitigation, or the state is a label",
+    state = disposition.get("state")
+    if state not in STATES:
+        report.add(BLOCKING, "BAD_STATE", where,
+                   f"{state!r} is not a disposition; expected one of {', '.join(STATES)}",
+                   field="disposition.state")
+        return
+    entries.state_of[ident] = state
+
+    if not answered(disposition, "decided"):
+        report.add(BLOCKING, "MISSING_FIELD", where, "decided is unanswered; a decision "
+                   "with no date cannot be asked 'since when'", field="disposition.decided")
+    elif as_date(disposition["decided"]) is None:
+        report.add(BLOCKING, "BAD_DATE", where,
+                   f"decided {disposition['decided']!r} is not a YYYY-MM-DD date",
+                   field="disposition.decided")
+
+    entries.named_by_vector[ident] = check_named(report, entries, where, state, disposition)
+
+    if state in ("accepted", "deferred"):
+        if not answered(disposition, "owner"):
+            report.add(BLOCKING, "MISSING_OWNER", where,
+                       f"{state} by nobody; an acceptance without an owner is a shrug",
+                       field="disposition.owner")
+        if not answered(disposition, "reason"):
+            report.add(BLOCKING, "MISSING_REASON", where,
+                       f"{state} for no stated reason; a decision nobody can disagree "
+                       "with is not a decision", field="disposition.reason")
+
+    check_risk(report, where, state, disposition.get("risk"), entries.scale)
+
+    if state == "deferred":
+        check_deferral(report, where, disposition, as_of)
+
+
+def check_serves(report, entries, ident, entry, specified, implemented):
+    """The vectors a mitigation serves exist, are live, and are what the
+    mitigation has to have written down for."""
+    where = f"mitigations/{ident}"
+    listed = [str(v) for v in as_list(entry.get("vectors"))]
+    live = []
+    for vector in listed:
+        if vector in entries.live_vectors:
+            live.append(vector)
+            entries.served_by.setdefault(vector, []).append(ident)
+        elif vector not in entries.retired_ids:
+            report.add(BLOCKING, "UNRESOLVED_VECTOR", where,
+                       f"serves {vector}, which does not exist", field="vectors")
+    if listed and not live:
+        report.add(BLOCKING, "ORPHAN_MITIGATION", where,
+                   "serves no live vector; it may be real code protecting nothing anyone "
+                   "tracks — retire it with a reason rather than deleting it",
+                   field="vectors")
+
+    states = {entries.state_of.get(v) for v in live}
+    if "deferred" in states and not specified:
+        report.add(BLOCKING, "SPEC_REQUIRED", where,
+                   "serves a deferred vector but names no specification; the requirement "
+                   "has to reach the work before it is built", field="specified_in")
+    if "mitigated" in states and not implemented and entry.get("verification") == "code":
+        report.add(BLOCKING, "IMPL_REQUIRED", where,
+                   "serves a mitigated vector but names nowhere the control lives; "
+                   "mitigated means it exists, so say where", field="implemented_in")
+
+    for vector in live:
+        if ident not in entries.named_by_vector.get(vector, []) and vector in entries.state_of:
+            report.add(BLOCKING, "DISAGREEING_LINK", f"vectors/{vector}",
+                       f"{ident} serves this vector, but the disposition does not name it",
                        field="disposition.mitigations")
+
+
+def check_mitigation(report, entries, index, entry, seen_ids, bases):
+    if not isinstance(entry, dict):
+        report.add(BLOCKING, "BAD_ITEM", "mitigations", "entries must be mappings")
+        return
+    ident = str(entry.get("id") or f"<unnamed {index}>")
+    where = f"mitigations/{ident}"
+    if not MITIGATION_ID.match(str(entry.get("id") or "")):
+        report.add(BLOCKING, "BAD_ID", where,
+                   f"{entry.get('id')!r} is not of the form MIT-NNNN", field="id")
+    if ident in seen_ids:
+        report.add(BLOCKING, "DUPLICATE_ID", where,
+                   "a second mitigation with this id — two branches took the same "
+                   "number; renumber the later one", field="id")
+    seen_ids.add(ident)
+    if ident in entries.retired_ids:
+        report.add(BLOCKING, "REUSED_ID", where,
+                   f"{ident} is both live and retired; a retired id is never reused",
+                   field="id")
+    for field in MITIGATION_FIELDS:
+        if not answered(entry, field):
+            report.add(BLOCKING, "MISSING_FIELD", where, f"{field} is unanswered",
+                       field=field)
+
+    verification = entry.get("verification")
+    if answered(entry, "verification") and verification not in VERIFICATIONS:
+        report.add(BLOCKING, "BAD_VERIFICATION", where,
+                   f"{verification!r} is not a verification; expected one of "
+                   f"{', '.join(VERIFICATIONS)}", field="verification")
+    if verification == "manual" and not answered(entry, "evidence"):
+        report.add(BLOCKING, "MISSING_EVIDENCE", where,
+                   "verified by hand, with nowhere the evidence lives; a manual control "
+                   "nobody can show is a claim", field="evidence")
+
+    specified = answered(entry, "specified_in")
+    implemented = answered(entry, "implemented_in")
+    if not specified and not implemented:
+        report.add(BLOCKING, "NO_PLACE", where,
+                   "neither specified_in nor implemented_in; a mitigation that exists "
+                   "only in this file is a wish, not a requirement")
+    if specified and not resolves(entry["specified_in"], bases):
+        report.add(BLOCKING, "UNRESOLVED_SPEC", where,
+                   f"specified_in {entry['specified_in']!r} does not resolve to a file; "
+                   "the requirement is claimed to be written somewhere it is not",
+                   field="specified_in")
+
+    check_serves(report, entries, ident, entry, specified, implemented)
+
+
+def check_links_back(report, entries):
+    """A disposition that names a mitigation is named back by it."""
+    for vector, named in entries.named_by_vector.items():
         for mitigation in named:
-            if mitigation not in live_mitigations:
-                why = ("is retired; a retired mitigation protects nothing"
-                       if mitigation in retired_ids else "does not exist in mitigations")
-                report.add(BLOCKING, "UNRESOLVED_MITIGATION", where,
-                           f"names {mitigation}, which {why}", field="disposition.mitigations")
-
-        if state in ("accepted", "deferred"):
-            if not answered(disposition, "owner"):
-                report.add(BLOCKING, "MISSING_OWNER", where,
-                           f"{state} by nobody; an acceptance without an owner is a shrug",
-                           field="disposition.owner")
-            if not answered(disposition, "reason"):
-                report.add(BLOCKING, "MISSING_REASON", where,
-                           f"{state} for no stated reason; a decision nobody can disagree "
-                           "with is not a decision", field="disposition.reason")
-
-        check_risk(report, where, state, disposition.get("risk"), scale)
-
-        if state == "deferred":
-            if not answered(disposition, "until"):
-                report.add(BLOCKING, "MISSING_UNTIL", where,
-                           "deferred with no until; a deferral that cannot expire is an "
-                           "acceptance with nobody accountable", field="disposition.until")
-            else:
-                until = as_date(disposition["until"])
-                if until is None:
-                    report.add(BLOCKING, "BAD_UNTIL", where,
-                               f"until {disposition['until']!r} is not a YYYY-MM-DD date; a "
-                               "milestone goes in until_label, beside a date, never instead "
-                               "of one", field="disposition.until")
-                else:
-                    if until < as_of:
-                        report.add(BLOCKING, "EXPIRED", where,
-                                   f"deferred until {until.isoformat()}, which has passed; "
-                                   "decide it, or move the date with a reason in history",
-                                   field="disposition.until")
-                    earlier = [as_date(h.get("until")) for h in disposition.get("history") or []
-                               if isinstance(h, dict) and h.get("state") == "deferred"]
-                    pushes = [d for d in earlier if d is not None and d < until]
-                    if len(pushes) >= 2:
-                        report.add(ADVISORY, "PUSHED_UNTIL", where,
-                                   f"until has been moved {len(pushes)} times "
-                                   f"({', '.join(d.isoformat() for d in sorted(pushes))} → "
-                                   f"{until.isoformat()}); a deferral pushed every quarter "
-                                   "stays green forever", field="disposition.until")
-
-    # --- mitigations ------------------------------------------------------
-    served_by = {}
-    seen_ids = set()
-    for index, entry in enumerate(mitigations):
-        if not isinstance(entry, dict):
-            report.add(BLOCKING, "BAD_ITEM", "mitigations", "entries must be mappings")
-            continue
-        ident = str(entry.get("id") or f"<unnamed {index}>")
-        where = f"mitigations/{ident}"
-        if not MITIGATION_ID.match(str(entry.get("id") or "")):
-            report.add(BLOCKING, "BAD_ID", where,
-                       f"{entry.get('id')!r} is not of the form MIT-NNNN", field="id")
-        if ident in seen_ids:
-            report.add(BLOCKING, "DUPLICATE_ID", where,
-                       "a second mitigation with this id — two branches took the same "
-                       "number; renumber the later one", field="id")
-        seen_ids.add(ident)
-        if ident in retired_ids:
-            report.add(BLOCKING, "REUSED_ID", where,
-                       f"{ident} is both live and retired; a retired id is never reused",
-                       field="id")
-        for field in MITIGATION_FIELDS:
-            if not answered(entry, field):
-                report.add(BLOCKING, "MISSING_FIELD", where, f"{field} is unanswered",
-                           field=field)
-
-        verification = entry.get("verification")
-        if answered(entry, "verification") and verification not in VERIFICATIONS:
-            report.add(BLOCKING, "BAD_VERIFICATION", where,
-                       f"{verification!r} is not a verification; expected one of "
-                       f"{', '.join(VERIFICATIONS)}", field="verification")
-        if verification == "manual" and not answered(entry, "evidence"):
-            report.add(BLOCKING, "MISSING_EVIDENCE", where,
-                       "verified by hand, with nowhere the evidence lives; a manual control "
-                       "nobody can show is a claim", field="evidence")
-
-        specified = answered(entry, "specified_in")
-        implemented = answered(entry, "implemented_in")
-        if not specified and not implemented:
-            report.add(BLOCKING, "NO_PLACE", where,
-                       "neither specified_in nor implemented_in; a mitigation that exists "
-                       "only in this file is a wish, not a requirement")
-        if specified and not resolves(entry["specified_in"], bases):
-            report.add(BLOCKING, "UNRESOLVED_SPEC", where,
-                       f"specified_in {entry['specified_in']!r} does not resolve to a file; "
-                       "the requirement is claimed to be written somewhere it is not",
-                       field="specified_in")
-
-        listed = [str(v) for v in as_list(entry.get("vectors"))]
-        live = []
-        for vector in listed:
-            if vector in live_vectors:
-                live.append(vector)
-                served_by.setdefault(vector, []).append(ident)
-            elif vector not in retired_ids:
-                report.add(BLOCKING, "UNRESOLVED_VECTOR", where,
-                           f"serves {vector}, which does not exist", field="vectors")
-        if listed and not live:
-            report.add(BLOCKING, "ORPHAN_MITIGATION", where,
-                       "serves no live vector; it may be real code protecting nothing anyone "
-                       "tracks — retire it with a reason rather than deleting it",
-                       field="vectors")
-
-        states = {state_of.get(v) for v in live}
-        if "deferred" in states and not specified:
-            report.add(BLOCKING, "SPEC_REQUIRED", where,
-                       "serves a deferred vector but names no specification; the requirement "
-                       "has to reach the work before it is built", field="specified_in")
-        if "mitigated" in states and not implemented and verification == "code":
-            report.add(BLOCKING, "IMPL_REQUIRED", where,
-                       "serves a mitigated vector but names nowhere the control lives; "
-                       "mitigated means it exists, so say where", field="implemented_in")
-
-        for vector in live:
-            if ident not in named_by_vector.get(vector, []) and vector in state_of:
-                report.add(BLOCKING, "DISAGREEING_LINK", f"vectors/{vector}",
-                           f"{ident} serves this vector, but the disposition does not name it",
-                           field="disposition.mitigations")
-
-    for vector, named in named_by_vector.items():
-        for mitigation in named:
-            if mitigation in live_mitigations and mitigation not in served_by.get(vector, []):
+            if (mitigation in entries.live_mitigations
+                    and mitigation not in entries.served_by.get(vector, [])):
                 report.add(BLOCKING, "DISAGREEING_LINK", f"mitigations/{mitigation}",
                            f"named by {vector}'s disposition, but does not list it in vectors",
                            field="vectors")
 
+
+def check_all_accepted(report, entries):
     by_element = {}
-    for entry in vectors:
+    for entry in entries.vectors:
         by_element.setdefault(str(entry.get("element")), []).append(str(entry.get("id")))
     for element, ids in by_element.items():
-        if len(ids) >= 2 and all(state_of.get(i) == "accepted" for i in ids):
+        if len(ids) >= 2 and all(entries.state_of.get(i) == "accepted" for i in ids):
             report.add(ADVISORY, "ALL_ACCEPTED", element,
                        f"every one of its {len(ids)} vectors is accepted; sometimes right, "
                        "always worth a second look")
 
-    check_answer_records(register, report, state_of, live_vectors, model_path)
 
+def check_register(register, threats_path, as_of, bases=(), model_path=None):
+    """Everything that must be true of a register on its own.
+
+    Imported by check_matrix.py, which adds the guidance an interview needs.
+    Currency against the documents above and below is check_currency's.
+    """
+    report = Report()
+    check_pins(report, register, threats_path)
+    entries = Entries(register)
+    if entries.vectors:
+        entries.scale, problems = resolve_scale(register)
+        for code, message in problems:
+            report.add(BLOCKING, code, "<file>", message, field="risk_scale")
+
+    for entry in entries.vectors:
+        check_disposition(report, entries, entry, as_of)
+    seen_ids = set()
+    for index, entry in enumerate(entries.mitigations):
+        check_mitigation(report, entries, index, entry, seen_ids, bases)
+    check_links_back(report, entries)
+    check_all_accepted(report, entries)
+
+    check_answer_records(register, report, entries.state_of, entries.live_vectors, model_path)
     return report
+
+
+def check_routing(report, where, entry, state_of, live_vectors, model_path):
+    """Where an answer sends its finding: a vector that exists, argued with
+    where it is mitigated, or a dismissal pinned to the model it argued from."""
+    answer = entry.get("answer")
+    if answer == "vector":
+        named = str(entry.get("vector") or "")
+        if not named:
+            report.add(BLOCKING, "MISSING_FIELD", where,
+                       "answers 'vector' but names none", field="vector")
+        elif named not in live_vectors:
+            report.add(BLOCKING, "UNKNOWN_VECTOR", where,
+                       f"names {named}, which this register does not hold", field="vector")
+        elif state_of.get(named) == "mitigated":
+            # The case this capability is worth the most for: evidence arguing
+            # with an attestation. Silence is not one of the ways to close it.
+            contradiction = entry.get("contradiction")
+            if contradiction not in CONTRADICTIONS:
+                report.add(BLOCKING, "CONTRADICTION", where,
+                           f"{named} is dispositioned mitigated and a scanner found this "
+                           "anyway; say which — the control does not do what it claimed "
+                           f"(contradiction: {CONTRADICTIONS[0]}), or the finding is wrong "
+                           f"(contradiction: {CONTRADICTIONS[1]})", field="contradiction")
+    elif answer in PINNED_ANSWERS:
+        stored = str(entry.get("model_digest") or "")
+        if not stored:
+            report.add(BLOCKING, "MISSING_FIELD", where,
+                       f"answers {answer!r} but records no model_digest; the argument was "
+                       "made against a model, so say which one", field="model_digest")
+        elif (model_path and os.path.exists(model_path)
+              and not model_is_current(stored, model_path)):
+            report.add(ADVISORY, "LAPSED_ANSWER", where,
+                       "argued against a model that has since changed; read the change, "
+                       "then re-argue it or record the new digest to say you have",
+                       field="model_digest")
+
+
+def check_answer_record(report, index, entry, seen, state_of, live_vectors, model_path):
+    if not isinstance(entry, dict):
+        report.add(BLOCKING, "BAD_ITEM", "answers", "entries must be mappings")
+        return
+
+    ident = str(entry.get("id") or f"#{index + 1}")
+    where = f"answers/{ident}"
+    for field in ANSWER_FIELDS:
+        if not answered(entry, field):
+            report.add(BLOCKING, "MISSING_FIELD", where,
+                       f"{field} is unanswered; an answer nobody can disagree with is "
+                       "not an answer", field=field)
+    if entry.get("id"):
+        if not ANSWER_ID.match(str(entry["id"])):
+            report.add(BLOCKING, "BAD_ID", where,
+                       f"{entry['id']!r} is not an ANS-NNNN id", field="id")
+        elif str(entry["id"]) in seen:
+            report.add(BLOCKING, "DUPLICATE_ID", where, "answered twice under one id",
+                       field="id")
+        seen.add(str(entry["id"]))
+
+    answer = entry.get("answer")
+    if answer is not None and answer not in ANSWERS:
+        report.add(BLOCKING, "BAD_ANSWER", where,
+                   f"{answer!r} is not an answer; expected one of {', '.join(ANSWERS)}",
+                   field="answer")
+        return
+
+    check_routing(report, where, entry, state_of, live_vectors, model_path)
+
+    if answer == "model_gap":
+        report.add(ADVISORY, "MODEL_GAP", where,
+                   "a scanner found something in a part of the system the model does not "
+                   "describe; the repair is the diagram, not the register")
+
+    if answered(entry, "answered") and as_date(entry["answered"]) is None:
+        report.add(BLOCKING, "BAD_DATE", where,
+                   f"answered {entry['answered']!r} is not a YYYY-MM-DD date",
+                   field="answered")
 
 
 def check_answer_records(register, report, state_of, live_vectors, model_path=None):
@@ -1101,80 +1262,81 @@ def check_answer_records(register, report, state_of, live_vectors, model_path=No
     if not isinstance(answers, list):
         report.add(BLOCKING, "BAD_SECTION", "answers", "answers must be a list", field="answers")
         return
-
     seen = set()
     for index, entry in enumerate(answers):
-        if not isinstance(entry, dict):
-            report.add(BLOCKING, "BAD_ITEM", "answers", "entries must be mappings")
-            continue
-
-        ident = str(entry.get("id") or f"#{index + 1}")
-        where = f"answers/{ident}"
-        for field in ANSWER_FIELDS:
-            if not answered(entry, field):
-                report.add(BLOCKING, "MISSING_FIELD", where,
-                           f"{field} is unanswered; an answer nobody can disagree with is "
-                           "not an answer", field=field)
-        if entry.get("id"):
-            if not ANSWER_ID.match(str(entry["id"])):
-                report.add(BLOCKING, "BAD_ID", where,
-                           f"{entry['id']!r} is not an ANS-NNNN id", field="id")
-            elif str(entry["id"]) in seen:
-                report.add(BLOCKING, "DUPLICATE_ID", where, "answered twice under one id",
-                           field="id")
-            seen.add(str(entry["id"]))
-
-        answer = entry.get("answer")
-        if answer is not None and answer not in ANSWERS:
-            report.add(BLOCKING, "BAD_ANSWER", where,
-                       f"{answer!r} is not an answer; expected one of {', '.join(ANSWERS)}",
-                       field="answer")
-            continue
-
-        if answer == "vector":
-            named = str(entry.get("vector") or "")
-            if not named:
-                report.add(BLOCKING, "MISSING_FIELD", where,
-                           "answers 'vector' but names none", field="vector")
-            elif named not in live_vectors:
-                report.add(BLOCKING, "UNKNOWN_VECTOR", where,
-                           f"names {named}, which this register does not hold", field="vector")
-            elif state_of.get(named) == "mitigated":
-                # The case this capability is worth the most for: evidence
-                # arguing with an attestation. Silence is not one of the ways
-                # to close it.
-                contradiction = entry.get("contradiction")
-                if contradiction not in CONTRADICTIONS:
-                    report.add(BLOCKING, "CONTRADICTION", where,
-                               f"{named} is dispositioned mitigated and a scanner found this "
-                               "anyway; say which — the control does not do what it claimed "
-                               f"(contradiction: {CONTRADICTIONS[0]}), or the finding is wrong "
-                               f"(contradiction: {CONTRADICTIONS[1]})", field="contradiction")
-        elif answer in PINNED_ANSWERS:
-            stored = str(entry.get("model_digest") or "")
-            if not stored:
-                report.add(BLOCKING, "MISSING_FIELD", where,
-                           f"answers {answer!r} but records no model_digest; the argument was "
-                           "made against a model, so say which one", field="model_digest")
-            elif (model_path and os.path.exists(model_path)
-                  and not model_is_current(stored, model_path)):
-                report.add(ADVISORY, "LAPSED_ANSWER", where,
-                           "argued against a model that has since changed; read the change, "
-                           "then re-argue it or record the new digest to say you have",
-                           field="model_digest")
-
-        if answer == "model_gap":
-            report.add(ADVISORY, "MODEL_GAP", where,
-                       "a scanner found something in a part of the system the model does not "
-                       "describe; the repair is the diagram, not the register")
-
-        if answered(entry, "answered") and as_date(entry["answered"]) is None:
-            report.add(BLOCKING, "BAD_DATE", where,
-                       f"answered {entry['answered']!r} is not a YYYY-MM-DD date",
-                       field="answered")
+        check_answer_record(report, index, entry, seen, state_of, live_vectors, model_path)
 
 
 # --- currency against the blueprint -----------------------------------------
+
+def check_model_pin(report, enumeration, model_path, threats_path):
+    """The enumeration was run against the model as it now stands."""
+    stored = enumeration.get("model_digest")
+    if stored and os.path.exists(model_path) and not model_is_current(stored, model_path):
+        where = f"<enumeration {os.path.basename(threats_path or '')}>"
+        report.add(BLOCKING, "STALE_MODEL", where,
+                   "model_digest does not match what the model now says; the enumeration "
+                   "was run against a model that has since changed, so re-run it",
+                   field="model_digest")
+
+
+def spec_coverage(report, where, entry, path, bases):
+    """A specification that resolved to a file: still in force, and unchanged
+    since the mitigation was decided against it."""
+    status, superseded_by = read_status(path)
+    shown = os.path.relpath(path, bases[-1] if bases else ".")
+    record = {"state": "covered", "document": shown, "status": status}
+
+    if retired_status(status):
+        record["state"] = "superseded"
+        trailer = f"; superseded by {superseded_by}" if superseded_by else ""
+        report.add(BLOCKING, "SUPERSEDED_SPEC", where,
+                   f"{shown} is {status}{trailer}; this control answers a decision nobody "
+                   "holds any more, so the mitigation needs re-deciding", field="specified_in")
+    elif status is None:
+        report.add(ADVISORY, "STATUS_UNKNOWN", where,
+                   f"{shown} carries no status this can read, so a supersession would go "
+                   "unnoticed; a frontmatter status, or a Status row, is enough",
+                   field="specified_in")
+
+    stored = entry.get("specified_digest")
+    if not stored:
+        report.add(ADVISORY, "NO_DIGEST", where,
+                   f"no specified_digest recorded against {shown}, so an edit to the "
+                   "requirement cannot be detected", field="specified_digest")
+    elif stored != digest(path):
+        record["state"] = "stale"
+        report.add(BLOCKING, "STALE_SPEC", where,
+                   f"{shown} has changed since this mitigation was decided against it; "
+                   "read the change, then either revise the mitigation or record the new "
+                   "digest to say you have", field="specified_digest")
+    return record
+
+
+def coverage_of(report, entry, state_of, bases):
+    """Where one mitigation's requirement is written, and whether it still holds."""
+    where = f"mitigations/{entry.get('id') or '<unnamed>'}"
+    if not answered(entry, "specified_in"):
+        served = [str(v) for v in as_list(entry.get("vectors"))]
+        if not any(state_of.get(v) == "deferred" for v in served):
+            report.add(ADVISORY, "UNCOVERED", where,
+                       "no specified_in; nothing says where this control is required, so "
+                       "nothing downstream can notice the requirement changing",
+                       field="specified_in")
+        return {"state": "uncovered", "document": None, "status": None}
+
+    reference = entry["specified_in"]
+    path = reference_path(reference, bases)
+    if path is not None:
+        return spec_coverage(report, where, entry, path, bases)
+    if URL.match(str(reference).strip()):
+        report.add(ADVISORY, "STATUS_UNKNOWN", where,
+                   f"{reference} is a URL; it is accepted as resolving and never "
+                   "fetched, so neither its status nor its drift can be seen",
+                   field="specified_in")
+        return {"state": "covered", "document": str(reference), "status": None, "remote": True}
+    return {"state": "missing", "document": str(reference), "status": None}
+
 
 def check_currency(register, report, bases, enumeration=None, model_path=None,
                    threats_path=None):
@@ -1183,16 +1345,8 @@ def check_currency(register, report, bases, enumeration=None, model_path=None,
 
     Returns the coverage of each mitigation, which is what the summary renders.
     """
-    coverage = {}
-
     if enumeration is not None and model_path is not None:
-        stored = enumeration.get("model_digest")
-        if stored and os.path.exists(model_path) and not model_is_current(stored, model_path):
-            where = f"<enumeration {os.path.basename(threats_path or '')}>"
-            report.add(BLOCKING, "STALE_MODEL", where,
-                       "model_digest does not match what the model now says; the enumeration "
-                       "was run against a model that has since changed, so re-run it",
-                       field="model_digest")
+        check_model_pin(report, enumeration, model_path, threats_path)
 
     vectors = [v for v in (register.get("vectors") or []) if isinstance(v, dict)]
     state_of = {}
@@ -1201,66 +1355,11 @@ def check_currency(register, report, bases, enumeration=None, model_path=None,
         if isinstance(disposition, dict):
             state_of[str(entry.get("id"))] = disposition.get("state")
 
+    coverage = {}
     for entry in register.get("mitigations") or []:
-        if not isinstance(entry, dict):
-            continue
-        ident = str(entry.get("id") or "<unnamed>")
-        where = f"mitigations/{ident}"
-        served = [str(v) for v in as_list(entry.get("vectors"))]
-
-        if not answered(entry, "specified_in"):
-            coverage[ident] = {"state": "uncovered", "document": None, "status": None}
-            if not any(state_of.get(v) == "deferred" for v in served):
-                report.add(ADVISORY, "UNCOVERED", where,
-                           "no specified_in; nothing says where this control is required, so "
-                           "nothing downstream can notice the requirement changing",
-                           field="specified_in")
-            continue
-
-        reference = entry["specified_in"]
-        path = reference_path(reference, bases)
-        if path is None:
-            if URL.match(str(reference).strip()):
-                coverage[ident] = {"state": "covered", "document": str(reference),
-                                   "status": None, "remote": True}
-                report.add(ADVISORY, "STATUS_UNKNOWN", where,
-                           f"{reference} is a URL; it is accepted as resolving and never "
-                           "fetched, so neither its status nor its drift can be seen",
-                           field="specified_in")
-            else:
-                coverage[ident] = {"state": "missing", "document": str(reference), "status": None}
-            continue
-
-        status, superseded_by = read_status(path)
-        shown = os.path.relpath(path, bases[-1] if bases else ".")
-        record = {"state": "covered", "document": shown, "status": status}
-
-        if retired_status(status):
-            record["state"] = "superseded"
-            trailer = f"; superseded by {superseded_by}" if superseded_by else ""
-            report.add(BLOCKING, "SUPERSEDED_SPEC", where,
-                       f"{shown} is {status}{trailer}; this control answers a decision nobody "
-                       "holds any more, so the mitigation needs re-deciding", field="specified_in")
-        elif status is None:
-            report.add(ADVISORY, "STATUS_UNKNOWN", where,
-                       f"{shown} carries no status this can read, so a supersession would go "
-                       "unnoticed; a frontmatter status, or a Status row, is enough",
-                       field="specified_in")
-
-        stored = entry.get("specified_digest")
-        if not stored:
-            report.add(ADVISORY, "NO_DIGEST", where,
-                       f"no specified_digest recorded against {shown}, so an edit to the "
-                       "requirement cannot be detected", field="specified_digest")
-        elif stored != digest(path):
-            record["state"] = "stale"
-            report.add(BLOCKING, "STALE_SPEC", where,
-                       f"{shown} has changed since this mitigation was decided against it; "
-                       "read the change, then either revise the mitigation or record the new "
-                       "digest to say you have", field="specified_digest")
-
-        coverage[ident] = record
-
+        if isinstance(entry, dict):
+            ident = str(entry.get("id") or "<unnamed>")
+            coverage[ident] = coverage_of(report, entry, state_of, bases)
     return coverage
 
 
@@ -1402,6 +1501,49 @@ def load(path, what):
     return document
 
 
+def check_chain(path, root, as_of, report):
+    """One register and everything below it: its rendered views, its
+    enumeration, the register itself, and its currency. Returns the register
+    and the coverage of its mitigations."""
+    here = os.path.dirname(os.path.abspath(path))
+    bases = (here, root)
+    register = load(path, "register")
+
+    check_rendered(path, path[: -len(".vectors.yaml")] + ".vectors.md",
+                   "register", report)
+    check_rendered(path, path[: -len(".vectors.yaml")] + ".matrix.md",
+                   "register", report)
+
+    reference = register.get("threats")
+    threats_path = os.path.join(here, reference) if reference else None
+    enumeration, model_path = None, None
+    if threats_path and os.path.exists(threats_path):
+        check_rendered(threats_path, threats_path[: -len(".yaml")] + ".md",
+                       "enumeration", report)
+        enumeration = load(threats_path, "enumeration")
+        model = enumeration.get("model")
+        if model:
+            model_path = os.path.join(os.path.dirname(threats_path), model)
+    elif reference:
+        report.add(BLOCKING, "UNRESOLVED_SPEC", "<file>",
+                   f"threats names {reference}, which is not beside the register",
+                   field="threats", source=path)
+
+    if threats_path and os.path.exists(threats_path):
+        part = check_register(register, threats_path, as_of, bases=bases,
+                              model_path=model_path)
+        for gap in part.gaps:
+            gap["source"] = path
+        report.gaps.extend(part.gaps)
+
+    before = len(report.gaps)
+    coverage = check_currency(register, report, bases, enumeration=enumeration,
+                              model_path=model_path, threats_path=threats_path)
+    for gap in report.gaps[before:]:
+        gap["source"] = path
+    return register, coverage
+
+
 def check_repository(root, as_of, excludes=()):
     report = Report()
     registers, coverage, pulse = {}, {}, []
@@ -1423,43 +1565,7 @@ def check_repository(root, as_of, excludes=()):
 
     for path in paths:
         slug = os.path.basename(path)[: -len(".vectors.yaml")]
-        here = os.path.dirname(os.path.abspath(path))
-        bases = (here, root)
-        register = load(path, "register")
-        registers[slug] = register
-
-        check_rendered(path, path[: -len(".vectors.yaml")] + ".vectors.md",
-                       "register", report)
-        check_rendered(path, path[: -len(".vectors.yaml")] + ".matrix.md",
-                       "register", report)
-
-        reference = register.get("threats")
-        threats_path = os.path.join(here, reference) if reference else None
-        enumeration, model_path = None, None
-        if threats_path and os.path.exists(threats_path):
-            check_rendered(threats_path, threats_path[: -len(".yaml")] + ".md",
-                           "enumeration", report)
-            enumeration = load(threats_path, "enumeration")
-            model = enumeration.get("model")
-            if model:
-                model_path = os.path.join(os.path.dirname(threats_path), model)
-        elif reference:
-            report.add(BLOCKING, "UNRESOLVED_SPEC", "<file>",
-                       f"threats names {reference}, which is not beside the register",
-                       field="threats", source=path)
-
-        if threats_path and os.path.exists(threats_path):
-            part = check_register(register, threats_path, as_of, bases=bases,
-                                  model_path=model_path)
-            for gap in part.gaps:
-                gap["source"] = path
-            report.gaps.extend(part.gaps)
-
-        before = len(report.gaps)
-        coverage[slug] = check_currency(register, report, bases, enumeration=enumeration,
-                                        model_path=model_path, threats_path=threats_path)
-        for gap in report.gaps[before:]:
-            gap["source"] = path
+        registers[slug], coverage[slug] = check_chain(path, root, as_of, report)
 
     annotations = scan_annotations(root, excludes)
     before = len(report.gaps)
@@ -1494,7 +1600,7 @@ LIMIT = ("Coverage, not proof: this says the paperwork is consistent and current
          "never that any control works.")
 
 
-def main(argv=None):
+def arguments():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", metavar="DIR", default=".",
@@ -1504,8 +1610,49 @@ def main(argv=None):
     parser.add_argument("--exclude", metavar="GLOB", action="append", default=[],
                         help="skip matching files in the annotation scan; repeatable")
     parser.add_argument("--json", action="store_true", help="emit findings and summary as JSON")
-    args = parser.parse_args(argv)
+    return parser
 
+
+def print_findings(report, root):
+    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
+        if not gaps:
+            continue
+        groups = {}
+        for gap in gaps:
+            groups.setdefault((gap["source"], gap["element"]), []).append(gap)
+        print(f"\n{severity} — {len(gaps)} finding(s)")
+        print("=" * 60)
+        for (source, element), items in groups.items():
+            where = f"{os.path.relpath(source, root)} · {element}" if source else element
+            print(f"\n  {where}")
+            for gap in items:
+                field = f"{gap['field']}: " if gap["field"] else ""
+                print(f"    - {field}{gap['message']}")
+
+
+def print_summary(summary):
+    print("\nCoverage by specification")
+    print("=" * 60)
+    for document, entry in sorted(summary["by_specification"].items()):
+        status = entry["status"] or "status unknown"
+        print(f"  {document} [{status}] — {', '.join(entry['mitigations'])}")
+    if summary["annotations"]:
+        print(f"\n{summary['annotations']} annotation(s) in tracked files.")
+
+    for entry in summary["pulse"]:
+        print(f"\nCurrency of {entry['model']}")
+        print("=" * 60)
+        cycle = (f"read again every {entry['cycle']} days" if entry["cycle"]
+                 else "no review cycle set")
+        print(f"  {entry['reviews']} of {entry['documents']} design document(s) "
+              f"reviewed — {cycle}")
+        if entry["oldest"]:
+            print(f"  oldest reading: {entry['oldest']['path']} on "
+                  f"{entry['oldest']['reviewed']}, {entry['oldest']['age_days']} days ago")
+
+
+def main(argv=None):
+    args = arguments().parse_args(argv)
     as_of = datetime.date.today()
     if args.as_of:
         as_of = as_date(args.as_of)
@@ -1531,40 +1678,8 @@ def main(argv=None):
         return 0 if not report.blocking else 1
 
     print(f"vector {VENDORED_FROM} — as of {as_of.isoformat()}")
-    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
-        if not gaps:
-            continue
-        groups = {}
-        for gap in gaps:
-            groups.setdefault((gap["source"], gap["element"]), []).append(gap)
-        print(f"\n{severity} — {len(gaps)} finding(s)")
-        print("=" * 60)
-        for (source, element), items in groups.items():
-            where = f"{os.path.relpath(source, root)} · {element}" if source else element
-            print(f"\n  {where}")
-            for gap in items:
-                field = f"{gap['field']}: " if gap["field"] else ""
-                print(f"    - {field}{gap['message']}")
-
-    print("\nCoverage by specification")
-    print("=" * 60)
-    for document, entry in sorted(summary["by_specification"].items()):
-        status = entry["status"] or "status unknown"
-        print(f"  {document} [{status}] — {', '.join(entry['mitigations'])}")
-    if summary["annotations"]:
-        print(f"\n{summary['annotations']} annotation(s) in tracked files.")
-
-    for entry in summary["pulse"]:
-        print(f"\nCurrency of {entry['model']}")
-        print("=" * 60)
-        cycle = (f"read again every {entry['cycle']} days" if entry["cycle"]
-                 else "no review cycle set")
-        print(f"  {entry['reviews']} of {entry['documents']} design document(s) "
-              f"reviewed — {cycle}")
-        if entry["oldest"]:
-            print(f"  oldest reading: {entry['oldest']['path']} on "
-                  f"{entry['oldest']['reviewed']}, {entry['oldest']['age_days']} days ago")
-
+    print_findings(report, root)
+    print_summary(summary)
     print()
     if report.blocking:
         print(f"Not current: {len(report.blocking)} blocking, {len(report.advisory)} advisory.")

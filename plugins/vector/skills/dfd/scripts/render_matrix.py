@@ -25,7 +25,12 @@ import sys
 try:
     import yaml
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SECTIONS = ("actors", "processes", "stores", "flows")
@@ -158,354 +163,409 @@ def in_order(vectors, model):
     return sorted(vectors, key=lambda v: rank.get(v.get("element"), (len(SECTIONS), 0)))
 
 
-def render(register, model, report, as_of, open_only=False, links=None):
-    vectors = [v for v in register.get("vectors") or [] if isinstance(v, dict)]
-    mitigations = [m for m in register.get("mitigations") or [] if isinstance(m, dict)]
-    retired = [r for r in register.get("retired") or [] if isinstance(r, dict)]
-    links = links or Links()
-    flagged = {}
-    for gap in report.gaps:
-        flagged.setdefault(gap["element"], []).append(gap["code"])
+def state(vector):
+    disposition = vector.get("disposition")
+    if not isinstance(disposition, dict) or not disposition.get("state"):
+        return None
+    return disposition["state"]
 
-    # Each mitigation's heading, built once and used twice: as the heading, and
-    # as the fragment every mention of that id links to. A heading therefore
-    # cannot move without taking its links with it. This one needs no
-    # repository — a section of this document is always there to point at — so
-    # it is not conditional the way the outward links are.
-    headings, section_of = {}, {}
-    for entry in mitigations:
-        ident = str(entry.get("id"))
-        orphaned = "ORPHAN_MITIGATION" in flagged.get(f"mitigations/{ident}", [])
-        headings[ident] = (f"{entry.get('id')} — {cell(entry.get('title'))}"
-                           + (" · **orphaned**" if orphaned else ""))
-        section_of[ident] = "#" + anchor(headings[ident])
 
-    def mitigation_at(ident):
-        return section_of.get(str(ident))
+def disposition_of(vector):
+    return vector.get("disposition") if isinstance(vector.get("disposition"), dict) else {}
 
-    def state(vector):
-        disposition = vector.get("disposition")
-        if not isinstance(disposition, dict) or not disposition.get("state"):
-            return None
-        return disposition["state"]
 
-    def disposition(vector):
-        return vector.get("disposition") if isinstance(vector.get("disposition"), dict) else {}
+class View:
+    """What every section of the document reads: the register's entries, the
+    check's findings about them, and the scale their ratings are placed on."""
 
-    undecided = [v for v in vectors if state(v) not in ("mitigated", "accepted", "deferred")]
-    counts = {s: sum(1 for v in vectors if state(v) == s)
-              for s in ("mitigated", "accepted", "deferred")}
-    without = [v for v in vectors if state(v) and not disposition(v).get("mitigations")]
+    def __init__(self, register, model, report, links):
+        self.register, self.model, self.report = register, model, report
+        self.vectors = [v for v in register.get("vectors") or [] if isinstance(v, dict)]
+        self.mitigations = [m for m in register.get("mitigations") or []
+                            if isinstance(m, dict)]
+        self.retired = [r for r in register.get("retired") or [] if isinstance(r, dict)]
+        self.links = links or Links()
+        self.flagged = {}
+        for gap in report.gaps:
+            self.flagged.setdefault(gap["element"], []).append(gap["code"])
 
-    # --- ratings, per ADR-0014 ---------------------------------------------
-    # Levels and a band, looked up from the scale the register names; never a
-    # product, never a total. A rating the scale cannot place is shown as
-    # unrated rather than guessed at — the check has already said why.
-    traceability = sibling("check_traceability")
-    scale, _ = traceability.resolve_scale(register)
-    bands = list(scale["bands"]) if scale else []
+        # Each mitigation's heading, built once and used twice: as the heading,
+        # and as the fragment every mention of that id links to. A heading
+        # therefore cannot move without taking its links with it. This one
+        # needs no repository — a section of this document is always there to
+        # point at — so it is not conditional the way the outward links are.
+        self.headings, self.section_of = {}, {}
+        for entry in self.mitigations:
+            ident = str(entry.get("id"))
+            orphaned = "ORPHAN_MITIGATION" in self.flagged.get(f"mitigations/{ident}", [])
+            self.headings[ident] = (f"{entry.get('id')} — {cell(entry.get('title'))}"
+                                    + (" · **orphaned**" if orphaned else ""))
+            self.section_of[ident] = "#" + anchor(self.headings[ident])
 
-    def rating(vector, which):
-        risk = disposition(vector).get("risk")
+        # Levels and a band, looked up from the scale the register names, per
+        # ADR-0014; never a product, never a total. A rating the scale cannot
+        # place is shown as unrated rather than guessed at — the check has
+        # already said why.
+        self.traceability = sibling("check_traceability")
+        self.scale, _ = self.traceability.resolve_scale(register)
+        self.bands = list(self.scale["bands"]) if self.scale else []
+
+    def mitigation_at(self, ident):
+        return self.section_of.get(str(ident))
+
+    def codes(self, vector):
+        return self.flagged.get(f"vectors/{vector.get('id')}", [])
+
+    def rating(self, vector, which):
+        risk = disposition_of(vector).get("risk")
         entry = risk.get(which) if isinstance(risk, dict) else None
-        if scale is None or not isinstance(entry, dict):
+        if self.scale is None or not isinstance(entry, dict):
             return None
-        likelihood = traceability.as_level(entry.get("likelihood"))
-        impact = traceability.as_level(entry.get("impact"))
+        likelihood = self.traceability.as_level(entry.get("likelihood"))
+        impact = self.traceability.as_level(entry.get("impact"))
         if likelihood is None or impact is None:
             return None
         return {"likelihood": likelihood, "impact": impact, "entry": entry,
-                "band": traceability.look_up(scale, likelihood, impact)}
+                "band": self.traceability.look_up(self.scale, likelihood, impact)}
 
-    def now(vector):
-        return ((state(vector) == "mitigated" and rating(vector, "residual"))
-                or rating(vector, "inherent"))
+    def inherent(self, vector):
+        return self.rating(vector, "inherent")
 
-    def rank(found):
-        return bands.index(found["band"]) if found else -1
+    def now(self, vector):
+        return ((state(vector) == "mitigated" and self.rating(vector, "residual"))
+                or self.inherent(vector))
 
-    def shown_risk(found):
+    def rank(self, found):
+        return self.bands.index(found["band"]) if found else -1
+
+    def shown_risk(self, found):
         if not found:
             return "unrated"
-        return (f"{SQUARES[rank(found)]} {found['band']} "
+        return (f"{SQUARES[self.rank(found)]} {found['band']} "
                 f"`L{found['likelihood']} · I{found['impact']}`")
 
-    lines = [f"# Threat matrix — {model.get('system', {}).get('name', 'unnamed')}",
-             "",
-             f"Generated from the register beside "
-             f"{paths(register.get('threats'), links.reference)} by "
-             f"`render_matrix.py`, as of {as_of.isoformat()}. Do not edit; regenerate.",
-             ""]
+    def vector_ids(self, vectors):
+        return ", ".join(linked(f"**{v.get('id')}**", self.links.vector(v.get("id")))
+                         for v in vectors)
 
-    # --- 1. summary ---------------------------------------------------------
-    lines += ["## Summary", ""]
+
+def header(view, as_of):
+    return [f"# Threat matrix — {view.model.get('system', {}).get('name', 'unnamed')}",
+            "",
+            f"Generated from the register beside "
+            f"{paths(view.register.get('threats'), view.links.reference)} by "
+            f"`render_matrix.py`, as of {as_of.isoformat()}. Do not edit; regenerate.",
+            ""]
+
+
+def summary(view):
+    lines = ["## Summary", ""]
+    vectors = view.vectors
     if not vectors:
-        why = register.get("empty_because")
-        lines += ["No vectors are tracked." + (f" {cell(why)}" if why else ""), ""]
-    else:
-        lines += ["| | Vectors |", "| :--- | ---: |",
-                  f"| Tracked | {len(vectors)} |",
-                  f"| Mitigated | {counts['mitigated']} |",
-                  f"| Accepted | {counts['accepted']} |",
-                  f"| Deferred | {counts['deferred']} |",
-                  f"| **Undecided** | **{len(undecided)}** |" if undecided
-                  else f"| Undecided | {len(undecided)} |",
-                  f"| Carrying no mitigation | {len(without)} |"]
-        if scale:
-            for index in reversed(range(len(bands))):
-                count = sum(1 for v in vectors if rank(now(v)) == index)
-                lines.append(f"| Now {SQUARES[index]} {bands[index]} | {count} |")
-            unrated = sum(1 for v in vectors if not rating(v, "inherent"))
-            if unrated:
-                lines.append(f"| **Not rated** | **{unrated}** |")
-        lines.append("")
-        if undecided:
-            lines += ["Undecided: "
-                      + ", ".join(linked(f"**{v.get('id')}**", links.vector(v.get("id")))
-                                  for v in undecided)
-                      + ". The matrix is not finished while one remains.", ""]
+        why = view.register.get("empty_because")
+        return [*lines, "No vectors are tracked." + (f" {cell(why)}" if why else ""), ""]
+    undecided = [v for v in vectors if state(v) not in ("mitigated", "accepted", "deferred")]
+    counts = {s: sum(1 for v in vectors if state(v) == s)
+              for s in ("mitigated", "accepted", "deferred")}
+    without = [v for v in vectors if state(v) and not disposition_of(v).get("mitigations")]
+    lines += ["| | Vectors |", "| :--- | ---: |",
+              f"| Tracked | {len(vectors)} |",
+              f"| Mitigated | {counts['mitigated']} |",
+              f"| Accepted | {counts['accepted']} |",
+              f"| Deferred | {counts['deferred']} |",
+              f"| **Undecided** | **{len(undecided)}** |" if undecided
+              else f"| Undecided | {len(undecided)} |",
+              f"| Carrying no mitigation | {len(without)} |"]
+    if view.scale:
+        for index in reversed(range(len(view.bands))):
+            count = sum(1 for v in vectors if view.rank(view.now(v)) == index)
+            lines.append(f"| Now {SQUARES[index]} {view.bands[index]} | {count} |")
+        unrated = sum(1 for v in vectors if not view.inherent(v))
+        if unrated:
+            lines.append(f"| **Not rated** | **{unrated}** |")
+    lines.append("")
+    if undecided:
+        lines += ["Undecided: " + view.vector_ids(undecided)
+                  + ". The matrix is not finished while one remains.", ""]
+    return lines
 
-    # --- 1b. where the risk sits --------------------------------------------
-    if vectors and scale and not open_only:
-        lines += ["## Where the risk sits", "",
-                  "Every vector placed by its likelihood and impact. **Now** places a "
-                  "mitigated vector by the risk its control leaves; **with nothing done** "
-                  "places every vector by its inherent rating. The difference between the "
-                  "two is what the controls moved.", ""]
-        for title, place in (("Now", now),
-                             ("With nothing done", lambda v: rating(v, "inherent"))):
-            cells = {}
-            for vector in vectors:
-                found = place(vector)
-                if found:
-                    cells.setdefault((found["likelihood"], found["impact"]), []).append(
-                        linked(str(vector.get("id")), links.vector(vector.get("id"))))
-            lines += [f"**{title}**", "",
-                      "| Likelihood ↓ · Impact → | 1 | 2 | 3 | 4 | 5 |",
-                      "| :--- | :--- | :--- | :--- | :--- | :--- |"]
-            for likelihood in reversed(traceability.LEVELS):
-                row = []
-                for impact in traceability.LEVELS:
-                    band = traceability.look_up(scale, likelihood, impact)
-                    here = cells.get((likelihood, impact))
-                    text = f"{SQUARES[bands.index(band)]} {band}"
-                    row.append(f"{text} · {', '.join(here)}" if here else text)
-                lines.append(f"| **{likelihood}** | " + " | ".join(row) + " |")
-            lines.append("")
-        missing = [v for v in vectors if not rating(v, "inherent")]
-        if missing:
-            lines += ["Not rated, and so on neither grid: "
-                      + ", ".join(linked(f"**{v.get('id')}**", links.vector(v.get("id")))
-                                  for v in missing) + ".", ""]
 
-    # --- 2. deferrals -------------------------------------------------------
+def grid(view, title, place):
+    """One five-by-five grid: every band, and the vectors placed in each cell."""
+    traceability, scale = view.traceability, view.scale
+    cells = {}
+    for vector in view.vectors:
+        found = place(vector)
+        if found:
+            cells.setdefault((found["likelihood"], found["impact"]), []).append(
+                linked(str(vector.get("id")), view.links.vector(vector.get("id"))))
+    lines = [f"**{title}**", "",
+             "| Likelihood ↓ · Impact → | 1 | 2 | 3 | 4 | 5 |",
+             "| :--- | :--- | :--- | :--- | :--- | :--- |"]
+    for likelihood in reversed(traceability.LEVELS):
+        row = []
+        for impact in traceability.LEVELS:
+            band = traceability.look_up(scale, likelihood, impact)
+            here = cells.get((likelihood, impact))
+            text = f"{SQUARES[view.bands.index(band)]} {band}"
+            row.append(f"{text} · {', '.join(here)}" if here else text)
+        lines.append(f"| **{likelihood}** | " + " | ".join(row) + " |")
+    return [*lines, ""]
+
+
+def risk_grids(view):
+    if not view.vectors or not view.scale:
+        return []
+    lines = ["## Where the risk sits", "",
+             "Every vector placed by its likelihood and impact. **Now** places a "
+             "mitigated vector by the risk its control leaves; **with nothing done** "
+             "places every vector by its inherent rating. The difference between the "
+             "two is what the controls moved.", ""]
+    lines += grid(view, "Now", view.now)
+    lines += grid(view, "With nothing done", view.inherent)
+    missing = [v for v in view.vectors if not view.inherent(v)]
+    if missing:
+        lines += ["Not rated, and so on neither grid: " + view.vector_ids(missing) + ".", ""]
+    return lines
+
+
+def shown_until(view, vector):
+    """A deferral's date, with its label, whether it lapsed, and every date it
+    has had before."""
+    d = disposition_of(vector)
+    until = date(d.get("until")) if d.get("until") is not None else "—"
+    if d.get("until_label"):
+        until = f"{until} ({cell(d['until_label'])})"
+    if "EXPIRED" in view.codes(vector):
+        until = f"**{until} — expired**"
+    pushed = [h for h in d.get("history") or []
+              if isinstance(h, dict) and h.get("state") == "deferred" and h.get("until")]
+    if pushed:
+        until += " · previously " + ", ".join(date(h["until"]) for h in pushed)
+    return until
+
+
+def deferrals(view):
     deferred = []
-    for vector in vectors:
+    for vector in view.vectors:
         if state(vector) == "deferred":
-            until = disposition(vector).get("until")
+            until = disposition_of(vector).get("until")
             key = date(until) if until is not None else "9999"
             deferred.append((key, vector))
     deferred.sort(key=lambda pair: pair[0])
-    lines += ["## Deferrals, soonest first", ""]
+    lines = ["## Deferrals, soonest first", ""]
     if not deferred:
-        lines += ["None.", ""]
-    else:
-        lines += ["What has been decided and not done, with who owns it and until when. "
-                  "A deferral past its date fails the check; a date that has been moved "
-                  "shows every date it has had.", "",
-                  "| Vector | Until | Risk | Owner | Mitigation | Reason |",
-                  "| :--- | :--- | :--- | :--- | :--- | :--- |"]
-        for _, vector in deferred:
-            d = disposition(vector)
-            until = date(d.get("until")) if d.get("until") is not None else "—"
-            if d.get("until_label"):
-                until = f"{until} ({cell(d['until_label'])})"
-            codes = flagged.get(f"vectors/{vector.get('id')}", [])
-            if "EXPIRED" in codes:
-                until = f"**{until} — expired**"
-            pushed = [h for h in d.get("history") or []
-                      if isinstance(h, dict) and h.get("state") == "deferred" and h.get("until")]
-            if pushed:
-                until += " · previously " + ", ".join(date(h["until"]) for h in pushed)
-            ident = vector.get("id")
-            shown_id = linked(f"**{ident}**", links.vector(ident))
-            lines.append(f"| {shown_id} {cell(vector.get('title'))} | {until} | "
-                         f"{shown_risk(now(vector))} | {cell(d.get('owner'))} | "
-                         f"{ids(d.get('mitigations'), mitigation_at)} | "
-                         f"{cell(d.get('reason'))} |")
-        lines.append("")
+        return [*lines, "None.", ""]
+    lines += ["What has been decided and not done, with who owns it and until when. "
+              "A deferral past its date fails the check; a date that has been moved "
+              "shows every date it has had.", "",
+              "| Vector | Until | Risk | Owner | Mitigation | Reason |",
+              "| :--- | :--- | :--- | :--- | :--- | :--- |"]
+    for _, vector in deferred:
+        d = disposition_of(vector)
+        ident = vector.get("id")
+        shown_id = linked(f"**{ident}**", view.links.vector(ident))
+        lines.append(f"| {shown_id} {cell(vector.get('title'))} | {shown_until(view, vector)} | "
+                     f"{view.shown_risk(view.now(vector))} | {cell(d.get('owner'))} | "
+                     f"{ids(d.get('mitigations'), view.mitigation_at)} | "
+                     f"{cell(d.get('reason'))} |")
+    return [*lines, ""]
 
-    if open_only:
-        return "\n".join(lines).rstrip() + "\n"
 
-    # --- 3. the matrix ------------------------------------------------------
-    lines += ["## The matrix", ""]
-    if not vectors:
-        lines += ["None.", ""]
-    else:
-        lines += ["Worst first: by the risk as it stands, then by the risk with nothing "
-                  "done, then in the model's order.", "",
-                  "| Vector | Element | Category | Risk now | Inherent | Disposition | Owner "
-                  "| Mitigations |",
-                  "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"]
-        ordered = in_order(vectors, model)
-        position = {id(v): i for i, v in enumerate(ordered)}
-        worst_first = sorted(ordered, key=lambda v: (-rank(now(v)),
-                                                     -rank(rating(v, "inherent")),
-                                                     position[id(v)]))
-        for vector in worst_first:
-            d = disposition(vector)
-            s = state(vector)
-            display, _ = name_of(model, vector.get("element"))
-            shown = "**undecided**" if s is None else s
-            codes = flagged.get(f"vectors/{vector.get('id')}", [])
-            if s == "deferred" and "EXPIRED" in codes:
-                shown = "deferred — **expired**"
-            elif s is None and d.get("state"):
-                shown = f"**{cell(d.get('state'))}** — not a disposition"
-            if d.get("history"):
-                shown += f" · changed {len(d['history'])}×"
-            ident = vector.get("id")
-            shown_id = linked(f"**{ident}**", links.vector(ident))
-            lines.append(f"| {shown_id} {cell(vector.get('title'))} | "
-                         f"`{vector.get('element')}` {cell(display)} | "
-                         f"{label(vector.get('category'))} | "
-                         f"{shown_risk(now(vector))} | "
-                         f"{shown_risk(rating(vector, 'inherent'))} | {shown} | "
-                         f"{cell(d.get('owner'))} | "
-                         f"{ids(d.get('mitigations'), mitigation_at)} |")
-        lines.append("")
+def shown_state(view, vector):
+    """A disposition as the matrix shows it: undecided, expired, not one at
+    all, and how many times it has changed."""
+    d = disposition_of(vector)
+    s = state(vector)
+    shown = "**undecided**" if s is None else s
+    if s == "deferred" and "EXPIRED" in view.codes(vector):
+        shown = "deferred — **expired**"
+    elif s is None and d.get("state"):
+        shown = f"**{cell(d.get('state'))}** — not a disposition"
+    if d.get("history"):
+        shown += f" · changed {len(d['history'])}×"
+    return shown
 
-    # --- 4. mitigations -----------------------------------------------------
-    lines += ["## Mitigations", ""]
-    if not mitigations:
-        lines += ["None.", ""]
-    else:
-        lines += ["Each control, where its requirement is written, where it lives, and "
-                  "every vector it serves. A mitigation with a specification and no "
-                  "implementation is designed and not built; one with an implementation "
-                  "and no specification was found in the code rather than required of it.",
-                  ""]
-        for entry in mitigations:
-            lines += [f"### {headings[str(entry.get('id'))]}", "",
-                      cell(entry.get("control")), "",
-                      "| | |", "| :--- | :--- |",
-                      f"| Specified in | "
-                      f"{paths(entry.get('specified_in'), links.reference)} |",
-                      f"| Implemented in | "
-                      f"{paths(entry.get('implemented_in'), links.reference)} |",
-                      f"| Verification | {cell(entry.get('verification'))} |"]
-            if entry.get("evidence") or entry.get("verification") == "manual":
-                lines.append(f"| Evidence | {cell(entry.get('evidence'))} |")
-            lines += [f"| Serves | {ids(entry.get('vectors'), links.vector)} |", ""]
 
-    # --- 5. acceptances -----------------------------------------------------
-    accepted = [v for v in in_order(vectors, model) if state(v) == "accepted"]
-    lines += ["## Acceptances", ""]
+def matrix(view):
+    lines = ["## The matrix", ""]
+    if not view.vectors:
+        return [*lines, "None.", ""]
+    lines += ["Worst first: by the risk as it stands, then by the risk with nothing "
+              "done, then in the model's order.", "",
+              "| Vector | Element | Category | Risk now | Inherent | Disposition | Owner "
+              "| Mitigations |",
+              "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"]
+    ordered = in_order(view.vectors, view.model)
+    position = {id(v): i for i, v in enumerate(ordered)}
+    worst_first = sorted(ordered, key=lambda v: (-view.rank(view.now(v)),
+                                                 -view.rank(view.inherent(v)),
+                                                 position[id(v)]))
+    for vector in worst_first:
+        d = disposition_of(vector)
+        display, _ = name_of(view.model, vector.get("element"))
+        ident = vector.get("id")
+        shown_id = linked(f"**{ident}**", view.links.vector(ident))
+        lines.append(f"| {shown_id} {cell(vector.get('title'))} | "
+                     f"`{vector.get('element')}` {cell(display)} | "
+                     f"{label(vector.get('category'))} | "
+                     f"{view.shown_risk(view.now(vector))} | "
+                     f"{view.shown_risk(view.inherent(vector))} | "
+                     f"{shown_state(view, vector)} | "
+                     f"{cell(d.get('owner'))} | "
+                     f"{ids(d.get('mitigations'), view.mitigation_at)} |")
+    return [*lines, ""]
+
+
+def mitigations(view):
+    lines = ["## Mitigations", ""]
+    if not view.mitigations:
+        return [*lines, "None.", ""]
+    lines += ["Each control, where its requirement is written, where it lives, and "
+              "every vector it serves. A mitigation with a specification and no "
+              "implementation is designed and not built; one with an implementation "
+              "and no specification was found in the code rather than required of it.",
+              ""]
+    reference = view.links.reference
+    for entry in view.mitigations:
+        lines += [f"### {view.headings[str(entry.get('id'))]}", "",
+                  cell(entry.get("control")), "",
+                  "| | |", "| :--- | :--- |",
+                  f"| Specified in | {paths(entry.get('specified_in'), reference)} |",
+                  f"| Implemented in | {paths(entry.get('implemented_in'), reference)} |",
+                  f"| Verification | {cell(entry.get('verification'))} |"]
+        if entry.get("evidence") or entry.get("verification") == "manual":
+            lines.append(f"| Evidence | {cell(entry.get('evidence'))} |")
+        lines += [f"| Serves | {ids(entry.get('vectors'), view.links.vector)} |", ""]
+    return lines
+
+
+def risk_accepted(view, vector):
+    """What an acceptance carried: both levels, what each means, and why."""
+    found = view.inherent(vector)
+    if not found:
+        return []
+    entry = found["entry"]
+    likely = view.scale["likelihood"][found["likelihood"] - 1]["name"]
+    harm = view.scale["impact"][found["impact"] - 1]["name"]
+    return [f"**Risk accepted: {SQUARES[view.rank(found)]} {found['band']}.** "
+            f"Likelihood {found['likelihood']}, *{cell(likely)}*: "
+            f"{cell(entry.get('likelihood_reason'))} "
+            f"Impact {found['impact']}, *{cell(harm)}*, "
+            f"{HARMED.get(entry.get('impact_on'), 'for nobody named')}: "
+            f"{cell(entry.get('impact_reason'))}", ""]
+
+
+def acceptances(view):
+    accepted = [v for v in in_order(view.vectors, view.model) if state(v) == "accepted"]
+    lines = ["## Acceptances", ""]
     if not accepted:
-        lines += ["None.", ""]
-    else:
-        lines += ["Exposure knowingly carried: who accepted it, and on what reasoning, in "
-                  "full. An acceptance is a claim its owner can be asked to defend.", ""]
-        for vector in accepted:
-            d = disposition(vector)
-            lines += [f"### {vector.get('id')} — {cell(vector.get('title'))}", "",
-                      f"Accepted by **{cell(d.get('owner'))}** on {date(d.get('decided'))}.", "",
-                      cell(d.get("reason")), ""]
-            found = rating(vector, "inherent")
-            if found:
-                entry = found["entry"]
-                likely = scale["likelihood"][found["likelihood"] - 1]["name"]
-                harm = scale["impact"][found["impact"] - 1]["name"]
-                lines += [f"**Risk accepted: {SQUARES[rank(found)]} {found['band']}.** "
-                          f"Likelihood {found['likelihood']}, *{cell(likely)}*: "
-                          f"{cell(entry.get('likelihood_reason'))} "
-                          f"Impact {found['impact']}, *{cell(harm)}*, "
-                          f"{HARMED.get(entry.get('impact_on'), 'for nobody named')}: "
-                          f"{cell(entry.get('impact_reason'))}", ""]
-            for previous in d.get("history") or []:
-                if isinstance(previous, dict):
-                    until = f", until {date(previous['until'])}" if previous.get("until") else ""
-                    lines += [f"> Previously *{cell(previous.get('state'))}*{until}"
-                              f" ({date(previous.get('decided'))}): "
-                              f"{cell(previous.get('reason'))}",
-                              ""]
+        return [*lines, "None.", ""]
+    lines += ["Exposure knowingly carried: who accepted it, and on what reasoning, in "
+              "full. An acceptance is a claim its owner can be asked to defend.", ""]
+    for vector in accepted:
+        d = disposition_of(vector)
+        lines += [f"### {vector.get('id')} — {cell(vector.get('title'))}", "",
+                  f"Accepted by **{cell(d.get('owner'))}** on {date(d.get('decided'))}.", "",
+                  cell(d.get("reason")), ""]
+        lines += risk_accepted(view, vector)
+        for previous in d.get("history") or []:
+            if isinstance(previous, dict):
+                until = f", until {date(previous['until'])}" if previous.get("until") else ""
+                lines += [f"> Previously *{cell(previous.get('state'))}*{until}"
+                          f" ({date(previous.get('decided'))}): "
+                          f"{cell(previous.get('reason'))}",
+                          ""]
+    return lines
 
-    # --- 6. retired ---------------------------------------------------------
-    orphans = [g for g in report.gaps if g["code"] == "ORPHAN_MITIGATION"]
-    retired_mitigations = [r for r in retired if str(r.get("id", "")).startswith("MIT-")]
-    lines += ["## Retired", ""]
+
+def retired(view):
+    orphans = [g for g in view.report.gaps if g["code"] == "ORPHAN_MITIGATION"]
+    retired_mitigations = [r for r in view.retired
+                           if str(r.get("id", "")).startswith("MIT-")]
+    lines = ["## Retired", ""]
     if orphans:
         lines += ["Mitigations serving no live vector. Each stays, blocking, until a person "
                   "retires it with a reason: it may be real code that now protects nothing "
                   "anyone tracks, and that is a decision rather than a tidy-up.", ""]
         for gap in orphans:
             ident = gap["element"].split("/", 1)[1]
-            shown_id = linked(f"**{ident}**", mitigation_at(ident))
+            shown_id = linked(f"**{ident}**", view.mitigation_at(ident))
             lines.append(f"- {shown_id} — {cell(gap['message'])}")
         lines.append("")
     if not retired_mitigations:
-        lines += ["No mitigation has been retired.", ""]
-    else:
-        lines += ["| Id | Retired | Reason |", "| :--- | :--- | :--- |"]
-        lines += [f"| {cell(r.get('id'))} | {date(r.get('retired'))} | {cell(r.get('reason'))} |"
-                  for r in retired_mitigations]
-        lines.append("")
+        return [*lines, "No mitigation has been retired.", ""]
+    lines += ["| Id | Retired | Reason |", "| :--- | :--- | :--- |"]
+    lines += [f"| {cell(r.get('id'))} | {date(r.get('retired'))} | {cell(r.get('reason'))} |"
+              for r in retired_mitigations]
+    return [*lines, ""]
 
-    # --- 6b. answered findings ----------------------------------------------
-    answers = [a for a in (register.get("answers") or []) if isinstance(a, dict)]
-    if answers:
-        lapsed = {g["element"].split("/", 1)[-1] for g in report.gaps
-                  if g["code"] == "LAPSED_ANSWER"}
-        lines += ["## Answered findings", ""]
-        lines += ["Everything above was written by the people whose work it describes. A "
-                  "scanner observes the system as built and knows none of it, which is why "
-                  "these are the only rows here that can contradict the rest.", "",
-                  "**A finding can lower confidence in a claim and can never raise it.** A "
-                  "scan that reports nothing is recorded as no evidence, never as "
-                  "confirmation.", ""]
 
-        # Contradictions and model gaps first, because they are what a reader
-        # came for: one says an attestation may be false, the other says the
-        # diagram is missing part of the running system.
-        def ordering(entry):
-            if entry.get("answer") == "model_gap":
-                return (0, str(entry.get("id")))
-            if entry.get("contradiction"):
-                return (1, str(entry.get("id")))
-            return (2, str(entry.get("id")))
+def answer_order(entry):
+    """Model gaps, then contradictions, then the rest — what a reader came for
+    first: one says the diagram is missing part of the running system, the
+    other that an attestation may be false."""
+    if entry.get("answer") == "model_gap":
+        return (0, str(entry.get("id")))
+    if entry.get("contradiction"):
+        return (1, str(entry.get("id")))
+    return (2, str(entry.get("id")))
 
-        for entry in sorted(answers, key=ordering):
-            ident = str(entry.get("id"))
-            answer = str(entry.get("answer") or "")
-            where = cell(entry.get("where")) if entry.get("where") else "anywhere"
-            heading = f"### {ident} — {cell(entry.get('scanner'))} `{cell(entry.get('rule'))}`"
-            if ident in lapsed:
-                heading += " · **lapsed**"
-            lines += [heading, ""]
-            if answer == "model_gap":
-                lines += ["**The model does not describe this part of the system.** The "
-                          "repair is the diagram rather than this register.", ""]
-            elif entry.get("contradiction") == "disposition_revised":
-                lines += ["**Contradiction — the control did not do what it claimed.** The "
-                          "disposition moved.", ""]
-            elif entry.get("contradiction") == "false_positive":
-                lines += ["**Contradiction — judged a false positive**, with the reasoning "
-                          "below rather than a silent suppression.", ""]
-            lines += [f"| Scope | `{where}` |", "| :--- | :--- |",
-                      f"| Answer | {answer or '—'} |"]
-            if entry.get("vector"):
-                routed = entry.get("vector")
-                lines.append(f"| Vector | {linked(cell(routed), links.vector(routed))} |")
-            lines += [f"| Answered | {date(entry.get('answered'))} |",
-                      f"| Why | {cell(entry.get('reason'))} |", ""]
-            if ident in lapsed:
-                lines += ["> Argued against a model that has since changed. Read the change, "
-                          "then re-argue it or record the new digest to say you have.", ""]
 
-    # --- 7. transfer and avoid ----------------------------------------------
-    slug = model.get("system", {}).get("slug", "<slug>")
-    lines += [
+def answered(view, entry, lapsed):
+    """One answered finding: its heading, what kind of answer it is, and the
+    table of what was decided."""
+    ident = str(entry.get("id"))
+    answer = str(entry.get("answer") or "")
+    where = cell(entry.get("where")) if entry.get("where") else "anywhere"
+    heading = f"### {ident} — {cell(entry.get('scanner'))} `{cell(entry.get('rule'))}`"
+    if ident in lapsed:
+        heading += " · **lapsed**"
+    lines = [heading, ""]
+    if answer == "model_gap":
+        lines += ["**The model does not describe this part of the system.** The "
+                  "repair is the diagram rather than this register.", ""]
+    elif entry.get("contradiction") == "disposition_revised":
+        lines += ["**Contradiction — the control did not do what it claimed.** The "
+                  "disposition moved.", ""]
+    elif entry.get("contradiction") == "false_positive":
+        lines += ["**Contradiction — judged a false positive**, with the reasoning "
+                  "below rather than a silent suppression.", ""]
+    lines += [f"| Scope | `{where}` |", "| :--- | :--- |",
+              f"| Answer | {answer or '—'} |"]
+    if entry.get("vector"):
+        routed = entry.get("vector")
+        lines.append(f"| Vector | {linked(cell(routed), view.links.vector(routed))} |")
+    lines += [f"| Answered | {date(entry.get('answered'))} |",
+              f"| Why | {cell(entry.get('reason'))} |", ""]
+    if ident in lapsed:
+        lines += ["> Argued against a model that has since changed. Read the change, "
+                  "then re-argue it or record the new digest to say you have.", ""]
+    return lines
+
+
+def answers(view):
+    entries = [a for a in (view.register.get("answers") or []) if isinstance(a, dict)]
+    if not entries:
+        return []
+    lapsed = {g["element"].split("/", 1)[-1] for g in view.report.gaps
+              if g["code"] == "LAPSED_ANSWER"}
+    lines = ["## Answered findings", "",
+             "Everything above was written by the people whose work it describes. A "
+             "scanner observes the system as built and knows none of it, which is why "
+             "these are the only rows here that can contradict the rest.", "",
+             "**A finding can lower confidence in a claim and can never raise it.** A "
+             "scan that reports nothing is recorded as no evidence, never as "
+             "confirmation.", ""]
+    for entry in sorted(entries, key=answer_order):
+        lines += answered(view, entry, lapsed)
+    return lines
+
+
+def treatments(view):
+    reference = view.links.reference
+    slug = view.model.get("system", {}).get("slug", "<slug>")
+    return [
         "## Where transfer and avoid are recorded", "",
         "Three dispositions, where a reader arriving from an ISO-shaped process expects "
         "four. The other two are recorded a layer up, in the artefacts that decide what "
@@ -516,28 +576,29 @@ def render(register, model, report, as_of, open_only=False, links=None):
         f"| Transfer | the third party is an **element** in the model, with its own flows "
         f"and threats; the disposition here is `mitigated` where they operate the control "
         f"and `accepted` where only the loss is financed | "
-        f"{paths(slug + '.dfd.yaml', links.reference)}, this matrix |",
+        f"{paths(slug + '.dfd.yaml', reference)}, this matrix |",
         f"| Avoid | **not a vector at all** — a threat found not to apply, with a reason, "
         f"or a finding not promoted, with a reason, or a vector retired because the "
         f"exposure was designed out | "
-        f"{paths(register.get('threats'), links.reference)} (its "
+        f"{paths(view.register.get('threats'), reference)} (its "
         f"`controlled` and `not_applicable` verdicts), the register's `dismissed` and "
         f"`retired` sections |",
         "",
     ]
 
-    # --- 7b. the scale -------------------------------------------------------
-    lines += ["## Rating scale", ""]
-    if scale:
-        lines += ["The scale every level above was given on. A level means what its "
-                  "definition says, and nothing else.", "",
-                  traceability.scale_markdown(scale)]
-    else:
-        lines += ["No usable scale is named, so no level above can be read. The check "
-                  "says why.", ""]
 
-    # --- 8. limits ----------------------------------------------------------
-    lines += [
+def rating_scale(view):
+    lines = ["## Rating scale", ""]
+    if not view.scale:
+        return [*lines, "No usable scale is named, so no level above can be read. The "
+                "check says why.", ""]
+    return [*lines, "The scale every level above was given on. A level means what its "
+            "definition says, and nothing else.", "",
+            view.traceability.scale_markdown(view.scale)]
+
+
+def limits(view):
+    return [
         "## Limits", "",
         "**A rating is a judgement.** The check requires every level to have a reason "
         "and the risk to be the scale's cell for the two levels beside it. It cannot "
@@ -558,6 +619,21 @@ def render(register, model, report, as_of, open_only=False, links=None):
         "mitigation there is.",
         "",
     ]
+
+
+# The document in reading order. The engineer needs what is unfinished and the
+# auditor what was decided and by whom, so both come early; --open-only is the
+# engineer's half alone, for a stand-up.
+OPEN = (summary, deferrals)
+WHOLE = (summary, risk_grids, deferrals, matrix, mitigations, acceptances, retired,
+         answers, treatments, rating_scale, limits)
+
+
+def render(register, model, report, as_of, open_only=False, links=None):
+    view = View(register, model, report, links)
+    lines = header(view, as_of)
+    for section in OPEN if open_only else WHOLE:
+        lines += section(view)
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -610,7 +686,7 @@ def links_for(register, model, register_path, bases, beside, orphaned=()):
     return Links(vectors=places, resolve=target)
 
 
-def main(argv=None):
+def arguments():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("register", help="path to the .vectors.yaml register")
@@ -621,7 +697,11 @@ def main(argv=None):
                         help="the repository root specified_in paths are relative to")
     parser.add_argument("--open-only", action="store_true",
                         help="just the summary and the deferrals, for a stand-up")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv=None):
+    args = arguments().parse_args(argv)
 
     check_matrix = sibling("check_matrix")
     as_of = datetime.date.today()

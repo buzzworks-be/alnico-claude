@@ -41,7 +41,12 @@ try:
     # somebody running this script gets a sentence instead of a traceback.
     import yaml  # noqa: F401
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -225,7 +230,7 @@ def load(path, what):
     return traceability.load(path, what)
 
 
-def main(argv=None):
+def arguments():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("scan", help="path to the SARIF file the build produced")
@@ -233,7 +238,34 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="emit findings and summary as JSON")
     parser.add_argument("--as-of", metavar="YYYY-MM-DD",
                         help="the date this is judged against (default: today)")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def print_findings(report, summary):
+    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
+        if not gaps:
+            continue
+        print(f"\n{severity} — {len(gaps)} finding(s)")
+        print("=" * 60)
+        for gap in gaps:
+            print(f"\n  {gap['element']}")
+            print(f"    - {gap['message']}")
+
+    if summary["by_rule"]:
+        print("\nUnanswered, grouped by rule")
+        print("=" * 60)
+        print("One answer usually covers a group. Asking about each location separately is "
+              "how an intake gets abandoned.")
+        for rule, paths in summary["by_rule"].items():
+            print(f"  {rule} — {len(paths)} location(s)")
+            for path in paths[:5]:
+                print(f"      {path}")
+            if len(paths) > 5:
+                print(f"      … and {len(paths) - 5} more")
+
+
+def main(argv=None):
+    args = arguments().parse_args(argv)
 
     as_of = datetime.date.today()
     if args.as_of:
@@ -268,26 +300,7 @@ def main(argv=None):
               "silence is not confirmation that any control works.")
         return 0
 
-    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
-        if not gaps:
-            continue
-        print(f"\n{severity} — {len(gaps)} finding(s)")
-        print("=" * 60)
-        for gap in gaps:
-            print(f"\n  {gap['element']}")
-            print(f"    - {gap['message']}")
-
-    if summary["by_rule"]:
-        print("\nUnanswered, grouped by rule")
-        print("=" * 60)
-        print("One answer usually covers a group. Asking about each location separately is "
-              "how an intake gets abandoned.")
-        for rule, paths in summary["by_rule"].items():
-            print(f"  {rule} — {len(paths)} location(s)")
-            for path in paths[:5]:
-                print(f"      {path}")
-            if len(paths) > 5:
-                print(f"      … and {len(paths) - 5} more")
+    print_findings(report, summary)
 
     print(f"\n{summary['findings']} finding(s), {summary['answers']} answer(s) on record.")
     if report.blocking:

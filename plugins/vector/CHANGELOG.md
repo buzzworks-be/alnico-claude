@@ -11,6 +11,23 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.21.2] — 2026-09-28
+
+### Fixed
+
+- When [`/vector:dfd`](skills/dfd/SKILL.md) finds a reference pointing at the
+  wrong kind of element — a flow starting at a data item, say — the gap now
+  reads *which is a data item; expected an actor or a process or a store*. It
+  used to say *which is a dat; expected store or actor or processe*, with those
+  three in a different order from one run to the next, so the same model could
+  print a different report twice.
+- A script run on a machine without PyYAML now says both ways out: install it,
+  or run the script through the lockfile beside it with
+  `uv run --locked --script`, spelled out with the script's own path. It used to
+  suggest only `pip install pyyaml`, and it exited 1 — which every check uses
+  to mean *the model has gaps*, so a skill looping on that answer would keep
+  interviewing against a machine missing a library. It now exits 2.
+
 ## [0.21.1] — 2026-09-23
 
 ### Fixed
@@ -813,6 +830,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.21.2]: https://github.com/buzzworks-be/vector/commit/bca622f
 [0.21.1]: https://github.com/buzzworks-be/vector/commit/28650af
 [0.21.0]: https://github.com/buzzworks-be/vector/commit/d68bc64
 [0.20.0]: https://github.com/buzzworks-be/vector/commit/65391db

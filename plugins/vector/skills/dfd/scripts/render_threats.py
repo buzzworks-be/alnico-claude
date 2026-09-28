@@ -21,7 +21,12 @@ import sys
 try:
     import yaml
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -76,45 +81,35 @@ def cited(nodes, catalogue):
     return out
 
 
-def render(enumeration, model, catalogue, grid, findings_only=False):
-    verdicts = enumeration.get("verdicts") or []
-    lines = [f"# Threat enumeration — {model.get('system', {}).get('name', 'unnamed')}",
-             "",
-             f"Generated from `{enumeration.get('model')}` by `render_threats.py`. "
-             "Do not edit; regenerate.",
-             ""]
-
-    threats = [v for v in verdicts if v.get("verdict") == "threat"]
-
-    lines += ["## Findings", ""]
+def findings(threats, model, catalogue):
+    lines = ["## Findings", ""]
     if not threats:
-        lines += ["None. Every applicable pairing was considered and dismissed, "
-                  "which is a result worth reading twice rather than a clean bill "
-                  "of health.", ""]
-    else:
-        lines += [f"{len(threats)} finding(s), grouped by the element they were "
-                  "found on.", ""]
-        for section in SECTIONS:
-            here = [t for t in threats if name_of(model, t["element"])[1] == section]
-            if not here:
-                continue
-            lines += [f"### {section.title()}", ""]
-            for element in dict.fromkeys(t["element"] for t in here):
-                display, _ = name_of(model, element)
-                lines += [f"#### `{element}` — {display}", ""]
-                for threat in [t for t in here if t["element"] == element]:
-                    lines += [f"**{label(threat['category'])}** — "
-                              f"{cell(threat.get('summary'))}", ""]
-                    references = cited(threat.get("nodes"), catalogue)
-                    if references:
-                        lines += ["> " + " · ".join(references), ""]
-                    lines += [cell(threat.get("detail")), ""]
+        return [*lines, "None. Every applicable pairing was considered and dismissed, "
+                "which is a result worth reading twice rather than a clean bill "
+                "of health.", ""]
+    lines += [f"{len(threats)} finding(s), grouped by the element they were "
+              "found on.", ""]
+    for section in SECTIONS:
+        here = [t for t in threats if name_of(model, t["element"])[1] == section]
+        if not here:
+            continue
+        lines += [f"### {section.title()}", ""]
+        for element in dict.fromkeys(t["element"] for t in here):
+            display, _ = name_of(model, element)
+            lines += [f"#### `{element}` — {display}", ""]
+            for threat in [t for t in here if t["element"] == element]:
+                lines += [f"**{label(threat['category'])}** — "
+                          f"{cell(threat.get('summary'))}", ""]
+                references = cited(threat.get("nodes"), catalogue)
+                if references:
+                    lines += ["> " + " · ".join(references), ""]
+                lines += [cell(threat.get("detail")), ""]
+    return lines
 
-    if findings_only:
-        return "\n".join(lines).rstrip() + "\n"
 
-    # --- coverage ---------------------------------------------------------
-    lines += ["## Coverage", ""]
+def coverage_tables(verdicts, model, grid):
+    """Verdicts by section and framework, then by kind, against the grid."""
+    lines = ["## Coverage", ""]
     counts = {}
     for verdict in verdicts:
         _, section = name_of(model, verdict["element"])
@@ -136,14 +131,13 @@ def render(enumeration, model, catalogue, grid, findings_only=False):
     lines += ["| Verdict | Count |", "| :--- | ---: |"]
     for kind in ("threat", "controlled", "not_applicable"):
         lines.append(f"| {kind} | {tally.get(kind, 0)} |")
-    lines += ["",
-              f"{len(verdicts)} of {len(grid)} applicable pairings verdicted.",
-              ""]
+    return [*lines, "", f"{len(verdicts)} of {len(grid)} applicable pairings verdicted.", ""]
 
-    # --- dismissed --------------------------------------------------------
-    lines += ["## Considered and dismissed", "",
-              "One line each. The reasons are the point: a dismissal a reader "
-              "cannot disagree with is not a dismissal.", ""]
+
+def dismissed(verdicts, model):
+    lines = ["## Considered and dismissed", "",
+             "One line each. The reasons are the point: a dismissal a reader "
+             "cannot disagree with is not a dismissal.", ""]
     for section in SECTIONS:
         rows = [v for v in verdicts
                 if v.get("verdict") != "threat"
@@ -157,31 +151,51 @@ def render(enumeration, model, catalogue, grid, findings_only=False):
             lines.append(f"| `{row['element']}` | {label(row['category'])} "
                          f"| {row.get('verdict')} | {cell(row.get('reason'))} |")
         lines.append("")
+    return lines
 
-    # --- carried forward --------------------------------------------------
+
+def carried_forward(enumeration):
     carried = enumeration.get("carried_forward") or {}
-    lines += ["## Carried forward from the model", ""]
+    lines = ["## Carried forward from the model", ""]
     for key, heading in (("open_questions", "Open questions"),
                          ("assumptions", "Assumptions")):
         items = carried.get(key) or []
         lines += [f"### {heading}", ""]
         lines += [f"- {cell(item)}" for item in items] or ["None recorded."]
         lines.append("")
+    return lines
 
-    lines += [
-        "## Limits", "",
-        "**Coverage is mechanically checkable; seriousness is not.** Every "
-        "pairing here has a verdict, which is what the script can prove. That "
-        "any of them was answered seriously is not something a script can "
-        "establish, and a complete enumeration of shallow dismissals would "
-        "satisfy every check that produced this document.",
-        "",
-        "**This is analysis of a model, not of a system.** Every finding rests "
-        "on the model being an accurate description, and on the assumptions "
-        "carried forward above. Where the system and the model differ, this "
-        "document describes the model.",
-        "",
-    ]
+
+LIMITS = [
+    "## Limits", "",
+    "**Coverage is mechanically checkable; seriousness is not.** Every "
+    "pairing here has a verdict, which is what the script can prove. That "
+    "any of them was answered seriously is not something a script can "
+    "establish, and a complete enumeration of shallow dismissals would "
+    "satisfy every check that produced this document.",
+    "",
+    "**This is analysis of a model, not of a system.** Every finding rests "
+    "on the model being an accurate description, and on the assumptions "
+    "carried forward above. Where the system and the model differ, this "
+    "document describes the model.",
+    "",
+]
+
+
+def render(enumeration, model, catalogue, grid, findings_only=False):
+    verdicts = enumeration.get("verdicts") or []
+    lines = [f"# Threat enumeration — {model.get('system', {}).get('name', 'unnamed')}",
+             "",
+             f"Generated from `{enumeration.get('model')}` by `render_threats.py`. "
+             "Do not edit; regenerate.",
+             ""]
+    threats = [v for v in verdicts if v.get("verdict") == "threat"]
+    lines += findings(threats, model, catalogue)
+    if not findings_only:
+        lines += coverage_tables(verdicts, model, grid)
+        lines += dismissed(verdicts, model)
+        lines += carried_forward(enumeration)
+        lines += LIMITS
     return "\n".join(lines).rstrip() + "\n"
 
 

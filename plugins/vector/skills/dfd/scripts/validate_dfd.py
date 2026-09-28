@@ -19,7 +19,12 @@ import sys
 try:
     import yaml
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 BLOCKING, ADVISORY = "BLOCKING", "ADVISORY"
 
@@ -248,34 +253,80 @@ def check_reviews(report, system):
                        "hex characters, which is what makes an edit count", field="digest")
 
 
-def validate(model):
-    system = model.get("system") or {}
-    report = Report(system.get("accepted_gaps"))
+ELEMENTS = ("actors", "processes", "stores")
 
-    analysis = system.get("analysis") or []
-    if isinstance(analysis, str):
-        analysis = [analysis]
-    privacy = "linddun" in analysis
-    privacy_sev = BLOCKING if privacy else ADVISORY
+# What one entry of each section is called in a sentence. Stripping the plural
+# did this before, and made "processe" of processes and "dat" of data.
+KIND = {"trust_zones": "trust zone", "subsystems": "subsystem", "actors": "actor",
+        "processes": "process", "stores": "store", "data": "data item", "flows": "flow"}
 
-    sections = {name: (model.get(name) or []) for name in
-                ("trust_zones", "subsystems", "actors", "processes", "stores",
-                 "data", "flows")}
-    for name, items in sections.items():
-        if not isinstance(items, list):
-            report.add(BLOCKING, "BAD_SECTION", name, f"{name} must be a list")
-            sections[name] = []
-            continue
-        # Drop entries that are not mappings here, rather than skipping them in
-        # each loop below. One malformed entry used to survive as far as
-        # require(), which crashed on item.get() — so a hand-edited model with a
-        # stray list item got a traceback instead of the gap that explains it.
-        mappings = [item for item in items if isinstance(item, dict)]
-        if len(mappings) != len(items):
-            report.add(BLOCKING, "BAD_ITEM", name, "entries must be mappings")
-        sections[name] = mappings
 
-    # --- system ---------------------------------------------------------
+def a_or_an(noun):
+    return f"{'an' if noun[0] in 'aeiou' else 'a'} {noun}"
+
+
+class Model:
+    """A model read once into what every check below needs: its sections as
+    lists of mappings, whether privacy is in scope, and the report the checks
+    add to."""
+
+    def __init__(self, model):
+        self.system = model.get("system") or {}
+        self.report = Report(self.system.get("accepted_gaps"))
+        analysis = self.system.get("analysis") or []
+        if isinstance(analysis, str):
+            analysis = [analysis]
+        self.analysis = analysis
+        self.privacy = "linddun" in analysis
+        self.privacy_sev = BLOCKING if self.privacy else ADVISORY
+        self.sections = self.read_sections(model)
+        self.index = {}
+        self.zone_of = {item.get("id"): item.get("trust_zone")
+                        for name in ELEMENTS for item in self.sections[name]}
+
+    def read_sections(self, model):
+        sections = {name: (model.get(name) or []) for name in
+                    ("trust_zones", "subsystems", "actors", "processes", "stores",
+                     "data", "flows")}
+        for name, items in sections.items():
+            if not isinstance(items, list):
+                self.report.add(BLOCKING, "BAD_SECTION", name, f"{name} must be a list")
+                sections[name] = []
+                continue
+            # Drop entries that are not mappings here, rather than skipping them
+            # in each check below. One malformed entry used to survive as far as
+            # require(), which crashed on item.get() — so a hand-edited model
+            # with a stray list item got a traceback instead of the gap that
+            # explains it.
+            mappings = [item for item in items if isinstance(item, dict)]
+            if len(mappings) != len(items):
+                self.report.add(BLOCKING, "BAD_ITEM", name, "entries must be mappings")
+            sections[name] = mappings
+        return sections
+
+    def ref_ok(self, ident, owner, field, allowed):
+        if ident is None:
+            return False
+        if ident not in self.index:
+            self.report.add(BLOCKING, "UNRESOLVED_REF", owner,
+                            f"{field} points at {ident!r}, which is not defined", field=field)
+            return False
+        if self.index[ident][0] not in allowed:
+            # Named in the order given, never a set's: a set of strings
+            # iterates in an order the hash seed picks, so the same model
+            # printed a different sentence from one run to the next.
+            expected = [a_or_an(KIND[section]) for section in allowed]
+            self.report.add(BLOCKING, "UNRESOLVED_REF", owner,
+                            f"{field} points at {ident!r}, which is "
+                            f"{a_or_an(KIND[self.index[ident][0]])}; expected "
+                            f"{' or '.join(expected)}",
+                            field=field)
+            return False
+        return True
+
+
+def check_system(m):
+    report, system, analysis = m.report, m.system, m.analysis
     require(report, BLOCKING, "system", system,
             ["name", "slug", "description", "analysis"], ident="", question_map={
         "name": "What is this system called?",
@@ -294,101 +345,101 @@ def validate(model):
     })
     check_reviews(report, system)
 
-    # --- ids ------------------------------------------------------------
-    seen, index = {}, {}
-    for name, items in sections.items():
+
+def check_ids(m):
+    seen = {}
+    for name, items in m.sections.items():
         for item in items:
             ident = item.get("id")
             if not ident:
-                report.add(BLOCKING, "MISSING_FIELD", f"{name}/<unnamed>",
-                           "id is unanswered", "Every element needs a unique kebab-case id.",
-                           field="id")
+                m.report.add(BLOCKING, "MISSING_FIELD", f"{name}/<unnamed>",
+                             "id is unanswered", "Every element needs a unique kebab-case id.",
+                             field="id")
                 continue
             if ident in seen:
-                report.add(BLOCKING, "DUPLICATE_ID", f"{name}/{ident}",
-                           f"id {ident!r} is already used by {seen[ident]}")
+                m.report.add(BLOCKING, "DUPLICATE_ID", f"{name}/{ident}",
+                             f"id {ident!r} is already used by {seen[ident]}")
             else:
                 seen[ident] = name
-                index[ident] = (name, item)
+                m.index[ident] = (name, item)
 
-    def ref_ok(report, ident, owner, field, allowed):
-        if ident is None:
-            return False
-        if ident not in index:
-            report.add(BLOCKING, "UNRESOLVED_REF", owner,
-                       f"{field} points at {ident!r}, which is not defined", field=field)
-            return False
-        if index[ident][0] not in allowed:
-            report.add(BLOCKING, "UNRESOLVED_REF", owner,
-                       f"{field} points at {ident!r}, which is a "
-                       f"{index[ident][0][:-1]}; expected {' or '.join(a[:-1] for a in allowed)}",
-                       field=field)
-            return False
-        return True
 
-    # --- minimum viable diagram ------------------------------------------
+def check_minimum(m):
+    """The minimum viable diagram."""
     for name, why in (("actors", "someone has to be outside the system talking to it"),
                       ("processes", "a DFD with no process has nothing doing the work"),
                       ("flows", "a DFD with no flows is a list, not a diagram")):
-        if not sections[name]:
-            report.add(BLOCKING, "EMPTY_SECTION", name, f"no {name} defined — {why}")
+        if not m.sections[name]:
+            m.report.add(BLOCKING, "EMPTY_SECTION", name, f"no {name} defined — {why}")
 
-    # --- per-section fields ----------------------------------------------
-    for zone in sections["trust_zones"]:
+
+def check_zones(m):
+    report, zones = m.report, m.sections["trust_zones"]
+    for zone in zones:
         require(report, BLOCKING, "trust_zones", zone, ["name", "description", "controlled_by"], {
             "description": "What does being inside this zone mean — who controls it?",
             "controlled_by": "Who controls this zone: us, end_user, cloud_provider, "
                              "third_party, or unknown?",
         })
-    check_enums(report, "trust_zones", sections["trust_zones"])
+    check_enums(report, "trust_zones", zones)
 
+
+def check_subsystems(m):
     # A subsystem is a name for a group of elements, so it carries no fact about
     # the system and gets none of the fields an element does. It is also absent
-    # from every loop below that walks ("actors", "processes", "stores"), which
-    # is what keeps it out of the coverage grid, the orphan check and
-    # reachability without any of them being told about it.
-    for sub in sections["subsystems"]:
-        require(report, BLOCKING, "subsystems", sub, ["name", "description"], {
+    # from every check that walks ELEMENTS, which is what keeps it out of the
+    # coverage grid, the orphan check and reachability without any of them
+    # being told about it.
+    for sub in m.sections["subsystems"]:
+        require(m.report, BLOCKING, "subsystems", sub, ["name", "description"], {
             "description": "What is this part of the system, in a sentence?",
         })
         if sub.get("parent") is not None:
-            report.add(BLOCKING, "BAD_FIELD", f"subsystems/{sub.get('id') or '<unnamed>'}",
-                       "a subsystem has no parent; the model has two levels, not a hierarchy",
-                       "Should this be a subsystem of its own, or do its elements "
-                       "belong directly in the other one?",
-                       field="parent")
+            m.report.add(BLOCKING, "BAD_FIELD", f"subsystems/{sub.get('id') or '<unnamed>'}",
+                         "a subsystem has no parent; the model has two levels, not a hierarchy",
+                         "Should this be a subsystem of its own, or do its elements "
+                         "belong directly in the other one?",
+                         field="parent")
 
+
+def check_parents(m):
     # Two levels is what makes this a one-hop lookup with no cycle to check for:
     # a subsystem may not carry a parent, and anything else either names a
     # subsystem or is already UNRESOLVED_REF.
     for name in ("processes", "stores"):
-        for item in sections[name]:
+        for item in m.sections[name]:
             if item.get("parent") is not None:
-                ref_ok(report, item["parent"], f"{name}/{item.get('id') or '<unnamed>'}",
-                       "parent", ("subsystems",))
-    for actor in sections["actors"]:
+                m.ref_ok(item["parent"], f"{name}/{item.get('id') or '<unnamed>'}",
+                         "parent", ("subsystems",))
+    for actor in m.sections["actors"]:
         if actor.get("parent") is not None:
-            report.add(BLOCKING, "BAD_FIELD", f"actors/{actor.get('id') or '<unnamed>'}",
-                       "an actor is outside the system, so it cannot be inside "
-                       "one of the system's parts",
-                       "Is this actually external, or is it a process that belongs "
-                       "in that subsystem?",
-                       field="parent")
+            m.report.add(BLOCKING, "BAD_FIELD", f"actors/{actor.get('id') or '<unnamed>'}",
+                         "an actor is outside the system, so it cannot be inside "
+                         "one of the system's parts",
+                         "Is this actually external, or is it a process that belongs "
+                         "in that subsystem?",
+                         field="parent")
 
-    for actor in sections["actors"]:
+
+def check_actors(m):
+    report, actors = m.report, m.sections["actors"]
+    for actor in actors:
         fields = ["name", "type", "description", "trust_zone", "authenticates_how"]
         require(report, BLOCKING, "actors", actor, fields, ACTOR_Q)
-        if privacy:
+        if m.privacy:
             require(report, BLOCKING, "actors", actor, ["is_data_subject"], ACTOR_Q)
         if answered(actor, "is_data_subject") and not isinstance(actor["is_data_subject"], bool):
             report.add(BLOCKING, "BAD_BOOL", f"actors/{actor.get('id')}",
                        f"is_data_subject is {actor['is_data_subject']!r}; "
                        "expected true or false", field="is_data_subject")
-        ref_ok(report, actor.get("trust_zone"), f"actors/{actor.get('id')}",
-               "trust_zone", {"trust_zones"})
-    check_enums(report, "actors", sections["actors"])
+        m.ref_ok(actor.get("trust_zone"), f"actors/{actor.get('id')}",
+                 "trust_zone", ("trust_zones",))
+    check_enums(report, "actors", actors)
 
-    for proc in sections["processes"]:
+
+def check_processes(m):
+    report, processes = m.report, m.sections["processes"]
+    for proc in processes:
         require(report, BLOCKING, "processes", proc,
                 ["name", "description", "trust_zone", "owner", "kind",
                  "authn", "authz", "logging"],
@@ -402,55 +453,57 @@ def validate(model):
             if proc.get("kind") == "agent":
                 fields.append("authority")
             require(report, BLOCKING, "processes", proc, fields, PROCESS_Q)
-        ref_ok(report, proc.get("trust_zone"), f"processes/{proc.get('id')}",
-               "trust_zone", {"trust_zones"})
+        m.ref_ok(proc.get("trust_zone"), f"processes/{proc.get('id')}",
+                 "trust_zone", ("trust_zones",))
+    check_enums(report, "processes", processes)
 
-    check_enums(report, "processes", sections["processes"])
 
-    for store in sections["stores"]:
+def check_stores(m):
+    report, stores = m.report, m.sections["stores"]
+    for store in stores:
         require(report, BLOCKING, "stores", store,
                 ["name", "description", "trust_zone", "kind", "data",
                  "encryption_at_rest", "access_control"], STORE_Q)
-        require(report, privacy_sev, "stores", store, ["retention", "backups"], STORE_Q)
-        ref_ok(report, store.get("trust_zone"), f"stores/{store.get('id')}",
-               "trust_zone", {"trust_zones"})
+        require(report, m.privacy_sev, "stores", store, ["retention", "backups"], STORE_Q)
+        m.ref_ok(store.get("trust_zone"), f"stores/{store.get('id')}",
+                 "trust_zone", ("trust_zones",))
         for ref in store.get("data") or []:
-            ref_ok(report, ref, f"stores/{store.get('id')}", "data", {"data"})
-    check_enums(report, "stores", sections["stores"])
+            m.ref_ok(ref, f"stores/{store.get('id')}", "data", ("data",))
+    check_enums(report, "stores", stores)
 
-    for datum in sections["data"]:
+
+def check_data(m):
+    report, data = m.report, m.sections["data"]
+    for datum in data:
         require(report, BLOCKING, "data", datum,
                 ["name", "classification", "personal_data"], DATA_Q)
         if datum.get("personal_data") in PERSONAL:
-            require(report, privacy_sev, "data", datum, ["subjects", "retention"], DATA_Q)
-            if privacy:
+            require(report, m.privacy_sev, "data", datum, ["subjects", "retention"], DATA_Q)
+            if m.privacy:
                 require(report, ADVISORY, "data", datum, ["lawful_basis"], DATA_Q)
-        if datum.get("personal_data") == "special_category" and privacy:
+        if datum.get("personal_data") == "special_category" and m.privacy:
             report.add(ADVISORY, "SPECIAL_CATEGORY", f"data/{datum.get('id')}",
                        "special category data raises the bar on every element that touches it",
                        "Confirm the lawful basis and whether this data is genuinely needed.")
-    check_enums(report, "data", sections["data"])
+    check_enums(report, "data", data)
 
-    zone_of = {}
-    for name in ("actors", "processes", "stores"):
-        for item in sections[name]:
-            zone_of[item.get("id")] = item.get("trust_zone")
 
-    for flow in sections["flows"]:
+def check_flows(m):
+    report, flows = m.report, m.sections["flows"]
+    for flow in flows:
         fid = flow.get("id")
         require(report, BLOCKING, "flows", flow,
                 ["name", "from", "to", "data", "protocol",
                  "encryption_in_transit", "trigger"], FLOW_Q)
-        endpoints = {"actors", "processes", "stores"}
-        ref_ok(report, flow.get("from"), f"flows/{fid}", "from", endpoints)
-        ref_ok(report, flow.get("to"), f"flows/{fid}", "to", endpoints)
+        m.ref_ok(flow.get("from"), f"flows/{fid}", "from", ELEMENTS)
+        m.ref_ok(flow.get("to"), f"flows/{fid}", "to", ELEMENTS)
         for ref in flow.get("data") or []:
-            ref_ok(report, ref, f"flows/{fid}", "data", {"data"})
+            m.ref_ok(ref, f"flows/{fid}", "data", ("data",))
         if flow.get("from") and flow.get("from") == flow.get("to"):
             report.add(ADVISORY, "SELF_LOOP", f"flows/{fid}",
                        "this flow starts and ends at the same element",
                        "Is this really a loop, or is one end a different element?")
-        src, dst = zone_of.get(flow.get("from")), zone_of.get(flow.get("to"))
+        src, dst = m.zone_of.get(flow.get("from")), m.zone_of.get(flow.get("to"))
         crosses = src and dst and src != dst
         if crosses and not answered(flow, "authn"):
             report.add(BLOCKING, "UNAUTH_CROSSING", f"flows/{fid}",
@@ -459,86 +512,102 @@ def validate(model):
         elif not answered(flow, "authn"):
             report.add(ADVISORY, "MISSING_FIELD", f"flows/{fid}",
                        "authn is unanswered", FLOW_Q["authn"], field="authn")
-    check_enums(report, "flows", sections["flows"])
+    check_enums(report, "flows", flows)
 
-    # --- graph shape ------------------------------------------------------
+
+def check_shape(m):
+    """Elements nothing touches, and processes data only enters or only leaves."""
     inbound, outbound = {}, {}
-    for flow in sections["flows"]:
-        if flow.get("from") in index:
+    for flow in m.sections["flows"]:
+        if flow.get("from") in m.index:
             outbound.setdefault(flow["from"], []).append(flow)
-        if flow.get("to") in index:
+        if flow.get("to") in m.index:
             inbound.setdefault(flow["to"], []).append(flow)
 
-    for name in ("actors", "processes", "stores"):
-        for item in sections[name]:
+    for name in ELEMENTS:
+        for item in m.sections[name]:
             ident = item.get("id")
             if not ident:
                 continue
             if ident not in inbound and ident not in outbound:
-                report.add(BLOCKING, "ORPHAN", f"{name}/{ident}",
-                           "no flow touches this element",
-                           "Either something connects to this, or it does not belong "
-                           "in the diagram. Which is it?")
+                m.report.add(BLOCKING, "ORPHAN", f"{name}/{ident}",
+                             "no flow touches this element",
+                             "Either something connects to this, or it does not belong "
+                             "in the diagram. Which is it?")
 
-    for proc in sections["processes"]:
+    for proc in m.sections["processes"]:
         ident = proc.get("id")
         if not ident or (ident not in inbound and ident not in outbound):
             continue
         if ident in inbound and ident not in outbound:
-            report.add(BLOCKING, "BLACK_HOLE", f"processes/{ident}",
-                       "data goes in and nothing comes out",
-                       "What does this produce? If it only stores things, the destination "
-                       "is a data store and there is a flow to it. If it genuinely "
-                       "discards everything, that is worth saying out loud.")
+            m.report.add(BLOCKING, "BLACK_HOLE", f"processes/{ident}",
+                         "data goes in and nothing comes out",
+                         "What does this produce? If it only stores things, the destination "
+                         "is a data store and there is a flow to it. If it genuinely "
+                         "discards everything, that is worth saying out loud.")
         if ident in outbound and ident not in inbound:
-            report.add(BLOCKING, "MIRACLE", f"processes/{ident}",
-                       "data comes out with nothing going in",
-                       "Where does this get its data? There is usually an unmentioned "
-                       "source — a config store, a third-party feed, a scheduled trigger "
-                       "reading from somewhere.")
+            m.report.add(BLOCKING, "MIRACLE", f"processes/{ident}",
+                         "data comes out with nothing going in",
+                         "Where does this get its data? There is usually an unmentioned "
+                         "source — a config store, a third-party feed, a scheduled trigger "
+                         "reading from somewhere.")
 
-    # --- reachability ------------------------------------------------------
-    nodes = [i for n in ("actors", "processes", "stores") for i in
-             (x.get("id") for x in sections[n]) if i]
-    if nodes and sections["flows"]:
-        adjacency = {n: set() for n in nodes}
-        for flow in sections["flows"]:
-            a, b = flow.get("from"), flow.get("to")
-            if a in adjacency and b in adjacency:
-                adjacency[a].add(b)
-                adjacency[b].add(a)
-        # Every piece, not one flood from nodes[0]: whichever element happened
-        # to be declared first was treated as the main diagram, so a single
-        # stranded actor at the top of the file reported every other element as
-        # the stranded one. The largest piece is the main diagram instead, ties
-        # broken by declaration order, which is a property of the graph.
-        pieces, placed = [], set()
-        for start in nodes:
-            if start in placed:
+
+def pieces(nodes, flows):
+    """The connected pieces of the diagram, each sorted, in declaration order.
+
+    Every piece, not one flood from nodes[0]: whichever element happened to be
+    declared first used to be treated as the main diagram, so a single stranded
+    actor at the top of the file reported every other element as the stranded
+    one.
+    """
+    adjacency = {n: set() for n in nodes}
+    for flow in flows:
+        a, b = flow.get("from"), flow.get("to")
+        if a in adjacency and b in adjacency:
+            adjacency[a].add(b)
+            adjacency[b].add(a)
+    found, placed = [], set()
+    for start in nodes:
+        if start in placed:
+            continue
+        seen_nodes, stack = set(), [start]
+        while stack:
+            node = stack.pop()
+            if node in seen_nodes:
                 continue
-            seen_nodes, stack = set(), [start]
-            while stack:
-                node = stack.pop()
-                if node in seen_nodes:
-                    continue
-                seen_nodes.add(node)
-                stack.extend(adjacency[node] - seen_nodes)
-            placed |= seen_nodes
-            pieces.append(sorted(seen_nodes))
-        if len(pieces) > 1:
-            main = max(pieces, key=len)
-            detached = [p for p in pieces if p is not main]
-            loose = [n for p in detached for n in p]
-            report.add(ADVISORY, "DISCONNECTED", "graph",
-                       f"the diagram is in {len(pieces)} pieces: "
-                       + "; ".join(", ".join(p) for p in detached)
-                       + (" does" if len(loose) == 1 else " do")
-                       + f" not connect to the other {len(main)} element"
-                       + ("" if len(main) == 1 else "s"),
-                       "Is there a missing flow, or are these genuinely separate systems "
-                       "that belong in their own diagram?")
+            seen_nodes.add(node)
+            stack.extend(adjacency[node] - seen_nodes)
+        placed |= seen_nodes
+        found.append(sorted(seen_nodes))
+    return found
 
-    # --- unused declarations ------------------------------------------------
+
+def check_reachability(m):
+    nodes = [i for n in ELEMENTS for i in (x.get("id") for x in m.sections[n]) if i]
+    if not nodes or not m.sections["flows"]:
+        return
+    found = pieces(nodes, m.sections["flows"])
+    if len(found) < 2:
+        return
+    # The largest piece is the main diagram, ties broken by declaration order,
+    # which is a property of the graph.
+    main = max(found, key=len)
+    detached = [p for p in found if p is not main]
+    loose = [n for p in detached for n in p]
+    m.report.add(ADVISORY, "DISCONNECTED", "graph",
+                 f"the diagram is in {len(found)} pieces: "
+                 + "; ".join(", ".join(p) for p in detached)
+                 + (" does" if len(loose) == 1 else " do")
+                 + f" not connect to the other {len(main)} element"
+                 + ("" if len(main) == 1 else "s"),
+                 "Is there a missing flow, or are these genuinely separate systems "
+                 "that belong in their own diagram?")
+
+
+def check_unused(m):
+    """Declarations nothing refers to: data, subsystems and zones."""
+    sections, report = m.sections, m.report
     used_data = {r for s in sections["stores"] for r in (s.get("data") or [])}
     used_data |= {r for f in sections["flows"] for r in (f.get("data") or [])}
     for datum in sections["data"]:
@@ -554,14 +623,16 @@ def validate(model):
                        "no process or store names this subsystem as its parent",
                        "Does something belong in this part that has not been "
                        "modelled yet?")
-    used_zones = {z for z in zone_of.values() if z}
+    used_zones = {z for z in m.zone_of.values() if z}
     for zone in sections["trust_zones"]:
         if zone.get("id") and zone["id"] not in used_zones:
             report.add(ADVISORY, "UNUSED_ZONE", f"trust_zones/{zone['id']}",
                        "no element sits in this zone",
                        "Does something belong here that has not been modelled yet?")
 
-    # --- privacy shape ------------------------------------------------------
+
+def check_privacy(m):
+    sections, report = m.sections, m.report
     has_personal = any(d.get("personal_data") in PERSONAL for d in sections["data"])
     # A flag we could not read already has its own gap, and reporting
     # NO_DATA_SUBJECT on top of it would be a second, misleading finding about a
@@ -570,7 +641,7 @@ def validate(model):
     unreadable = any(f is not None and not isinstance(f, bool) for f in flags)
     subjects = [a for a in sections["actors"] if a.get("is_data_subject") is True]
 
-    if privacy and has_personal:
+    if m.privacy and has_personal:
         if not unreadable and not subjects:
             report.add(BLOCKING, "NO_DATA_SUBJECT", "actors",
                        "the model holds personal data but no actor is marked as its subject",
@@ -596,7 +667,7 @@ def validate(model):
     # Unlike its mirror this does not stand down for an unreadable flag, because
     # `subjects` counts only definite trues: one actor confirmed as a subject
     # contradicts an empty data dictionary whatever a second actor's flag says.
-    if privacy and not has_personal and subjects:
+    if m.privacy and not has_personal and subjects:
         named = ", ".join(a.get("id") or "<unnamed>" for a in subjects)
         report.add(BLOCKING, "NO_PERSONAL_DATA", "data",
                    f"{named} is marked as a data subject, but no data entry is personal",
@@ -604,54 +675,57 @@ def validate(model):
                    "it is — if the model really holds nothing personal — then nobody is a "
                    "data subject of this system and the flag should be false.")
 
-    if system.get("open_questions"):
-        report.add(ADVISORY, "OPEN_QUESTIONS", "system",
-                   f"{len(system['open_questions'])} question(s) the team could not answer",
-                   "Carry these into the threat enumeration — an unanswerable question is "
-                   "usually a finding in waiting.")
 
-    return report
+def check_open_questions(m):
+    questions = m.system.get("open_questions")
+    if questions:
+        m.report.add(ADVISORY, "OPEN_QUESTIONS", "system",
+                     f"{len(questions)} question(s) the team could not answer",
+                     "Carry these into the threat enumeration — an unanswerable question is "
+                     "usually a finding in waiting.")
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("model", help="path to the .dfd.yaml model")
-    parser.add_argument("--json", action="store_true", help="emit gaps as JSON")
-    args = parser.parse_args()
+# In the order they run, which is the order gaps are reported in. check_ids
+# comes before anything that follows a reference, because it builds the index
+# they resolve against.
+CHECKS = (check_system, check_ids, check_minimum, check_zones, check_subsystems,
+          check_parents, check_actors, check_processes, check_stores, check_data,
+          check_flows, check_shape, check_reachability, check_unused, check_privacy,
+          check_open_questions)
 
-    # Exit 2, not 1, and the distinction is the whole point: 1 means the model
-    # has blocking gaps, which is what the interview loops on. `sys.exit(str)`
-    # exits 1, so a mistyped filename used to be indistinguishable from an
-    # unfinished model — the skill would keep interviewing against a file that
-    # was never there. Every other check in the toolkit already separates the
-    # two this way.
-    def usage(message):
-        print(message, file=sys.stderr)
-        sys.exit(2)
 
+def validate(model):
+    m = Model(model)
+    for check in CHECKS:
+        check(m)
+    return m.report
+
+
+def usage(message):
+    """Exit 2, not 1, and the distinction is the whole point: 1 means the model
+    has blocking gaps, which is what the interview loops on. `sys.exit(str)`
+    exits 1, so a mistyped filename used to be indistinguishable from an
+    unfinished model — the skill would keep interviewing against a file that
+    was never there. Every other check in the toolkit already separates the
+    two this way."""
+    print(message, file=sys.stderr)
+    sys.exit(2)
+
+
+def load(path):
     try:
-        with open(args.model) as handle:
+        with open(path) as handle:
             model = yaml.safe_load(handle)
     except FileNotFoundError:
-        usage(f"no such model: {args.model}")
+        usage(f"no such model: {path}")
     except yaml.YAMLError as exc:
-        usage(f"{args.model} is not valid YAML: {exc}")
-
+        usage(f"{path} is not valid YAML: {exc}")
     if not isinstance(model, dict):
-        usage(f"{args.model} should be a mapping with system/actors/processes/... keys")
+        usage(f"{path} should be a mapping with system/actors/processes/... keys")
+    return model
 
-    report = validate(model)
 
-    if args.json:
-        print(json.dumps({
-            "blocking": len(report.blocking),
-            "advisory": len(report.advisory),
-            "complete": not report.blocking,
-            "gaps": report.gaps,
-        }, indent=2))
-        return 0 if not report.blocking else 1
-
+def print_gaps(report):
     # Grouped by element, because that is the unit the interview asks in: one
     # element's gaps are one coherent question for the person answering, and a
     # flat list by check type scatters them.
@@ -671,6 +745,25 @@ def main():
                     print(f"      ask: {gap['question']}")
                 print(f"      key: {gap['key']}")
 
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("model", help="path to the .dfd.yaml model")
+    parser.add_argument("--json", action="store_true", help="emit gaps as JSON")
+    args = parser.parse_args()
+    report = validate(load(args.model))
+
+    if args.json:
+        print(json.dumps({
+            "blocking": len(report.blocking),
+            "advisory": len(report.advisory),
+            "complete": not report.blocking,
+            "gaps": report.gaps,
+        }, indent=2))
+        return 0 if not report.blocking else 1
+
+    print_gaps(report)
     print()
     if report.blocking:
         print(f"Not complete: {len(report.blocking)} blocking, "

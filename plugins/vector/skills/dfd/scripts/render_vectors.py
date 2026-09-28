@@ -20,7 +20,12 @@ import sys
 try:
     import yaml
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SECTIONS = ("actors", "processes", "stores", "flows")
@@ -99,130 +104,142 @@ def nodes_for(vector, enumeration):
     return out
 
 
+def written_out(vector, enumeration, catalogue, orphaned):
+    """One vector in full: what it is, what it cites, what it chains, and the
+    attack, the impact and the context."""
+    lines = [f"##### {vector_heading(vector, orphaned)}", "",
+             f"{label(vector.get('category'))} · "
+             f"promoted {cell(vector.get('promoted'))}"
+             + (" · from the open question"
+                if vector.get("source") == "question" else "")]
+    references = cited(nodes_for(vector, enumeration), catalogue)
+    if references:
+        lines += ["", "> " + " · ".join(references)]
+    if vector.get("source") == "authored":
+        chain = ", ".join(f"`{c.get('element')}` {label(c.get('category'))}"
+                          for c in vector.get("verdicts") or []
+                          if isinstance(c, dict))
+        lines += ["", f"Chains: {chain}"]
+    if vector.get("source") == "question":
+        lines += ["", f"> {cell(vector.get('question'))}"]
+    return [*lines, "",
+            f"**Attack.** {cell(vector.get('attack'))}", "",
+            f"**Impact.** {cell(vector.get('impact'))}", "",
+            f"**Context.** {cell(vector.get('context'))}", ""]
+
+
+def tracked(register, vectors, enumeration, model, catalogue, orphaned):
+    lines = ["## Tracked vectors", ""]
+    if not vectors:
+        why = register.get("empty_because")
+        return [*lines, "None." + (f" {cell(why)}" if why else ""), ""]
+    lines += [f"{len(vectors)} vector(s), grouped by the element each is anchored to. "
+              "A chain lists the findings it ties together.", ""]
+    for section in SECTIONS:
+        here = [v for v in vectors if name_of(model, v.get("element"))[1] == section]
+        if not here:
+            continue
+        lines += [f"### {section.title()}", ""]
+        for element in dict.fromkeys(v.get("element") for v in here):
+            display, _ = name_of(model, element)
+            lines += [f"#### {element_heading(element, display)}", ""]
+            for vector in [v for v in here if v.get("element") == element]:
+                lines += written_out(vector, enumeration, catalogue, orphaned)
+    return lines
+
+
+def not_promoted(dismissed):
+    lines = ["## Not promoted", "",
+             "Every finding considered and not tracked, with the reason. The reason is the "
+             "point: a dismissal nobody can disagree with is not a decision.", ""]
+    if not dismissed:
+        return [*lines, "None.", ""]
+    lines += ["| Finding | Reason |", "| :--- | :--- |"]
+    for entry in dismissed:
+        if entry.get("question"):
+            what = f"open question: {cell(entry['question'])}"
+        else:
+            what = f"`{entry.get('element')}` {label(entry.get('category'))}"
+        lines.append(f"| {what} | {cell(entry.get('reason'))} |")
+    return [*lines, ""]
+
+
+def orphans(report, orphaned):
+    lines = ["## Orphaned", ""]
+    if not orphaned:
+        return [*lines, "None. Every vector's source is still a finding in the enumeration.", ""]
+    lines += ["Vectors whose source is no longer in the enumeration — the model changed "
+              "and the enumeration was re-run. Each stays until a person retires it with a "
+              "reason; it may carry a mitigation and an annotation.", ""]
+    for gap in report.gaps:
+        if gap["code"] == "ORPHAN_VECTOR":
+            lines.append(f"- **{gap['element'].split('/', 1)[1]}** — {cell(gap['message'])}")
+    return [*lines, ""]
+
+
+def retired(register):
+    entries = [r for r in register.get("retired") or [] if isinstance(r, dict)]
+    lines = ["## Retired", ""]
+    if not entries:
+        return [*lines, "None.", ""]
+    lines += ["| Id | Retired | Reason |", "| :--- | :--- | :--- |"]
+    lines += [f"| {cell(r.get('id'))} | {cell(r.get('retired'))} | {cell(r.get('reason'))} |"
+              for r in entries]
+    return [*lines, ""]
+
+
+def spaced(value):
+    return " ".join(str(value).split())
+
+
+def open_questions(enumeration, vectors, dismissed):
+    carried = (enumeration.get("carried_forward") or {}).get("open_questions") or []
+    questions = [q for q in carried if isinstance(q, str)]
+    lines = ["## Open questions from the model", ""]
+    if not questions:
+        return [*lines, "None were carried forward.", ""]
+    fate = {}
+    for vector in vectors:
+        if vector.get("source") == "question":
+            fate[spaced(vector.get("question"))] = f"promoted as **{vector.get('id')}**"
+    for entry in dismissed:
+        if entry.get("question"):
+            fate.setdefault(spaced(entry["question"]),
+                            f"not promoted — {cell(entry.get('reason'))}")
+    lines += ["| Question | What became of it |", "| :--- | :--- |"]
+    lines += [f"| {cell(q)} | {fate.get(spaced(q), '**undecided**')} |" for q in questions]
+    return [*lines, ""]
+
+
+LIMITS = [
+    "## Limits", "",
+    "**Every finding was decided; nothing proves the right ones were promoted.** "
+    "The script can show that each threat verdict and each open question ended up "
+    "as a vector, in a chain, or dismissed with a reason. Whether those were the "
+    "right calls is the judgement this step exists for, and no check reaches it.",
+    "",
+    "**A vector is a decision to track, not a decision to act.** What is being done "
+    "about each is the matrix, rendered separately from the same register.",
+    "",
+]
+
+
 def render(register, enumeration, model, catalogue, report, tracked_only=False):
     vectors = [v for v in register.get("vectors") or [] if isinstance(v, dict)]
+    dismissed = [d for d in register.get("dismissed") or [] if isinstance(d, dict)]
     orphaned = {g["element"].split("/", 1)[1] for g in report.gaps if g["code"] == "ORPHAN_VECTOR"}
     lines = [f"# Threat model — {model.get('system', {}).get('name', 'unnamed')}",
              "",
              f"Generated from `{register.get('threats')}` and the register beside it by "
              "`render_vectors.py`. Do not edit; regenerate.",
              ""]
-
-    # --- tracked ----------------------------------------------------------
-    lines += ["## Tracked vectors", ""]
-    if not vectors:
-        why = register.get("empty_because")
-        lines += ["None." + (f" {cell(why)}" if why else "") ]
-        lines.append("")
-    else:
-        lines += [f"{len(vectors)} vector(s), grouped by the element each is anchored to. "
-                  "A chain lists the findings it ties together.", ""]
-        for section in SECTIONS:
-            here = [v for v in vectors if name_of(model, v.get("element"))[1] == section]
-            if not here:
-                continue
-            lines += [f"### {section.title()}", ""]
-            for element in dict.fromkeys(v.get("element") for v in here):
-                display, _ = name_of(model, element)
-                lines += [f"#### {element_heading(element, display)}", ""]
-                for vector in [v for v in here if v.get("element") == element]:
-                    lines += [f"##### {vector_heading(vector, orphaned)}", "",
-                              f"{label(vector.get('category'))} · "
-                              f"promoted {cell(vector.get('promoted'))}"
-                              + (" · from the open question"
-                                 if vector.get("source") == "question" else "")]
-                    references = cited(nodes_for(vector, enumeration), catalogue)
-                    if references:
-                        lines += ["", "> " + " · ".join(references)]
-                    if vector.get("source") == "authored":
-                        chain = ", ".join(f"`{c.get('element')}` {label(c.get('category'))}"
-                                          for c in vector.get("verdicts") or []
-                                          if isinstance(c, dict))
-                        lines += ["", f"Chains: {chain}"]
-                    if vector.get("source") == "question":
-                        lines += ["", f"> {cell(vector.get('question'))}"]
-                    lines += ["",
-                              f"**Attack.** {cell(vector.get('attack'))}", "",
-                              f"**Impact.** {cell(vector.get('impact'))}", "",
-                              f"**Context.** {cell(vector.get('context'))}", ""]
-
-    if tracked_only:
-        return "\n".join(lines).rstrip() + "\n"
-
-    # --- not promoted -----------------------------------------------------
-    dismissed = [d for d in register.get("dismissed") or [] if isinstance(d, dict)]
-    lines += ["## Not promoted", "",
-              "Every finding considered and not tracked, with the reason. The reason is the "
-              "point: a dismissal nobody can disagree with is not a decision.", ""]
-    if not dismissed:
-        lines += ["None.", ""]
-    else:
-        lines += ["| Finding | Reason |", "| :--- | :--- |"]
-        for entry in dismissed:
-            if entry.get("question"):
-                what = f"open question: {cell(entry['question'])}"
-            else:
-                what = f"`{entry.get('element')}` {label(entry.get('category'))}"
-            lines.append(f"| {what} | {cell(entry.get('reason'))} |")
-        lines.append("")
-
-    # --- orphaned ---------------------------------------------------------
-    lines += ["## Orphaned", ""]
-    if not orphaned:
-        lines += ["None. Every vector's source is still a finding in the enumeration.", ""]
-    else:
-        lines += ["Vectors whose source is no longer in the enumeration — the model changed "
-                  "and the enumeration was re-run. Each stays until a person retires it with a "
-                  "reason; it may carry a mitigation and an annotation.", ""]
-        for gap in report.gaps:
-            if gap["code"] == "ORPHAN_VECTOR":
-                lines.append(f"- **{gap['element'].split('/', 1)[1]}** — {cell(gap['message'])}")
-        lines.append("")
-
-    # --- retired ----------------------------------------------------------
-    retired = [r for r in register.get("retired") or [] if isinstance(r, dict)]
-    lines += ["## Retired", ""]
-    if not retired:
-        lines += ["None.", ""]
-    else:
-        lines += ["| Id | Retired | Reason |", "| :--- | :--- | :--- |"]
-        lines += [f"| {cell(r.get('id'))} | {cell(r.get('retired'))} | {cell(r.get('reason'))} |"
-                  for r in retired]
-        lines.append("")
-
-    # --- open questions ---------------------------------------------------
-    questions = [q for q in ((enumeration.get("carried_forward") or {}).get("open_questions") or [])
-                 if isinstance(q, str)]
-    lines += ["## Open questions from the model", ""]
-    if not questions:
-        lines += ["None were carried forward.", ""]
-    else:
-        def norm(value):
-            return " ".join(str(value).split())
-
-        fate = {}
-        for vector in vectors:
-            if vector.get("source") == "question":
-                fate[norm(vector.get("question"))] = f"promoted as **{vector.get('id')}**"
-        for entry in dismissed:
-            if entry.get("question"):
-                fate.setdefault(norm(entry["question"]),
-                                f"not promoted — {cell(entry.get('reason'))}")
-        lines += ["| Question | What became of it |", "| :--- | :--- |"]
-        lines += [f"| {cell(q)} | {fate.get(norm(q), '**undecided**')} |" for q in questions]
-        lines.append("")
-
-    lines += [
-        "## Limits", "",
-        "**Every finding was decided; nothing proves the right ones were promoted.** "
-        "The script can show that each threat verdict and each open question ended up "
-        "as a vector, in a chain, or dismissed with a reason. Whether those were the "
-        "right calls is the judgement this step exists for, and no check reaches it.",
-        "",
-        "**A vector is a decision to track, not a decision to act.** What is being done "
-        "about each is the matrix, rendered separately from the same register.",
-        "",
-    ]
+    lines += tracked(register, vectors, enumeration, model, catalogue, orphaned)
+    if not tracked_only:
+        lines += not_promoted(dismissed)
+        lines += orphans(report, orphaned)
+        lines += retired(register)
+        lines += open_questions(enumeration, vectors, dismissed)
+        lines += LIMITS
     return "\n".join(lines).rstrip() + "\n"
 
 

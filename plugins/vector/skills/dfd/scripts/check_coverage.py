@@ -28,7 +28,12 @@ import sys
 try:
     import yaml
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 BLOCKING, ADVISORY = "BLOCKING", "ADVISORY"
 
@@ -210,10 +215,9 @@ def answered(item, field):
     return True
 
 
-def check(enumeration, model, model_path, nodes=None):
-    report = Report()
-    nodes = catalogue(CATALOGUES) if nodes is None else nodes
-
+def check_header(report, enumeration, model_path):
+    """What an enumeration says about itself: what it read, what it carried
+    forward, and that the model has not moved since."""
     for field in ("model", "model_digest", "analysis"):
         if not enumeration.get(field):
             report.add(BLOCKING, "MISSING_FIELD", "<file>",
@@ -239,70 +243,87 @@ def check(enumeration, model, model_path, nodes=None):
                    "model_digest does not match what the model now says; "
                    "the enumeration describes a model that has since changed")
 
+
+def placed(report, where, element, category, types, grid, analysis):
+    """The framework a verdict's pairing belongs to, or None, reported, when
+    the pairing is not one the grid asks about."""
+    if element not in types:
+        report.add(BLOCKING, "UNRESOLVED_ELEMENT", where,
+                   "no element with this id in the model", category)
+        return None
+
+    framework, _, name = str(category or "").partition("/")
+    if framework not in CATEGORIES or name not in CATEGORIES[framework]:
+        report.add(BLOCKING, "BAD_CATEGORY", where,
+                   f"{category!r} is not a threat category; expected "
+                   "stride/<name> or linddun/<name>", category)
+        return None
+    if framework not in analysis:
+        report.add(BLOCKING, "BAD_CATEGORY", where,
+                   f"{framework} is not in this model's analysis", category)
+        return None
+    section = types[element]
+    if name not in APPLIES[framework][section]:
+        report.add(BLOCKING, "BAD_CATEGORY", where,
+                   f"{category} does not apply to a {section[:-1]}", category)
+        return None
+    if (element, category) not in grid:
+        report.add(BLOCKING, "BAD_CATEGORY", where,
+                   f"{category} does not apply here: this {section[:-1]} "
+                   f"{CONDITIONAL[(framework, section)]}", category)
+        return None
+    return framework
+
+
+def check_verdict(report, entry, types, grid, analysis, seen, nodes):
+    if not isinstance(entry, dict):
+        report.add(BLOCKING, "BAD_ITEM", "verdicts", "entries must be mappings")
+        return
+    element = entry.get("element")
+    category = entry.get("category")
+    where = f"{element}" if element else "<unnamed>"
+    framework = placed(report, where, element, category, types, grid, analysis)
+    if framework is None:
+        return
+
+    pairing = (element, category)
+    if pairing in seen:
+        report.add(BLOCKING, "DUPLICATE_VERDICT", where,
+                   "a second verdict for a pairing already verdicted", category)
+        return
+    seen[pairing] = entry
+
+    verdict = entry.get("verdict")
+    if verdict not in VERDICTS:
+        report.add(BLOCKING, "BAD_VERDICT", where,
+                   f"{verdict!r} is not a verdict; expected one of "
+                   f"{', '.join(sorted(VERDICTS))}", category)
+        return
+    if verdict == "threat":
+        for field in ("summary", "detail"):
+            if not answered(entry, field):
+                report.add(BLOCKING, "MISSING_DETAIL", where,
+                           f"a threat with no {field}", category)
+        check_nodes(report, entry, where, category, framework, nodes)
+    elif not answered(entry, "reason"):
+        report.add(BLOCKING, "MISSING_REASON", where,
+                   f"a {verdict} verdict with no reason; a dismissal a reader "
+                   "cannot disagree with is not a dismissal", category)
+
+
+def check(enumeration, model, model_path, nodes=None):
+    report = Report()
+    nodes = catalogue(CATALOGUES) if nodes is None else nodes
+    check_header(report, enumeration, model_path)
+
     analysis = enumeration.get("analysis") or []
     if not isinstance(analysis, list):
         analysis = []
     types = element_types(model)
     grid = applicable(model, analysis)
     seen = {}
-
     for entry in enumeration.get("verdicts") or []:
-        if not isinstance(entry, dict):
-            report.add(BLOCKING, "BAD_ITEM", "verdicts", "entries must be mappings")
-            continue
-        element = entry.get("element")
-        category = entry.get("category")
-        where = f"{element}" if element else "<unnamed>"
-
-        if element not in types:
-            report.add(BLOCKING, "UNRESOLVED_ELEMENT", where,
-                       "no element with this id in the model", category)
-            continue
-
-        framework, _, name = str(category or "").partition("/")
-        if framework not in CATEGORIES or name not in CATEGORIES[framework]:
-            report.add(BLOCKING, "BAD_CATEGORY", where,
-                       f"{category!r} is not a threat category; expected "
-                       "stride/<name> or linddun/<name>", category)
-            continue
-        if framework not in analysis:
-            report.add(BLOCKING, "BAD_CATEGORY", where,
-                       f"{framework} is not in this model's analysis", category)
-            continue
-        section = types[element]
-        if name not in APPLIES[framework][section]:
-            report.add(BLOCKING, "BAD_CATEGORY", where,
-                       f"{category} does not apply to a {section[:-1]}", category)
-            continue
-        if (element, category) not in grid:
-            report.add(BLOCKING, "BAD_CATEGORY", where,
-                       f"{category} does not apply here: this {section[:-1]} "
-                       f"{CONDITIONAL[(framework, section)]}", category)
-            continue
-
-        pairing = (element, category)
-        if pairing in seen:
-            report.add(BLOCKING, "DUPLICATE_VERDICT", where,
-                       "a second verdict for a pairing already verdicted", category)
-            continue
-        seen[pairing] = entry
-
-        verdict = entry.get("verdict")
-        if verdict not in VERDICTS:
-            report.add(BLOCKING, "BAD_VERDICT", where,
-                       f"{verdict!r} is not a verdict; expected one of "
-                       f"{', '.join(sorted(VERDICTS))}", category)
-            continue
-        if verdict == "threat":
-            for field in ("summary", "detail"):
-                if not answered(entry, field):
-                    report.add(BLOCKING, "MISSING_DETAIL", where,
-                               f"a threat with no {field}", category)
-            check_nodes(report, entry, where, category, framework, nodes)
-        elif not answered(entry, "reason"):
-            report.add(BLOCKING, "MISSING_REASON", where,
-                       f"a {verdict} verdict with no reason; a dismissal a reader "
-                       "cannot disagree with is not a dismissal", category)
+        check_verdict(report, entry, types, grid, analysis, seen, nodes)
 
     for element, category in sorted(grid - set(seen)):
         report.add(BLOCKING, "UNCOVERED", element,
@@ -371,7 +392,7 @@ def load(path, what):
     return document
 
 
-def main(argv=None):
+def arguments():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("enumeration", nargs="?",
@@ -380,6 +401,29 @@ def main(argv=None):
     parser.add_argument("--model-digest", metavar="MODEL",
                         help="print the digest to record as model_digest for this model, "
                              "and stop")
+    return parser
+
+
+def print_gaps(report):
+    # Grouped by element, as validate_dfd.py groups gaps: one element's
+    # remaining categories are one sitting's work for whoever is enumerating.
+    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
+        if not gaps:
+            continue
+        groups = {}
+        for gap in gaps:
+            groups.setdefault(gap["element"], []).append(gap)
+        print(f"\n{severity} — {len(gaps)} gap(s) across {len(groups)} element(s)")
+        print("=" * 60)
+        for element, items in groups.items():
+            print(f"\n  {element}")
+            for gap in items:
+                where = f"{gap['category']}: " if gap["category"] else ""
+                print(f"    - {where}{gap['message']}")
+
+
+def main(argv=None):
+    parser = arguments()
     args = parser.parse_args(argv)
 
     if args.model_digest:
@@ -417,22 +461,7 @@ def main(argv=None):
         }, indent=2))
         return 0 if not report.blocking else 1
 
-    # Grouped by element, as validate_dfd.py groups gaps: one element's
-    # remaining categories are one sitting's work for whoever is enumerating.
-    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
-        if not gaps:
-            continue
-        groups = {}
-        for gap in gaps:
-            groups.setdefault(gap["element"], []).append(gap)
-        print(f"\n{severity} — {len(gaps)} gap(s) across {len(groups)} element(s)")
-        print("=" * 60)
-        for element, items in groups.items():
-            print(f"\n  {element}")
-            for gap in items:
-                where = f"{gap['category']}: " if gap["category"] else ""
-                print(f"    - {where}{gap['message']}")
-
+    print_gaps(report)
     print()
     covered = len(grid) - len([g for g in report.blocking if g["code"] == "UNCOVERED"])
     print(f"{covered}/{len(grid)} pairings verdicted.")

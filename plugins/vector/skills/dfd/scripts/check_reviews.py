@@ -42,7 +42,12 @@ try:
     # somebody running this script gets a sentence instead of a traceback.
     import yaml  # noqa: F401
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -113,7 +118,7 @@ def load(path, what):
     return traceability.load(path, what)
 
 
-def main(argv=None):
+def arguments():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", help="path to the .dfd.yaml model")
@@ -123,7 +128,31 @@ def main(argv=None):
     parser.add_argument("--root", metavar="DIR",
                         help="the repository root design_sources are relative to "
                              "(default: the nearest .git above the model)")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def print_findings(report, pulse):
+    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
+        if not gaps:
+            continue
+        print(f"\n{severity} — {len(gaps)} finding(s)")
+        print("=" * 60)
+        for gap in gaps:
+            print(f"\n  {gap['element']}")
+            print(f"    - {gap['message']}")
+            if gap["code"] in ASKING:
+                print(f"      asking: {ASKING[gap['code']]}")
+
+    print(f"\n{pulse['reviews']} of {pulse['documents']} design document(s) reviewed.")
+    if pulse["cycle"]:
+        print(f"This model asks to be read again every {pulse['cycle']} days.")
+    if pulse["oldest"]:
+        print(f"Oldest reading: {pulse['oldest']['path']} on {pulse['oldest']['reviewed']}, "
+              f"{pulse['oldest']['age_days']} days ago.")
+
+
+def main(argv=None):
+    args = arguments().parse_args(argv)
 
     as_of = datetime.date.today()
     if args.as_of:
@@ -160,24 +189,7 @@ def main(argv=None):
         print("Declare where the project's design documents live to turn this on.")
         return 0
 
-    for severity, gaps in ((BLOCKING, report.blocking), (ADVISORY, report.advisory)):
-        if not gaps:
-            continue
-        print(f"\n{severity} — {len(gaps)} finding(s)")
-        print("=" * 60)
-        for gap in gaps:
-            print(f"\n  {gap['element']}")
-            print(f"    - {gap['message']}")
-            if gap["code"] in ASKING:
-                print(f"      asking: {ASKING[gap['code']]}")
-
-    print(f"\n{pulse['reviews']} of {pulse['documents']} design document(s) reviewed.")
-    if pulse["cycle"]:
-        print(f"This model asks to be read again every {pulse['cycle']} days.")
-    if pulse["oldest"]:
-        print(f"Oldest reading: {pulse['oldest']['path']} on {pulse['oldest']['reviewed']}, "
-              f"{pulse['oldest']['age_days']} days ago.")
-
+    print_findings(report, pulse)
     print()
     if report.blocking:
         print(f"Not reviewed through: {len(report.blocking)} blocking, "

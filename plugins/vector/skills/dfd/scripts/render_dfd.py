@@ -17,7 +17,12 @@ import sys
 try:
     import yaml
 except ImportError:
-    sys.exit("PyYAML is required: pip install pyyaml")
+    # Exit 2, a usage error: 1 means the input has gaps, and a loop reading
+    # this script's exit would carry on against a machine missing a library.
+    print("PyYAML is required. Install it with 'pip install pyyaml', or run this "
+          "script through the lockfile beside it, which pins a hash-checked PyYAML:\n"
+          f"  uv run --locked --script {sys.argv[0]}", file=sys.stderr)
+    sys.exit(2)
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -108,14 +113,14 @@ def project(model, scope=None):
     return stands_for
 
 
-def mermaid(model, scope=None):
-    sections = {n: (model.get(n) or []) for n in
-                ("trust_zones", "subsystems", "actors", "processes", "stores",
-                 "flows")}
-    stands_for = project(model, scope)
-    parent = parents_of(model)
-    zone_of, node_line, element_zone = {}, {}, {}
+def nodes(sections, stands_for):
+    """The node drawn for each element that stands for itself and each
+    subsystem that stands for others, and the trust zone each is drawn in.
 
+    Returns (node_line, zone_of, element_zone): the last is every element's own
+    zone, drawn or not, which is what an arrow's thickness is read from.
+    """
+    zone_of, node_line, element_zone = {}, {}, {}
     for section, (open_shape, close_shape) in SHAPES.items():
         if section == "subsystems":
             continue
@@ -147,16 +152,94 @@ def mermaid(model, scope=None):
         zone_of[ident] = zones.pop() if len(zones) == 1 else None
         name = label(sub.get("name") or ident)
         node_line[ident] = f'{mid(ident)}{open_shape}{name}{close_shape}'
+    return node_line, zone_of, element_zone
 
-    # A subsystem's own diagram holds its elements and whatever they touch,
-    # rather than the whole model with one part expanded.
+
+def in_scope(model, scope, flows, stands_for):
+    """What a subsystem's own diagram holds: its elements and whatever they
+    touch, rather than the whole model with one part expanded."""
+    parent = parents_of(model)
+    inside = {i for i in stands_for if parent.get(i) == scope}
+    keep = set(inside)
+    for flow in flows:
+        ends = (stands_for.get(flow.get("from")), stands_for.get(flow.get("to")))
+        if any(e in inside for e in ends):
+            keep |= {e for e in ends if e}
+    return keep
+
+
+def arrow_for(src, dst, group, data_names, element_zone):
+    """One arrow for a group of flows between the same two drawn nodes,
+    labelled with what they carry."""
+    carried = []
+    for flow in group:
+        for ref in (flow.get("data") or []):
+            name = str(data_names.get(ref, ref))
+            if name not in carried:
+                carried.append(name)
+    if not carried:
+        carried = [f.get("name") for f in group if f.get("name")]
+    seen, names = set(), []
+    for name in carried:
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    text = label(", ".join(names))
+    # Read from the elements the flow actually connects, not from the nodes
+    # drawn for them. A subsystem spanning two zones has no zone of its own, so
+    # asking the drawn nodes would call every arrow touching it internal —
+    # including the ones that leave the system altogether.
+    crosses = any(element_zone.get(f.get("from")) and element_zone.get(f.get("to"))
+                  and element_zone[f["from"]] != element_zone[f["to"]]
+                  for f in group)
+    arrow = "==>" if crosses else "-->"
+    return (f'  {mid(src)} {arrow}|"{text}"| {mid(dst)}' if text
+            else f"  {mid(src)} {arrow} {mid(dst)}")
+
+
+def arrows(model, flows, stands_for, node_line, element_zone):
+    data_names = {d.get("id"): (d.get("name") or d.get("id"))
+                  for d in (model.get("data") or [])}
+
+    # Flows that land on the same pair of nodes become one arrow — but only
+    # where a subsystem stood in for an end of them. Two flows drawn between
+    # the same two elements are two facts about the model and are still drawn
+    # twice, which is what keeps an unlayered model rendering exactly as it
+    # did before any of this existed.
+    grouped = {}
+    for flow in flows:
+        src = stands_for.get(flow.get("from"), flow.get("from"))
+        dst = stands_for.get(flow.get("to"), flow.get("to"))
+        if src not in node_line or dst not in node_line or src == dst:
+            continue
+        grouped.setdefault((src, dst), []).append(flow)
+    merged = {pair for pair, group in grouped.items()
+              if any(f.get("from") != pair[0] or f.get("to") != pair[1] for f in group)}
+
+    lines, drawn = [], set()
+    for flow in flows:
+        src = stands_for.get(flow.get("from"), flow.get("from"))
+        dst = stands_for.get(flow.get("to"), flow.get("to"))
+        if (src, dst) not in grouped:
+            continue
+        if (src, dst) in merged:
+            if (src, dst) in drawn:
+                continue
+            drawn.add((src, dst))
+            lines.append(arrow_for(src, dst, grouped[(src, dst)], data_names, element_zone))
+        else:
+            lines.append(arrow_for(src, dst, [flow], data_names, element_zone))
+    return lines
+
+
+def mermaid(model, scope=None):
+    sections = {n: (model.get(n) or []) for n in
+                ("trust_zones", "subsystems", "actors", "processes", "stores",
+                 "flows")}
+    stands_for = project(model, scope)
+    node_line, zone_of, element_zone = nodes(sections, stands_for)
     if scope is not None:
-        inside = {i for i in stands_for if parent.get(i) == scope}
-        keep = set(inside)
-        for flow in sections["flows"]:
-            ends = (stands_for.get(flow.get("from")), stands_for.get(flow.get("to")))
-            if any(e in inside for e in ends):
-                keep |= {e for e in ends if e}
+        keep = in_scope(model, scope, sections["flows"], stands_for)
         node_line = {i: line for i, line in node_line.items() if i in keep}
         zone_of = {i: z for i, z in zone_of.items() if i in keep}
 
@@ -186,64 +269,7 @@ def mermaid(model, scope=None):
         if not zone_of.get(ident):
             lines.append(f"  {line}")
 
-    data_names = {d.get("id"): (d.get("name") or d.get("id"))
-                  for d in (model.get("data") or [])}
-
-    # Flows that land on the same pair of nodes become one arrow — but only
-    # where a subsystem stood in for an end of them. Two flows drawn between
-    # the same two elements are two facts about the model and are still drawn
-    # twice, which is what keeps an unlayered model rendering exactly as it
-    # did before any of this existed.
-    grouped = {}
-    for flow in sections["flows"]:
-        src = stands_for.get(flow.get("from"), flow.get("from"))
-        dst = stands_for.get(flow.get("to"), flow.get("to"))
-        if src not in node_line or dst not in node_line or src == dst:
-            continue
-        grouped.setdefault((src, dst), []).append(flow)
-    merged = {pair for pair, group in grouped.items()
-              if any(f.get("from") != pair[0] or f.get("to") != pair[1] for f in group)}
-
-    def arrow_for(src, dst, group):
-        carried = []
-        for flow in group:
-            for ref in (flow.get("data") or []):
-                name = str(data_names.get(ref, ref))
-                if name not in carried:
-                    carried.append(name)
-        if not carried:
-            carried = [f.get("name") for f in group if f.get("name")]
-        seen, names = set(), []
-        for name in carried:
-            if name and name not in seen:
-                seen.add(name)
-                names.append(name)
-        text = label(", ".join(names))
-        # Read from the elements the flow actually connects, not from the nodes
-        # drawn for them. A subsystem spanning two zones has no zone of its own,
-        # so asking the drawn nodes would call every arrow touching it internal
-        # — including the ones that leave the system altogether.
-        crosses = any(element_zone.get(f.get("from")) and element_zone.get(f.get("to"))
-                      and element_zone[f["from"]] != element_zone[f["to"]]
-                      for f in group)
-        arrow = "==>" if crosses else "-->"
-        return (f'  {mid(src)} {arrow}|"{text}"| {mid(dst)}' if text
-                else f"  {mid(src)} {arrow} {mid(dst)}")
-
-    drawn = set()
-    for flow in sections["flows"]:
-        src = stands_for.get(flow.get("from"), flow.get("from"))
-        dst = stands_for.get(flow.get("to"), flow.get("to"))
-        if (src, dst) not in grouped:
-            continue
-        if (src, dst) in merged:
-            if (src, dst) in drawn:
-                continue
-            drawn.add((src, dst))
-            lines.append(arrow_for(src, dst, grouped[(src, dst)]))
-        else:
-            lines.append(arrow_for(src, dst, [flow]))
-
+    lines += arrows(model, sections["flows"], stands_for, node_line, element_zone)
     return "\n".join(lines)
 
 
@@ -262,20 +288,42 @@ def bullets(items):
     return "\n".join(f"- {i}" for i in items) + "\n"
 
 
-def render(model):
+class Names:
+    """How a table cell names a trust zone or a list of data items."""
+
+    def __init__(self, model):
+        self.data = {d.get("id"): (d.get("name") or d.get("id"))
+                     for d in (model.get("data") or [])}
+        self.zones = {z.get("id"): (z.get("name") or z.get("id"))
+                      for z in (model.get("trust_zones") or [])}
+
+    def zone(self, ident):
+        return cell(self.zones.get(ident, ident))
+
+    def data_list(self, refs):
+        return cell([self.data.get(r, r) for r in (refs or [])])
+
+
+def process_table(names, items):
+    return table(["Process", "Zone", "Owner", "Authn", "Authz", "Logging"],
+                 [[cell(p.get("name")), names.zone(p.get("trust_zone")), cell(p.get("owner")),
+                   cell(p.get("authn")), cell(p.get("authz")), cell(p.get("logging"))]
+                  for p in items])
+
+
+def store_table(names, items):
+    return table(["Store", "Kind", "Zone", "Holds", "At rest", "Access", "Retention",
+                  "Backups"],
+                 [[cell(s.get("name")), cell(s.get("kind")), names.zone(s.get("trust_zone")),
+                   names.data_list(s.get("data")), cell(s.get("encryption_at_rest")),
+                   cell(s.get("access_control")), cell(s.get("retention")),
+                   cell(s.get("backups"))]
+                  for s in items])
+
+
+def introduction(model):
     system = model.get("system") or {}
     scope = system.get("scope") or {}
-    data_names = {d.get("id"): (d.get("name") or d.get("id"))
-                  for d in (model.get("data") or [])}
-    zone_names = {z.get("id"): (z.get("name") or z.get("id"))
-                  for z in (model.get("trust_zones") or [])}
-
-    def zone(ident):
-        return cell(zone_names.get(ident, ident))
-
-    def data_list(refs):
-        return cell([data_names.get(r, r) for r in (refs or [])])
-
     out = [f"# {system.get('name') or 'Untitled system'} — data flow diagram\n"]
     if system.get("description"):
         out.append(f"{system['description']}\n")
@@ -288,98 +336,97 @@ def render(model):
     out.append("## Scope\n")
     out.append("**In scope**\n\n" + bullets(scope.get("in_scope")))
     out.append("\n**Out of scope**\n\n" + bullets(scope.get("out_of_scope")))
+    return out
 
+
+def used_subsystems(model):
+    """The subsystems something names as its parent; an empty one is not drawn."""
     subsystems = [s for s in (model.get("subsystems") or []) if isinstance(s, dict)]
     parent = parents_of(model)
-    subsystems = [s for s in subsystems if s.get("id") in set(parent.values())]
+    return [s for s in subsystems if s.get("id") in set(parent.values())]
 
+
+def diagram(model, subsystems):
     legend = ("Rectangles are external entities, rounded boxes are processes, cylinders "
               "are data stores, and boxed groups are trust zones. A thick arrow crosses "
               "a trust boundary.")
-    if subsystems:
-        legend = legend.replace(
-            "cylinders are data stores,",
-            "cylinders are data stores, double-edged boxes stand for a whole "
-            "subsystem,")
-        out.append("\n## Overview\n")
-        out.append("```mermaid\n" + mermaid(model, None) + "\n```\n")
-        out.append(legend + " Each subsystem is drawn in full in its own section "
-                   "below; a subsystem drawn outside every zone spans more than "
-                   "one of them.\n")
-    else:
-        out.append("\n## Diagram\n")
-        out.append("```mermaid\n" + mermaid(model) + "\n```\n")
-        out.append(legend + "\n")
+    if not subsystems:
+        return ["\n## Diagram\n", "```mermaid\n" + mermaid(model) + "\n```\n", legend + "\n"]
+    legend = legend.replace(
+        "cylinders are data stores,",
+        "cylinders are data stores, double-edged boxes stand for a whole "
+        "subsystem,")
+    return ["\n## Overview\n",
+            "```mermaid\n" + mermaid(model, None) + "\n```\n",
+            legend + " Each subsystem is drawn in full in its own section "
+            "below; a subsystem drawn outside every zone spans more than "
+            "one of them.\n"]
 
-    out.append("\n## Trust zones\n")
-    out.append(table(["Zone", "Controlled by", "Description"],
-                     [[cell(z.get("name") or z.get("id")), cell(z.get("controlled_by")),
-                       cell(z.get("description"))] for z in (model.get("trust_zones") or [])]))
 
-    out.append("\n## External entities\n")
-    out.append(table(["Actor", "Type", "Zone", "Authenticated by", "Data subject"],
-                     [[cell(a.get("name")), cell(a.get("type")), zone(a.get("trust_zone")),
-                       cell(a.get("authenticates_how")), cell(a.get("is_data_subject"))]
-                      for a in (model.get("actors") or [])]))
+def outside(model, names):
+    """The trust zones and the external entities."""
+    return ["\n## Trust zones\n",
+            table(["Zone", "Controlled by", "Description"],
+                  [[cell(z.get("name") or z.get("id")), cell(z.get("controlled_by")),
+                    cell(z.get("description"))] for z in (model.get("trust_zones") or [])]),
+            "\n## External entities\n",
+            table(["Actor", "Type", "Zone", "Authenticated by", "Data subject"],
+                  [[cell(a.get("name")), cell(a.get("type")), names.zone(a.get("trust_zone")),
+                    cell(a.get("authenticates_how")), cell(a.get("is_data_subject"))]
+                   for a in (model.get("actors") or [])])]
 
-    def process_table(items):
-        return table(["Process", "Zone", "Owner", "Authn", "Authz", "Logging"],
-                     [[cell(p.get("name")), zone(p.get("trust_zone")), cell(p.get("owner")),
-                       cell(p.get("authn")), cell(p.get("authz")), cell(p.get("logging"))]
-                      for p in items])
 
-    def store_table(items):
-        return table(["Store", "Kind", "Zone", "Holds", "At rest", "Access", "Retention",
-                      "Backups"],
-                     [[cell(s.get("name")), cell(s.get("kind")), zone(s.get("trust_zone")),
-                       data_list(s.get("data")), cell(s.get("encryption_at_rest")),
-                       cell(s.get("access_control")), cell(s.get("retention")),
-                       cell(s.get("backups"))]
-                      for s in items])
+def by_subsystem(model, names, subsystems, processes, stores):
+    """One part at a time: its diagram and its own elements together, rather
+    than one picture of everything and two flat tables under it."""
+    out = []
+    for sub in subsystems:
+        ident = sub.get("id")
+        out.append(f"\n## {sub.get('name') or ident}\n")
+        if sub.get("description"):
+            out.append(f"{sub['description']}\n")
+        out.append("```mermaid\n" + mermaid(model, ident) + "\n```\n")
+        mine = [p for p in processes if p.get("parent") == ident]
+        held = [t for t in stores if t.get("parent") == ident]
+        if mine:
+            out.append("\n**Processes**\n\n" + process_table(names, mine))
+        if held:
+            out.append("\n**Data stores**\n\n" + store_table(names, held))
+    # Named to read as a question. An element both parts read and write is
+    # honestly at level 0; a model where most of them are here is one somebody
+    # should look at again, and nothing reports that.
+    loose_p = [p for p in processes if not p.get("parent")]
+    loose_s = [t for t in stores if not t.get("parent")]
+    if loose_p or loose_s:
+        out.append("\n## Not in a subsystem\n")
+        if loose_p:
+            out.append("\n**Processes**\n\n" + process_table(names, loose_p))
+        if loose_s:
+            out.append("\n**Data stores**\n\n" + store_table(names, loose_s))
+    return out
 
+
+def inside(model, names, subsystems):
+    """The processes and stores, by subsystem where the model has them."""
     processes = [p for p in (model.get("processes") or []) if isinstance(p, dict)]
     stores = [t for t in (model.get("stores") or []) if isinstance(t, dict)]
-
     if subsystems:
-        # One part at a time: its diagram and its own elements together, rather
-        # than one picture of everything and two flat tables under it.
-        for sub in subsystems:
-            ident = sub.get("id")
-            out.append(f"\n## {sub.get('name') or ident}\n")
-            if sub.get("description"):
-                out.append(f"{sub['description']}\n")
-            out.append("```mermaid\n" + mermaid(model, ident) + "\n```\n")
-            mine = [p for p in processes if p.get("parent") == ident]
-            held = [t for t in stores if t.get("parent") == ident]
-            if mine:
-                out.append("\n**Processes**\n\n" + process_table(mine))
-            if held:
-                out.append("\n**Data stores**\n\n" + store_table(held))
-        # Named to read as a question. An element both parts read and write is
-        # honestly at level 0; a model where most of them are here is one
-        # somebody should look at again, and nothing reports that.
-        loose_p = [p for p in processes if not p.get("parent")]
-        loose_s = [t for t in stores if not t.get("parent")]
-        if loose_p or loose_s:
-            out.append("\n## Not in a subsystem\n")
-            if loose_p:
-                out.append("\n**Processes**\n\n" + process_table(loose_p))
-            if loose_s:
-                out.append("\n**Data stores**\n\n" + store_table(loose_s))
-    else:
-        out.append("\n## Processes\n")
-        out.append(process_table(processes))
-        out.append("\n## Data stores\n")
-        out.append(store_table(stores))
+        return by_subsystem(model, names, subsystems, processes, stores)
+    return ["\n## Processes\n", process_table(names, processes),
+            "\n## Data stores\n", store_table(names, stores)]
 
-    out.append("\n## Data dictionary\n")
-    out.append(table(["Data", "Classification", "Personal data", "Subjects", "Retention",
-                      "Lawful basis"],
-                     [[cell(d.get("name")), cell(d.get("classification")),
-                       cell(d.get("personal_data")), cell(d.get("subjects")),
-                       cell(d.get("retention")), cell(d.get("lawful_basis"))]
-                      for d in (model.get("data") or [])]))
 
+def dictionary(model):
+    return ["\n## Data dictionary\n",
+            table(["Data", "Classification", "Personal data", "Subjects", "Retention",
+                   "Lawful basis"],
+                  [[cell(d.get("name")), cell(d.get("classification")),
+                    cell(d.get("personal_data")), cell(d.get("subjects")),
+                    cell(d.get("retention")), cell(d.get("lawful_basis"))]
+                   for d in (model.get("data") or [])])]
+
+
+def flows(model, names):
     zone_of = {i.get("id"): i.get("trust_zone") for n in ("actors", "processes", "stores")
                for i in (model.get(n) or [])}
     element_names = {i.get("id"): (i.get("name") or i.get("id"))
@@ -391,45 +438,57 @@ def render(model):
         crosses = (zone_of.get(src) and zone_of.get(dst)
                    and zone_of[src] != zone_of[dst])
         flow_rows.append([cell(f.get("name")), cell(element_names.get(src, src)),
-                          cell(element_names.get(dst, dst)), data_list(f.get("data")),
+                          cell(element_names.get(dst, dst)), names.data_list(f.get("data")),
                           cell(f.get("protocol")), cell(f.get("encryption_in_transit")),
                           cell(f.get("authn")), cell(f.get("trigger")),
                           "yes" if crosses else "no"])
-    out.append("\n## Data flows\n")
-    out.append(table(["Flow", "From", "To", "Carries", "Protocol", "In transit",
-                      "Authn", "Trigger", "Crosses boundary"], flow_rows))
+    return ["\n## Data flows\n",
+            table(["Flow", "From", "To", "Carries", "Protocol", "In transit",
+                   "Authn", "Trigger", "Crosses boundary"], flow_rows)]
 
-    out.append("\n## Assumptions\n")
-    out.append(bullets(system.get("assumptions")))
-    out.append("\n## Open questions\n")
-    out.append(bullets(system.get("open_questions")))
 
+def reviewed_against(system):
     reviewed = [r for r in (system.get("reviewed") or []) if isinstance(r, dict)]
-    if reviewed:
-        # Sorted by the recorded date, newest first, with an unparseable or
-        # missing one last rather than dropped: a reader should see the entry
-        # and the fact that it does not say when.
-        def when(entry):
-            return str(entry.get("reviewed") or "")
-        reviewed = sorted(reviewed, key=when, reverse=True)
-        out.append("\n## Reviewed against\n")
-        oldest = min((when(r) for r in reviewed if when(r)), default=None)
-        claim = ("This model has been read against the documents below. It is a claim "
-                 "about documents, never about the system: a design change made without "
-                 "one is invisible here.")
-        if oldest:
-            claim += f" The oldest reading here is from {oldest}."
-        if system.get("review_cycle"):
-            claim += f" This model asks to be read again every {system['review_cycle']} days."
-        out.append(claim + "\n")
-        out.append(table(["Document", "Read on", "Impact", "Why"],
-                         [[cell(r.get("path")), cell(r.get("reviewed")),
-                           cell(r.get("impact")), cell(r.get("reason"))]
-                          for r in reviewed]))
+    if not reviewed:
+        return []
 
-    out.append("\n---\n")
-    out.append("_Generated from the model by `render_dfd.py`. Edit the `.dfd.yaml` "
-               "and regenerate; changes made here will be lost._\n")
+    # Sorted by the recorded date, newest first, with an unparseable or missing
+    # one last rather than dropped: a reader should see the entry and the fact
+    # that it does not say when.
+    def when(entry):
+        return str(entry.get("reviewed") or "")
+    reviewed = sorted(reviewed, key=when, reverse=True)
+    oldest = min((when(r) for r in reviewed if when(r)), default=None)
+    claim = ("This model has been read against the documents below. It is a claim "
+             "about documents, never about the system: a design change made without "
+             "one is invisible here.")
+    if oldest:
+        claim += f" The oldest reading here is from {oldest}."
+    if system.get("review_cycle"):
+        claim += f" This model asks to be read again every {system['review_cycle']} days."
+    return ["\n## Reviewed against\n", claim + "\n",
+            table(["Document", "Read on", "Impact", "Why"],
+                  [[cell(r.get("path")), cell(r.get("reviewed")),
+                    cell(r.get("impact")), cell(r.get("reason"))]
+                   for r in reviewed])]
+
+
+def render(model):
+    system = model.get("system") or {}
+    names = Names(model)
+    subsystems = used_subsystems(model)
+    out = introduction(model)
+    out += diagram(model, subsystems)
+    out += outside(model, names)
+    out += inside(model, names, subsystems)
+    out += dictionary(model)
+    out += flows(model, names)
+    out += ["\n## Assumptions\n", bullets(system.get("assumptions")),
+            "\n## Open questions\n", bullets(system.get("open_questions"))]
+    out += reviewed_against(system)
+    out += ["\n---\n",
+            "_Generated from the model by `render_dfd.py`. Edit the `.dfd.yaml` "
+            "and regenerate; changes made here will be lost._\n"]
     return "\n".join(out)
 
 
