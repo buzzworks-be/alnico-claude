@@ -8,6 +8,7 @@ on:
       - '.claude-plugin/marketplace.json'
       - 'README.md'
       - '.github/scripts/sync_marketplace.py'
+      - '.github/workflows/sync-marketplace.yml'
   workflow_dispatch:
 
 permissions: {}
