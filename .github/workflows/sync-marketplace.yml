@@ -1,4 +1,4 @@
-name: Sync marketplace.json and README
+name: Sync marketplace.json, README and uv.lock
 
 on:
   push:
@@ -7,6 +7,9 @@ on:
       - 'plugins/*/.claude-plugin/plugin.json'
       - '.claude-plugin/marketplace.json'
       - 'README.md'
+      - 'plugins/**/*.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/scripts/sync_marketplace.py'
       - '.github/workflows/sync-marketplace.yml'
   workflow_dispatch:
@@ -28,21 +31,29 @@ jobs:
           # The sync script runs with no token in reach; only the push step gets one.
           persist-credentials: false
 
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.12.20"
+          enable-cache: false
+
       - run: python .github/scripts/sync_marketplace.py
+
+      - name: Lock the generated pyproject.toml
+        run: uv lock
 
       - name: Commit if changed
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$(git status --porcelain)" ]; then
-            echo "marketplace.json and README.md already in sync"
+            echo "marketplace.json, README.md and uv.lock already in sync"
             exit 0
           fi
-          git add .claude-plugin/marketplace.json README.md
+          git add .claude-plugin/marketplace.json README.md pyproject.toml uv.lock
           git diff --cached
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Sync marketplace.json and README from plugin manifests"
+          git commit -m "Sync marketplace.json, README and uv.lock from plugins"
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           git -c http.https://github.com/.extraheader="$auth" pull --rebase origin main
           git -c http.https://github.com/.extraheader="$auth" push origin HEAD:main
