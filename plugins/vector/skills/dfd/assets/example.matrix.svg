@@ -1,0 +1,333 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 704 1048" width="704" height="1048" role="img" aria-labelledby="title desc">
+<title id="title">Where the risk sits — Acme Checkout</title>
+<desc id="desc">Two five-by-five grids of likelihood against impact for Acme Checkout, as of 2026-09-13: where each vector sits now, and where it would sit with nothing done. Each cell names its risk band beside a stripe in its colour.</desc>
+<style>text{font-family:system-ui,-apple-system,'Segoe UI',sans-serif}.surface{fill:#fcfcfb}.cell{fill:#efeeea}.primary{fill:#0b0b0b}.secondary{fill:#52514e}.muted{fill:#6b6a66}.s0{fill:#0ca30c}.s1{fill:#fab219}.s2{fill:#ec835a}.s3{fill:#d03b3b}@media (prefers-color-scheme: dark){.surface{fill:#1a1a19}.cell{fill:#2c2c2a}.primary{fill:#ffffff}.secondary{fill:#c3c2b7}.muted{fill:#a3a29b}}</style>
+<rect width="704" height="1048" rx="8" class="surface"/>
+<text x="24" y="38" class="secondary" font-size="12" font-weight="600" text-anchor="start">Risk band</text>
+<rect x="100" y="26" width="6" height="16" rx="3" class="s0"/>
+<text x="112" y="38" class="primary" font-size="12" font-weight="400" text-anchor="start">low</text>
+<rect x="157" y="26" width="6" height="16" rx="3" class="s1"/>
+<text x="169" y="38" class="primary" font-size="12" font-weight="400" text-anchor="start">medium</text>
+<rect x="235" y="26" width="6" height="16" rx="3" class="s2"/>
+<text x="247" y="38" class="primary" font-size="12" font-weight="400" text-anchor="start">high</text>
+<rect x="299" y="26" width="6" height="16" rx="3" class="s3"/>
+<text x="311" y="38" class="primary" font-size="12" font-weight="400" text-anchor="start">critical</text>
+<text x="24" y="80" class="primary" font-size="16" font-weight="600" text-anchor="start">Now</text>
+<text x="24" y="100" class="secondary" font-size="12" font-weight="400" text-anchor="start">A mitigated vector placed by the risk its control leaves</text>
+<text x="416.0" y="120" class="secondary" font-size="12" font-weight="600" text-anchor="middle">Impact →</text>
+<text x="24" y="144" class="secondary" font-size="12" font-weight="600" text-anchor="start">Likelihood ↑</text>
+<text x="204.0" y="140" class="muted" font-size="11" font-weight="400" text-anchor="middle">1 · Negligible</text>
+<text x="310.0" y="140" class="muted" font-size="11" font-weight="400" text-anchor="middle">2 · Minor</text>
+<text x="416.0" y="140" class="muted" font-size="11" font-weight="400" text-anchor="middle">3 · Moderate</text>
+<text x="522.0" y="140" class="muted" font-size="11" font-weight="400" text-anchor="middle">4 · Major</text>
+<text x="628.0" y="140" class="muted" font-size="11" font-weight="400" text-anchor="middle">5 · Severe</text>
+<text x="24" y="185.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">5</text>
+<text x="24" y="201.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Almost certain</text>
+<text x="24" y="261.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">4</text>
+<text x="24" y="277.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Likely</text>
+<text x="24" y="337.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">3</text>
+<text x="24" y="353.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Possible</text>
+<text x="24" y="413.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">2</text>
+<text x="24" y="429.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Unlikely</text>
+<text x="24" y="489.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">1</text>
+<text x="24" y="505.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Rare</text>
+<g><title>Likelihood 5 (Almost certain), impact 1 (Negligible): medium</title>
+<rect x="152" y="150" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="150" width="6" height="74" rx="3" class="s1"/>
+<text x="166" y="166" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+</g>
+<g><title>Likelihood 5 (Almost certain), impact 2 (Minor): high — VEC-0002</title>
+<rect x="258" y="150" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="150" width="6" height="74" rx="3" class="s2"/>
+<text x="272" y="166" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+<text x="272" y="184" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0002</text>
+</g>
+<g><title>Likelihood 5 (Almost certain), impact 3 (Moderate): high — VEC-0004</title>
+<rect x="364" y="150" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="150" width="6" height="74" rx="3" class="s2"/>
+<text x="378" y="166" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+<text x="378" y="184" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0004</text>
+</g>
+<g><title>Likelihood 5 (Almost certain), impact 4 (Major): critical — VEC-0009</title>
+<rect x="470" y="150" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="150" width="6" height="74" rx="3" class="s3"/>
+<text x="484" y="166" class="secondary" font-size="11" font-weight="400" text-anchor="start">critical</text>
+<text x="484" y="184" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0009</text>
+</g>
+<g><title>Likelihood 5 (Almost certain), impact 5 (Severe): critical</title>
+<rect x="576" y="150" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="150" width="6" height="74" rx="3" class="s3"/>
+<text x="590" y="166" class="secondary" font-size="11" font-weight="400" text-anchor="start">critical</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 1 (Negligible): low</title>
+<rect x="152" y="226" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="226" width="6" height="74" rx="3" class="s0"/>
+<text x="166" y="242" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 2 (Minor): medium — VEC-0014</title>
+<rect x="258" y="226" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="226" width="6" height="74" rx="3" class="s1"/>
+<text x="272" y="242" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+<text x="272" y="260" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0014</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 3 (Moderate): high — VEC-0012</title>
+<rect x="364" y="226" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="226" width="6" height="74" rx="3" class="s2"/>
+<text x="378" y="242" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+<text x="378" y="260" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0012</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 4 (Major): high</title>
+<rect x="470" y="226" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="226" width="6" height="74" rx="3" class="s2"/>
+<text x="484" y="242" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 5 (Severe): critical</title>
+<rect x="576" y="226" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="226" width="6" height="74" rx="3" class="s3"/>
+<text x="590" y="242" class="secondary" font-size="11" font-weight="400" text-anchor="start">critical</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 1 (Negligible): low</title>
+<rect x="152" y="302" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="302" width="6" height="74" rx="3" class="s0"/>
+<text x="166" y="318" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 2 (Minor): medium</title>
+<rect x="258" y="302" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="302" width="6" height="74" rx="3" class="s1"/>
+<text x="272" y="318" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 3 (Moderate): medium — VEC-0005</title>
+<rect x="364" y="302" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="302" width="6" height="74" rx="3" class="s1"/>
+<text x="378" y="318" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+<text x="378" y="336" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0005</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 4 (Major): high — VEC-0001</title>
+<rect x="470" y="302" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="302" width="6" height="74" rx="3" class="s2"/>
+<text x="484" y="318" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+<text x="484" y="336" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0001</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 5 (Severe): high</title>
+<rect x="576" y="302" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="302" width="6" height="74" rx="3" class="s2"/>
+<text x="590" y="318" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 1 (Negligible): low</title>
+<rect x="152" y="378" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="378" width="6" height="74" rx="3" class="s0"/>
+<text x="166" y="394" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 2 (Minor): low — VEC-0010</title>
+<rect x="258" y="378" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="378" width="6" height="74" rx="3" class="s0"/>
+<text x="272" y="394" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+<text x="272" y="412" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0010</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 3 (Moderate): medium — VEC-0003, VEC-0011</title>
+<rect x="364" y="378" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="378" width="6" height="74" rx="3" class="s1"/>
+<text x="378" y="394" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+<text x="378" y="412" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0003</text>
+<text x="378" y="427" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0011</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 4 (Major): medium — VEC-0008</title>
+<rect x="470" y="378" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="378" width="6" height="74" rx="3" class="s1"/>
+<text x="484" y="394" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+<text x="484" y="412" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0008</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 5 (Severe): high</title>
+<rect x="576" y="378" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="378" width="6" height="74" rx="3" class="s2"/>
+<text x="590" y="394" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 1 (Negligible): low</title>
+<rect x="152" y="454" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="454" width="6" height="74" rx="3" class="s0"/>
+<text x="166" y="470" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 2 (Minor): low</title>
+<rect x="258" y="454" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="454" width="6" height="74" rx="3" class="s0"/>
+<text x="272" y="470" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 3 (Moderate): low — VEC-0007, VEC-0013</title>
+<rect x="364" y="454" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="454" width="6" height="74" rx="3" class="s0"/>
+<text x="378" y="470" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+<text x="378" y="488" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0007</text>
+<text x="378" y="503" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0013</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 4 (Major): low</title>
+<rect x="470" y="454" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="454" width="6" height="74" rx="3" class="s0"/>
+<text x="484" y="470" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 5 (Severe): medium — VEC-0006</title>
+<rect x="576" y="454" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="454" width="6" height="74" rx="3" class="s1"/>
+<text x="590" y="470" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+<text x="590" y="488" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0006</text>
+</g>
+<text x="24" y="576" class="primary" font-size="16" font-weight="600" text-anchor="start">With nothing done</text>
+<text x="24" y="596" class="secondary" font-size="12" font-weight="400" text-anchor="start">Every vector placed by its inherent rating</text>
+<text x="416.0" y="616" class="secondary" font-size="12" font-weight="600" text-anchor="middle">Impact →</text>
+<text x="24" y="640" class="secondary" font-size="12" font-weight="600" text-anchor="start">Likelihood ↑</text>
+<text x="204.0" y="636" class="muted" font-size="11" font-weight="400" text-anchor="middle">1 · Negligible</text>
+<text x="310.0" y="636" class="muted" font-size="11" font-weight="400" text-anchor="middle">2 · Minor</text>
+<text x="416.0" y="636" class="muted" font-size="11" font-weight="400" text-anchor="middle">3 · Moderate</text>
+<text x="522.0" y="636" class="muted" font-size="11" font-weight="400" text-anchor="middle">4 · Major</text>
+<text x="628.0" y="636" class="muted" font-size="11" font-weight="400" text-anchor="middle">5 · Severe</text>
+<text x="24" y="681.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">5</text>
+<text x="24" y="697.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Almost certain</text>
+<text x="24" y="757.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">4</text>
+<text x="24" y="773.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Likely</text>
+<text x="24" y="833.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">3</text>
+<text x="24" y="849.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Possible</text>
+<text x="24" y="909.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">2</text>
+<text x="24" y="925.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Unlikely</text>
+<text x="24" y="985.0" class="secondary" font-size="13" font-weight="600" text-anchor="start">1</text>
+<text x="24" y="1001.0" class="muted" font-size="11" font-weight="400" text-anchor="start">Rare</text>
+<g><title>Likelihood 5 (Almost certain), impact 1 (Negligible): medium</title>
+<rect x="152" y="646" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="646" width="6" height="74" rx="3" class="s1"/>
+<text x="166" y="662" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+</g>
+<g><title>Likelihood 5 (Almost certain), impact 2 (Minor): high — VEC-0002, VEC-0010, VEC-0014</title>
+<rect x="258" y="646" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="646" width="6" height="74" rx="3" class="s2"/>
+<text x="272" y="662" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+<text x="272" y="680" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0002</text>
+<text x="272" y="695" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0010</text>
+<text x="272" y="710" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0014</text>
+</g>
+<g><title>Likelihood 5 (Almost certain), impact 3 (Moderate): high — VEC-0004</title>
+<rect x="364" y="646" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="646" width="6" height="74" rx="3" class="s2"/>
+<text x="378" y="662" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+<text x="378" y="680" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0004</text>
+</g>
+<g><title>Likelihood 5 (Almost certain), impact 4 (Major): critical — VEC-0009</title>
+<rect x="470" y="646" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="646" width="6" height="74" rx="3" class="s3"/>
+<text x="484" y="662" class="secondary" font-size="11" font-weight="400" text-anchor="start">critical</text>
+<text x="484" y="680" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0009</text>
+</g>
+<g><title>Likelihood 5 (Almost certain), impact 5 (Severe): critical</title>
+<rect x="576" y="646" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="646" width="6" height="74" rx="3" class="s3"/>
+<text x="590" y="662" class="secondary" font-size="11" font-weight="400" text-anchor="start">critical</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 1 (Negligible): low</title>
+<rect x="152" y="722" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="722" width="6" height="74" rx="3" class="s0"/>
+<text x="166" y="738" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 2 (Minor): medium</title>
+<rect x="258" y="722" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="722" width="6" height="74" rx="3" class="s1"/>
+<text x="272" y="738" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 3 (Moderate): high — VEC-0003, VEC-0011, VEC-0012</title>
+<rect x="364" y="722" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="722" width="6" height="74" rx="3" class="s2"/>
+<text x="378" y="738" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+<text x="378" y="756" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0003</text>
+<text x="378" y="771" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0011</text>
+<text x="378" y="786" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0012</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 4 (Major): high — VEC-0008</title>
+<rect x="470" y="722" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="722" width="6" height="74" rx="3" class="s2"/>
+<text x="484" y="738" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+<text x="484" y="756" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0008</text>
+</g>
+<g><title>Likelihood 4 (Likely), impact 5 (Severe): critical</title>
+<rect x="576" y="722" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="722" width="6" height="74" rx="3" class="s3"/>
+<text x="590" y="738" class="secondary" font-size="11" font-weight="400" text-anchor="start">critical</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 1 (Negligible): low</title>
+<rect x="152" y="798" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="798" width="6" height="74" rx="3" class="s0"/>
+<text x="166" y="814" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 2 (Minor): medium</title>
+<rect x="258" y="798" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="798" width="6" height="74" rx="3" class="s1"/>
+<text x="272" y="814" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 3 (Moderate): medium — VEC-0005, VEC-0007, VEC-0013</title>
+<rect x="364" y="798" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="798" width="6" height="74" rx="3" class="s1"/>
+<text x="378" y="814" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+<text x="378" y="832" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0005</text>
+<text x="378" y="847" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0007</text>
+<text x="378" y="862" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0013</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 4 (Major): high — VEC-0001</title>
+<rect x="470" y="798" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="798" width="6" height="74" rx="3" class="s2"/>
+<text x="484" y="814" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+<text x="484" y="832" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0001</text>
+</g>
+<g><title>Likelihood 3 (Possible), impact 5 (Severe): high</title>
+<rect x="576" y="798" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="798" width="6" height="74" rx="3" class="s2"/>
+<text x="590" y="814" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 1 (Negligible): low</title>
+<rect x="152" y="874" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="874" width="6" height="74" rx="3" class="s0"/>
+<text x="166" y="890" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 2 (Minor): low</title>
+<rect x="258" y="874" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="874" width="6" height="74" rx="3" class="s0"/>
+<text x="272" y="890" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 3 (Moderate): medium</title>
+<rect x="364" y="874" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="874" width="6" height="74" rx="3" class="s1"/>
+<text x="378" y="890" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 4 (Major): medium</title>
+<rect x="470" y="874" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="874" width="6" height="74" rx="3" class="s1"/>
+<text x="484" y="890" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+</g>
+<g><title>Likelihood 2 (Unlikely), impact 5 (Severe): high</title>
+<rect x="576" y="874" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="874" width="6" height="74" rx="3" class="s2"/>
+<text x="590" y="890" class="secondary" font-size="11" font-weight="400" text-anchor="start">high</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 1 (Negligible): low</title>
+<rect x="152" y="950" width="104" height="74" rx="4" class="cell"/>
+<rect x="152" y="950" width="6" height="74" rx="3" class="s0"/>
+<text x="166" y="966" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 2 (Minor): low</title>
+<rect x="258" y="950" width="104" height="74" rx="4" class="cell"/>
+<rect x="258" y="950" width="6" height="74" rx="3" class="s0"/>
+<text x="272" y="966" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 3 (Moderate): low</title>
+<rect x="364" y="950" width="104" height="74" rx="4" class="cell"/>
+<rect x="364" y="950" width="6" height="74" rx="3" class="s0"/>
+<text x="378" y="966" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 4 (Major): low</title>
+<rect x="470" y="950" width="104" height="74" rx="4" class="cell"/>
+<rect x="470" y="950" width="6" height="74" rx="3" class="s0"/>
+<text x="484" y="966" class="secondary" font-size="11" font-weight="400" text-anchor="start">low</text>
+</g>
+<g><title>Likelihood 1 (Rare), impact 5 (Severe): medium — VEC-0006</title>
+<rect x="576" y="950" width="104" height="74" rx="4" class="cell"/>
+<rect x="576" y="950" width="6" height="74" rx="3" class="s1"/>
+<text x="590" y="966" class="secondary" font-size="11" font-weight="400" text-anchor="start">medium</text>
+<text x="590" y="984" class="primary" font-size="12" font-weight="700" text-anchor="start">VEC-0006</text>
+</g>
+</svg>
+
+<!-- vector: rendered from example.vectors.yaml sha256:86c909e5cb68329449bcb5736021775e272a188577a2efa52595320d64fd188f -->

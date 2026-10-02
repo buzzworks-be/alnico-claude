@@ -11,7 +11,7 @@ description: >-
   risks", "likelihood and impact" — or when the register has
   changed and new vectors sit undispositioned or a deferral has expired. The
   output is the same ctm/<slug>.vectors.yaml, with dispositions and mitigations
-  added, and its rendered ctm/<slug>.matrix.md.
+  added, its rendered ctm/<slug>.matrix.md, and ctm/<slug>.matrix.svg beside it.
 ---
 
 # The matrix: from a threat model to decisions
@@ -164,6 +164,16 @@ view first — [`/vector:promote`](../promote/SKILL.md)'s last step — or the
 vector ids come out as plain text. Everything is relative to `-o`, so write the
 document beside the register.
 
+Written to a file, the matrix also writes its two risk grids as a figure,
+`ctm/<slug>.matrix.svg`, beside the document and shows it at the top of *where
+the risk sits*, with the same grids folded under it as text — the text is where
+each vector id is a link. GitHub shows an SVG only as an image file, never
+inline, which is why it is a file of its own. Each cell names its band beside a
+stripe in that band's colour, the same colours as the squares in the tables,
+and the figure follows the reader's light or dark setting. Commit it with the
+document: it carries the same provenance marker, and a wired build fails on a
+figure that no longer describes the register just as it does on the document.
+
 ## What the fields look like
 
 ```yaml
@@ -216,7 +226,7 @@ mitigation goes there with a reason. Nothing else in the file is this skill's
 to change. The worked register at `assets/example.vectors.yaml` dispositions
 fourteen vectors, with `assets/example.spec.md` standing in for the
 specification its mitigations were written into, and `assets/example.matrix.md`
-is what the result reads like.
+with `assets/example.matrix.svg` is what the result reads like.
 
 ## What the check reports, and why each is worth satisfying
 

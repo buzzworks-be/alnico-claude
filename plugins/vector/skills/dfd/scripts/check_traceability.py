@@ -1513,6 +1513,9 @@ def check_chain(path, root, as_of, report):
                    "register", report)
     check_rendered(path, path[: -len(".vectors.yaml")] + ".matrix.md",
                    "register", report)
+    # The matrix's figure: an SVG beside it, stamped with the same marker.
+    check_rendered(path, path[: -len(".vectors.yaml")] + ".matrix.svg",
+                   "register", report)
 
     reference = register.get("threats")
     threats_path = os.path.join(here, reference) if reference else None

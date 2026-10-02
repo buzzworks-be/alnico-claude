@@ -17,6 +17,7 @@ serves both early.
 
 import argparse
 import datetime
+import html
 import importlib.util
 import os
 import re
@@ -39,6 +40,11 @@ SECTIONS = ("actors", "processes", "stores", "flows")
 # assigned least severe first by position. The word carries the meaning; the
 # square is for finding it.
 SQUARES = ("🟩", "🟨", "🟧", "🟥", "🟪")
+# The same five, as the stripe each cell of the figure carries: green, yellow,
+# orange and red are the reference status steps, and violet is the fifth a
+# five-band scale needs. Assigned by position exactly as the squares are, so the
+# picture and the text beside it can never colour a band differently.
+STRIPES = ("#0ca30c", "#fab219", "#ec835a", "#d03b3b", "#9b59d0")
 HARMED = {"organisation": "for the organisation",
           "data_subjects": "for the people the data is about",
           "both": "for the organisation and the people the data is about"}
@@ -185,6 +191,7 @@ class View:
                             if isinstance(m, dict)]
         self.retired = [r for r in register.get("retired") or [] if isinstance(r, dict)]
         self.links = links or Links()
+        self.figure = None
         self.flagged = {}
         for gap in report.gaps:
             self.flagged.setdefault(gap["element"], []).append(gap["code"])
@@ -290,15 +297,25 @@ def summary(view):
     return lines
 
 
-def grid(view, title, place):
-    """One five-by-five grid: every band, and the vectors placed in each cell."""
-    traceability, scale = view.traceability, view.scale
+def placements(view, place):
+    """{(likelihood, impact): [vector, ...]} — where `place` puts each vector.
+
+    One function for the table and the figure, so the two cannot put a vector
+    in different cells.
+    """
     cells = {}
     for vector in view.vectors:
         found = place(vector)
         if found:
-            cells.setdefault((found["likelihood"], found["impact"]), []).append(
-                linked(str(vector.get("id")), view.links.vector(vector.get("id"))))
+            cells.setdefault((found["likelihood"], found["impact"]), []).append(vector)
+    return cells
+
+
+def grid(view, title, place):
+    """One five-by-five grid: every band, and the vectors placed in each cell."""
+    traceability, scale = view.traceability, view.scale
+    cells = {key: [linked(str(v.get("id")), view.links.vector(v.get("id"))) for v in here]
+             for key, here in placements(view, place).items()}
     lines = [f"**{title}**", "",
              "| Likelihood ↓ · Impact → | 1 | 2 | 3 | 4 | 5 |",
              "| :--- | :--- | :--- | :--- | :--- | :--- |"]
@@ -321,8 +338,16 @@ def risk_grids(view):
              "mitigated vector by the risk its control leaves; **with nothing done** "
              "places every vector by its inherent rating. The difference between the "
              "two is what the controls moved.", ""]
-    lines += grid(view, "Now", view.now)
-    lines += grid(view, "With nothing done", view.inherent)
+    tables = grid(view, "Now", view.now) + grid(view, "With nothing done", view.inherent)
+    if view.figure:
+        # The picture first, and the tables folded under it: they are the text
+        # alternative, and the only place a vector id is a link.
+        lines += [f"![Where the risk sits: likelihood against impact, now and with "
+                  f"nothing done]({view.figure})", "",
+                  "<details>", "<summary>The same grids as text, each vector linked</summary>",
+                  "", *tables, "</details>", ""]
+    else:
+        lines += tables
     missing = [v for v in view.vectors if not view.inherent(v)]
     if missing:
         lines += ["Not rated, and so on neither grid: " + view.vector_ids(missing) + ".", ""]
@@ -629,12 +654,135 @@ WHOLE = (summary, risk_grids, deferrals, matrix, mitigations, acceptances, retir
          answers, treatments, rating_scale, limits)
 
 
-def render(register, model, report, as_of, open_only=False, links=None):
+def render(register, model, report, as_of, open_only=False, links=None, figure=None):
+    """The matrix document. `figure` is the path, relative to the document, of
+    the SVG the caller wrote beside it; without one the grids stay tables."""
     view = View(register, model, report, links)
+    view.figure = figure
     lines = header(view, as_of)
     for section in OPEN if open_only else WHOLE:
         lines += section(view)
     return "\n".join(lines).rstrip() + "\n"
+
+
+def escape(text):
+    """Text made safe inside an SVG element: &, < and > only, as XML needs."""
+    return html.escape(text, quote=False)
+
+
+# --- the risk grids as a figure ---------------------------------------------------
+#
+# The two grids of "Where the risk sits" drawn as one SVG, because GitHub strips
+# an inline <svg> from Markdown and renders one only as an image file. So the
+# figure is a file beside the document, stamped with the same provenance marker
+# — an XML comment, which SVG carries as well as Markdown does — and checked by
+# the same check_rendered().
+#
+# Grey cells, each with a stripe in its band's colour beside the band's name:
+# the colour finds a band and the word says which, so nothing rests on colour
+# alone. The page follows the reader's light or dark setting; the stripes are
+# the same in both.
+
+GUTTER, CELL_W, CELL_H, GAP, PAD = 128, 104, 74, 2, 24
+GRID_W = 5 * CELL_W + 4 * GAP
+
+
+def figure_style(bands):
+    stripes = "".join(f".s{i}{{fill:{STRIPES[i]}}}" for i in range(bands))
+    return ("<style>text{font-family:system-ui,-apple-system,'Segoe UI',sans-serif}"
+            ".surface{fill:#fcfcfb}.cell{fill:#efeeea}.primary{fill:#0b0b0b}"
+            ".secondary{fill:#52514e}.muted{fill:#6b6a66}" + stripes +
+            "@media (prefers-color-scheme: dark){.surface{fill:#1a1a19}"
+            ".cell{fill:#2c2c2a}.primary{fill:#ffffff}.secondary{fill:#c3c2b7}"
+            ".muted{fill:#a3a29b}}</style>")
+
+
+def svg_text(x, y, body, cls, size=12, weight=400, anchor="start"):
+    return (f'<text x="{x}" y="{y}" class="{cls}" font-size="{size}" '
+            f'font-weight="{weight}" text-anchor="{anchor}">{escape(str(body))}</text>')
+
+
+def figure_axes(view, title, subtitle, top):
+    """A grid's title, the impact levels across and the likelihood levels down."""
+    scale, levels = view.scale, view.traceability.LEVELS
+    left, head = PAD + GUTTER, top + 58
+    out = [svg_text(PAD, top + 20, title, "primary", 16, 600),
+           svg_text(PAD, top + 40, subtitle, "secondary", 12),
+           svg_text(left + GRID_W / 2, head + 2, "Impact →", "secondary", 12, 600, "middle"),
+           svg_text(PAD, head + 26, "Likelihood ↑", "secondary", 12, 600)]
+    for i, level in enumerate(levels):
+        out.append(svg_text(left + i * (CELL_W + GAP) + CELL_W / 2, head + 22,
+                            f"{level} · {scale['impact'][level - 1]['name']}",
+                            "muted", 11, 400, "middle"))
+    for row, level in enumerate(reversed(levels)):
+        y = head + 32 + row * (CELL_H + GAP) + CELL_H / 2
+        out += [svg_text(PAD, y - 2, level, "secondary", 13, 600),
+                svg_text(PAD, y + 14, scale["likelihood"][level - 1]["name"], "muted", 11)]
+    return out, head + 32
+
+
+def figure_cell(view, likelihood, impact, x, y, here):
+    """One cell: grey, its band's stripe and name, and the vectors placed in it."""
+    scale = view.scale
+    band = view.traceability.look_up(scale, likelihood, impact)
+    ids = [str(v.get("id")) for v in here]
+    tip = (f"Likelihood {likelihood} ({scale['likelihood'][likelihood - 1]['name']}), "
+           f"impact {impact} ({scale['impact'][impact - 1]['name']}): {band}"
+           + (f" — {', '.join(ids)}" if ids else ""))
+    out = [f'<g><title>{escape(tip)}</title>',
+           f'<rect x="{x}" y="{y}" width="{CELL_W}" height="{CELL_H}" rx="4" class="cell"/>',
+           f'<rect x="{x}" y="{y}" width="6" height="{CELL_H}" rx="3" '
+           f'class="s{view.bands.index(band)}"/>',
+           svg_text(x + 14, y + 16, band, "secondary", 11)]
+    out += [svg_text(x + 14, y + 34 + k * 15, ident, "primary", 12, 700)
+            for k, ident in enumerate(ids)]
+    return [*out, "</g>"]
+
+
+def figure_grid(view, title, subtitle, place, top):
+    out, body = figure_axes(view, title, subtitle, top)
+    cells = placements(view, place)
+    levels = view.traceability.LEVELS
+    for row, likelihood in enumerate(reversed(levels)):
+        for col, impact in enumerate(levels):
+            out += figure_cell(view, likelihood, impact,
+                               PAD + GUTTER + col * (CELL_W + GAP), body + row * (CELL_H + GAP),
+                               cells.get((likelihood, impact), []))
+    return out, body + 5 * CELL_H + 4 * GAP
+
+
+def figure_legend(view, top):
+    out = [svg_text(PAD, top + 14, "Risk band", "secondary", 12, 600)]
+    x = PAD + 76
+    for i, band in enumerate(view.bands):
+        out += [f'<rect x="{x}" y="{top + 2}" width="6" height="16" rx="3" class="s{i}"/>',
+                svg_text(x + 12, top + 14, band, "primary", 12)]
+        x += 36 + 7 * len(str(band))
+    return out, top + 24
+
+
+def figure(register, model, report, as_of):
+    """The two risk grids as one SVG, or None when there is nothing to place."""
+    view = View(register, model, report, None)
+    if not view.vectors or not view.scale:
+        return None
+    name = model.get("system", {}).get("name", "unnamed")
+    parts, y = figure_legend(view, PAD)
+    now, y = figure_grid(view, "Now", "A mitigated vector placed by the risk its control "
+                         "leaves", view.now, y + 12)
+    before, y = figure_grid(view, "With nothing done", "Every vector placed by its "
+                            "inherent rating", view.inherent, y + 28)
+    width, height = PAD * 2 + GUTTER + GRID_W, y + PAD
+    desc = (f"Two five-by-five grids of likelihood against impact for {name}, as of "
+            f"{as_of.isoformat()}: where each vector sits now, and where it would sit with "
+            "nothing done. Each cell names its risk band beside a stripe in its colour.")
+    return "\n".join([
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
+        f'width="{width}" height="{height}" role="img" aria-labelledby="title desc">',
+        f'<title id="title">Where the risk sits — {escape(str(name))}</title>',
+        f'<desc id="desc">{escape(desc)}</desc>', figure_style(len(view.bands)),
+        f'<rect width="{width}" height="{height}" rx="8" class="surface"/>',
+        *parts, *now, *before, "</svg>", ""])
 
 
 def links_for(register, model, register_path, bases, beside, orphaned=()):
@@ -700,22 +848,15 @@ def arguments():
     return parser
 
 
-def main(argv=None):
-    args = arguments().parse_args(argv)
-
-    check_matrix = sibling("check_matrix")
-    as_of = datetime.date.today()
-    if args.as_of:
-        as_of = check_matrix.as_date(args.as_of)
-        if as_of is None:
-            sys.exit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
+def load_chain(register_path):
+    """The register, the enumeration's path, the model's path and the model."""
     try:
-        with open(args.register) as handle:
+        with open(register_path) as handle:
             register = yaml.safe_load(handle)
         reference = (register or {}).get("threats")
         if not isinstance(register, dict) or not reference:
-            sys.exit(f"{args.register} is not a register: no enumeration named")
-        here = os.path.dirname(os.path.abspath(args.register))
+            sys.exit(f"{register_path} is not a register: no enumeration named")
+        here = os.path.dirname(os.path.abspath(register_path))
         threats_path = os.path.join(here, reference)
         with open(threats_path) as handle:
             enumeration = yaml.safe_load(handle)
@@ -726,18 +867,64 @@ def main(argv=None):
         sys.exit(f"no such file: {exc.filename}")
     except yaml.YAMLError as exc:
         sys.exit(f"not valid YAML: {exc}")
+    return register, threats_path, model_path, model
 
+
+def figure_path(output):
+    """Where the figure goes: beside the document, under the document's name."""
+    return re.sub(r"\.md$", "", output) + ".svg"
+
+
+def write_figure(drawn, register_path, output, traceability):
+    """Write the figure beside the document and return its name as the document
+    links it, or None when there is nothing to draw.
+
+    A figure left over from a register that has since lost every rated vector
+    would be stale and blocking, describing a matrix that is no longer there,
+    so one this renderer wrote is removed rather than left behind.
+    """
+    path = figure_path(output)
+    if drawn is None:
+        if os.path.exists(path):
+            with open(path) as handle:
+                ours = traceability.RENDERED.search(handle.read())
+            if ours:
+                os.remove(path)
+        return None
+    with open(path, "w") as handle:
+        handle.write(traceability.stamp(drawn, register_path))
+    return os.path.basename(path)
+
+
+def main(argv=None):
+    args = arguments().parse_args(argv)
+
+    check_matrix = sibling("check_matrix")
+    traceability = check_matrix.traceability
+    as_of = datetime.date.today()
+    if args.as_of:
+        as_of = check_matrix.as_date(args.as_of)
+        if as_of is None:
+            sys.exit(f"--as-of {args.as_of!r} is not a YYYY-MM-DD date")
+    register, threats_path, model_path, model = load_chain(args.register)
+
+    here = os.path.dirname(os.path.abspath(args.register))
     bases = (here, args.root or check_matrix.repository_root(here))
     report, _ = check_matrix.check(register, threats_path, as_of, bases=bases,
                                    model_path=model_path)
     beside = os.path.dirname(os.path.abspath(args.output)) if args.output else here
     orphaned = {g["element"].split("/", 1)[1] for g in report.gaps
                 if g["code"] == "ORPHAN_VECTOR"}
+    # A figure is a file, so it exists only beside a document that is one.
+    shown = None
+    if args.output and not args.open_only:
+        shown = write_figure(figure(register, model, report, as_of), args.register,
+                             args.output, traceability)
     document = render(register, model, report, as_of, open_only=args.open_only,
                       links=links_for(register, model, args.register, bases, beside,
-                                      orphaned=orphaned))
+                                      orphaned=orphaned), figure=shown)
     if not args.open_only:
-        document = check_matrix.traceability.stamp(document, args.register)
+        document = traceability.stamp(document, args.register)
     if args.output:
         with open(args.output, "w") as handle:
             handle.write(document)

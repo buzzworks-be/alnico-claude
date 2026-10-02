@@ -21,6 +21,11 @@ Generated from the register beside [`example.threats.yaml`](example.threats.yaml
 
 Every vector placed by its likelihood and impact. **Now** places a mitigated vector by the risk its control leaves; **with nothing done** places every vector by its inherent rating. The difference between the two is what the controls moved.
 
+![Where the risk sits: likelihood against impact, now and with nothing done](example.matrix.svg)
+
+<details>
+<summary>The same grids as text, each vector linked</summary>
+
 **Now**
 
 | Likelihood ↓ · Impact → | 1 | 2 | 3 | 4 | 5 |
@@ -40,6 +45,8 @@ Every vector placed by its likelihood and impact. **Now** places a mitigated vec
 | **3** | 🟩 low | 🟨 medium | 🟨 medium · [VEC-0005](example.vectors.md#vec-0005--nobody-could-say-whether-the-backup-snapshots-honour-the-address-purge), [VEC-0007](example.vectors.md#vec-0007--address-masking-in-the-support-console-is-lifted-by-the-agent-who-wants-it), [VEC-0013](example.vectors.md#vec-0013--an-assistants-draft-can-restate-an-address-the-console-masked) | 🟧 high · [VEC-0001](example.vectors.md#vec-0001--a-guests-identity-is-never-verified-at-checkout-or-on-a-data-request) | 🟧 high |
 | **2** | 🟩 low | 🟩 low | 🟨 medium | 🟨 medium | 🟧 high |
 | **1** | 🟩 low | 🟩 low | 🟩 low | 🟩 low | 🟨 medium · [VEC-0006](example.vectors.md#vec-0006--backups-add-no-isolation-from-the-compromise-that-matters) |
+
+</details>
 
 ## Deferrals, soonest first
 

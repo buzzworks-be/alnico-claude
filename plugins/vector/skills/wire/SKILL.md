@@ -144,6 +144,9 @@ path appears in exactly one line of the workflow.
      ctm/<slug>.vectors.yaml -o ctm/<slug>.matrix.md
    ```
 
+   That also writes `ctm/<slug>.matrix.svg`, the risk grids as a figure, and
+   the check holds it to the same marker as the documents — so commit it too.
+
    After that the build fails on a register edited without a re-render, which
    is the one link nothing else could see: everything else in the chain is
    checked against the register, while the documents people actually read were

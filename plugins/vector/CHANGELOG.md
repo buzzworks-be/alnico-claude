@@ -11,6 +11,28 @@ Claude Code tracks the default branch and gates updates on that `version` field;
 a tag would participate in neither. A release is the commit that bumps it, and
 each version below links to its own.
 
+## [0.22.0] — 2026-10-02
+
+### Added
+
+- [`/vector:matrix`](skills/matrix/SKILL.md) now draws *where the risk sits* as
+  a picture. Rendering the matrix to a file also writes
+  `ctm/<slug>.matrix.svg` beside it: the two five-by-five grids, *now* and
+  *with nothing done*, each cell naming its risk band beside a stripe in that
+  band's colour and listing the vectors placed in it. The document shows it at
+  the top of the section, with the same grids folded under it as text — the
+  text is still where each vector id is a link. It is a file rather than part of
+  the page because GitHub shows an SVG only as an image, never inline. The
+  stripes use the same green, yellow, orange and red as the squares in the
+  tables, and the picture follows your light or dark setting.
+
+  Commit the `.svg` with the `.md`. It carries the same provenance marker, and
+  the check [`/vector:wire`](skills/wire/SKILL.md) vendors now holds it to that
+  marker: a figure that no longer describes the register fails the build the
+  way a stale document does. Re-vendor the check to get that; an older copy
+  simply does not look at the figure. Printing the matrix to the terminal, or
+  `--open-only`, writes no figure.
+
 ## [0.21.2] — 2026-09-28
 
 ### Fixed
@@ -830,6 +852,7 @@ repository, so a published tree carries what a session loads and nothing else.
 Earlier versions (`0.1.0`–`0.3.0`) predate this file. See the commit history
 for what changed in them.
 
+[0.22.0]: https://github.com/buzzworks-be/vector/commit/4a18ed4
 [0.21.2]: https://github.com/buzzworks-be/vector/commit/bca622f
 [0.21.1]: https://github.com/buzzworks-be/vector/commit/28650af
 [0.21.0]: https://github.com/buzzworks-be/vector/commit/d68bc64
